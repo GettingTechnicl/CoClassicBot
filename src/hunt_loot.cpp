@@ -104,6 +104,13 @@ CMapItem* HuntLootManager::FindBestLoot(
 
     for (CMapItem* itemRef : MapItems::Get()) {
         if (!itemRef) continue;
+        // Session 11 [CRASH FIX]: the later IsAlive() check (base_hunt_plugin.cpp,
+        // after FindBestLoot returns) only protects the ONE item that ends up
+        // selected - every item touched during the scan itself, below, was
+        // NOT validated, the same gap PruneLootPickupAttempts had (see that
+        // fix's comment for the full mechanism: ground items are raw
+        // pointers into the game's own heap, freeable at any moment).
+        if (!MapItems::IsAlive(itemRef)) continue;
         ++totalItems;
         const auto seenResult = m_lootSeenTicks.try_emplace(itemRef->m_id, now);
         const DWORD seenAge = now - seenResult.first->second;
