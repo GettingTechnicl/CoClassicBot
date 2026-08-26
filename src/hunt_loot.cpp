@@ -193,10 +193,24 @@ void HuntLootManager::PruneLootPickupAttempts(CGameMap* map)
         return;
     }
 
+    // Session 11 [CRASH FIX]: this is called unconditionally on EVERY
+    // Update() tick (see base_hunt_plugin.cpp) and, for every ground item,
+    // used to dereference itemRef->m_id with no liveness check at all —
+    // unlike every other place in this file that touches a CMapItem*
+    // (FindBestLoot/TryPickupLootItem both call MapItems::IsAlive() first).
+    // Ground items are raw pointers into the GAME's own heap from a
+    // heap-scan (map_items.cpp) — the game can free one at any moment
+    // between the scan snapshot and this loop reaching it, and running that
+    // exposure on every single tick for every item gave a real, confirmed-
+    // live, reproducible use-after-free plenty of chances to land (crash
+    // symbolized to std::unordered_set<uint32_t>::emplace's hash step
+    // reading a freed CMapItem's m_id field — see coclassicbot-project-status
+    // memory for the full trace).
+    const std::vector<CMapItem*> mapItems = MapItems::Get();
     std::unordered_set<OBJID> activeItemIds;
-    activeItemIds.reserve(MapItems::Get().size());
-    for (CMapItem* itemRef : MapItems::Get()) {
-        if (itemRef)
+    activeItemIds.reserve(mapItems.size());
+    for (CMapItem* itemRef : mapItems) {
+        if (itemRef && MapItems::IsAlive(itemRef))
             activeItemIds.insert(itemRef->m_id);
     }
 
