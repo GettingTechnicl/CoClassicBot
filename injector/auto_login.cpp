@@ -15,18 +15,23 @@ constexpr const char* kLoginWindowTitle = "[ClassicConquer]";
 // confirmed live. The login form is custom-rendered (like the modern-
 // styled launcher window), not built from real Win32 Edit/Button/ComboBox
 // controls, so WM_SETTEXT/BM_CLICK have nothing to target. Falls back to
-// coordinate-based synthetic input instead: real mouse clicks + keystrokes
-// at positions computed as fractions of the window's own current size, so
-// it adapts to the window's actual size/position at runtime rather than
-// using fixed pixel values from one specific capture.
+// coordinate-based synthetic input instead: real mouse clicks + keystrokes.
 //
-// These fractions are a first estimate from a single screenshot of the
-// login screen, NOT live-verified against real clicks yet — expect to
-// tune them after an actual test run.
-struct FieldFraction { double x; double y; };
-constexpr FieldFraction kUsernameField{0.499, 0.603};
-constexpr FieldFraction kPasswordField{0.499, 0.638};
-constexpr FieldFraction kLoginButton{0.499, 0.711};
+// The login panel is a small FIXED-SIZE box that stays centered in the
+// window regardless of window size (confirmed live — this window is
+// resizable) — so positions are anchored as constant PIXEL offsets from
+// the window's CLIENT AREA center (not a fraction of window size, which
+// would be wrong for a fixed-size panel, and not the outer window rect,
+// since the game's own D3D render target is the client area — the title
+// bar is separate OS chrome it never draws into). Measured directly off a
+// live screenshot at a 1536x1112 window: field centers at y=672 (Username)
+// /710 (Password)/793 (Login button), all x=767; client area top-left in
+// that same capture was ~(0,31) with height ~1081, giving a client center
+// of (768,571) and these offsets.
+struct FieldOffset { long dx; long dy; };
+constexpr FieldOffset kUsernameField{-1, 101};
+constexpr FieldOffset kPasswordField{-1, 139};
+constexpr FieldOffset kLoginButton{-1, 222};
 
 HWND FindLoginWindow(uint32_t timeoutMs)
 {
@@ -39,13 +44,15 @@ HWND FindLoginWindow(uint32_t timeoutMs)
     return nullptr;
 }
 
-POINT ResolveScreenPoint(const RECT& windowRect, FieldFraction fraction)
+POINT ResolveScreenPoint(HWND wnd, FieldOffset offset)
 {
-    const long width = windowRect.right - windowRect.left;
-    const long height = windowRect.bottom - windowRect.top;
+    RECT clientRect{};
+    GetClientRect(wnd, &clientRect);  // always (0,0,width,height) — origin is client-relative
+    POINT center{(clientRect.right - clientRect.left) / 2, (clientRect.bottom - clientRect.top) / 2};
+    ClientToScreen(wnd, &center);  // now a real screen coordinate
     POINT pt;
-    pt.x = windowRect.left + static_cast<long>(fraction.x * width);
-    pt.y = windowRect.top + static_cast<long>(fraction.y * height);
+    pt.x = center.x + offset.dx;
+    pt.y = center.y + offset.dy;
     return pt;
 }
 
@@ -121,14 +128,13 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
     Sleep(200);
 
     RECT windowRect{};
-    if (!GetWindowRect(loginWnd, &windowRect)) {
-        printf("[auto-login] GetWindowRect failed (0x%08lX).\n", GetLastError());
-        return false;
+    if (GetWindowRect(loginWnd, &windowRect)) {
+        printf("[auto-login] Login window rect: (%ld,%ld)-(%ld,%ld)\n",
+            windowRect.left, windowRect.top, windowRect.right, windowRect.bottom);
     }
-    printf("[auto-login] Login window rect: (%ld,%ld)-(%ld,%ld)\n",
-        windowRect.left, windowRect.top, windowRect.right, windowRect.bottom);
 
-    const POINT usernamePt = ResolveScreenPoint(windowRect, kUsernameField);
+    const POINT usernamePt = ResolveScreenPoint(loginWnd, kUsernameField);
+    printf("[auto-login] Clicking username field at (%ld,%ld)\n", usernamePt.x, usernamePt.y);
     SendClick(usernamePt);
     Sleep(150);
     // Select-all first in case the field has leftover text from a previous
@@ -145,7 +151,8 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
     SendText(request.username);
     printf("[auto-login] Username typed.\n");
 
-    const POINT passwordPt = ResolveScreenPoint(windowRect, kPasswordField);
+    const POINT passwordPt = ResolveScreenPoint(loginWnd, kPasswordField);
+    printf("[auto-login] Clicking password field at (%ld,%ld)\n", passwordPt.x, passwordPt.y);
     SendClick(passwordPt);
     Sleep(150);
     SendText(request.password);
@@ -157,7 +164,8 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
     // multi-server support is actually needed.
 
     Sleep(200);
-    const POINT loginBtnPt = ResolveScreenPoint(windowRect, kLoginButton);
+    const POINT loginBtnPt = ResolveScreenPoint(loginWnd, kLoginButton);
+    printf("[auto-login] Clicking Login button at (%ld,%ld)\n", loginBtnPt.x, loginBtnPt.y);
     SendClick(loginBtnPt);
     printf("[auto-login] Login clicked.\n");
 
