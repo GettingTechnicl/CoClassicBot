@@ -2079,12 +2079,12 @@ void BaseHuntPlugin::RenderQuickSetupSection(BaseHuntPlugin* /*modePlugin*/)
     HuntStats::RenderUI();
 }
 
-void BaseHuntPlugin::RenderCombatSection(BaseHuntPlugin* modePlugin)
+void BaseHuntPlugin::RenderCombatSection()
 {
     AutoHuntSettings& settings = GetAutoHuntSettings();
     ImGui::TextDisabled("Combat behavior for %s mode.", CombatModeLabel(settings.combatMode));
-    if (modePlugin)
-        modePlugin->RenderCombatUI(settings);
+    ImGui::TextDisabled("Mode-specific options (Scatter, safety distance, etc.) live on the "
+        "Archer Hunt / Melee Hunt tab below.");
 
     ImGui::SeparatorText("Targeting");
     ImGui::SliderInt("Only Target Mobs Within", &settings.mobSearchRange, 0, CGameMap::MAX_JUMP_DIST);
@@ -2257,7 +2257,7 @@ void BaseHuntPlugin::RenderDashboardUI()
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Combat")) {
-            RenderCombatSection(modePlugin);
+            RenderCombatSection();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Loot")) {

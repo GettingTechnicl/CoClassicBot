@@ -175,7 +175,7 @@ protected:
     BaseHuntPlugin* GetSelectedModePlugin() const;
     void ApplyHuntModeSelection(AutoHuntCombatMode mode, bool enabled);
     void RenderQuickSetupSection(BaseHuntPlugin* modePlugin);
-    void RenderCombatSection(BaseHuntPlugin* modePlugin);
+    void RenderCombatSection();
     void RenderLootSection();
     void RenderTownRunsSection();
     void RenderSafetySection();
