@@ -1384,6 +1384,23 @@ void BaseHuntPlugin::Update()
         const int lootDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, loot->m_pos.x, loot->m_pos.y);
         spdlog::trace("[hunt-loot] Loot id={} type={} dist={} range={}", loot->m_id, loot->m_idType, lootDist, GetLootRange(settings));
         const DWORD pickupNow = GetTickCount();
+
+        // Session 10 [PICKUP-DELAY FIX]: stop any in-flight route the moment
+        // we're within pickup range, BEFORE attempting the pickup. Without
+        // this, TryPickupLootItem()'s own "movement not settled" check bails
+        // out before ever reaching its later Pathfinder::Get().Stop() call
+        // whenever the hero is mid-jump crossing this tile as part of a
+        // longer route (combat repositioning, an earlier farther loot pick,
+        // etc.) — the queued waypoints then carry the hero straight past the
+        // item, and with itemPickupDelayMs set the arrival timer never gets
+        // a chance to complete since the hero is never actually stationary
+        // here. This can't cancel an already-launched jump (a committed
+        // client-side animation), but it does stop the pathfinder from
+        // queuing the next waypoint once this one lands, so the hero
+        // actually comes to rest on the item instead of coasting through.
+        if (IsWithinLootPickupRange(settings, lootDist) && Pathfinder::Get().IsActive())
+            Pathfinder::Get().Stop();
+
         if (IsWithinLootPickupRange(settings, lootDist) && m_lootMgr.TryPickupLootItem(hero, settings, loot, pickupNow,
                 [this, hero](DWORD t) { return UpdatePendingJumpState(hero, t); })) {
             m_targetId = loot->m_id;
