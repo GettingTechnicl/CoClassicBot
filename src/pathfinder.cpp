@@ -208,9 +208,14 @@ bool Pathfinder::IssueMovementToWaypoint(CHero* hero, CGameMap* map, const Posit
 
 bool Pathfinder::CanIssueMovementCommand(DWORD now) const
 {
-    return m_lastJumpTick == 0
-        || m_movementIntervalMs == 0
-        || now - m_lastJumpTick >= m_movementIntervalMs;
+    if (m_lastJumpTick == 0)
+        return true;
+    // Re-queried fresh every check rather than a value frozen at StartPath()
+    // time — see the comment on the provider field in pathfinder.h.
+    const DWORD intervalMs = m_movementIntervalProvider
+        ? ClampPathMovementIntervalMs(m_movementIntervalProvider())
+        : 0;
+    return intervalMs == 0 || now - m_lastJumpTick >= intervalMs;
 }
 
 bool Pathfinder::RepathFrom(CHero* hero, CGameMap* map, const Position& finalDest, bool issueImmediate)
@@ -247,7 +252,7 @@ bool Pathfinder::RepathFrom(CHero* hero, CGameMap* map, const Position& finalDes
     return !issueImmediate || IssueMovementToWaypoint(hero, map, m_waypoints[0]);
 }
 
-void Pathfinder::StartPath(const std::vector<Position>& waypoints, DWORD movementIntervalMs)
+void Pathfinder::StartPath(const std::vector<Position>& waypoints, std::function<DWORD()> movementIntervalProvider)
 {
     if (waypoints.empty())
         return;
@@ -257,7 +262,7 @@ void Pathfinder::StartPath(const std::vector<Position>& waypoints, DWORD movemen
     m_active = true;
     m_forceNativeJump = false;
     m_finalDestination = waypoints.back();
-    m_movementIntervalMs = ClampPathMovementIntervalMs(movementIntervalMs);
+    m_movementIntervalProvider = std::move(movementIntervalProvider);
     m_generation++;
     spdlog::info("[path] StartPath: {} waypoints, gen={}", waypoints.size(), m_generation);
 
@@ -285,7 +290,7 @@ void Pathfinder::Stop()
     m_lastIssuedTarget = {};
     m_finalDestination = {};
     m_lastIssuedMoveWasImmediate = false;
-    m_movementIntervalMs = 0;
+    m_movementIntervalProvider = nullptr;
     m_lastProgressTick = 0;
     m_generation++;
     spdlog::debug("[path] Stop, gen={}", m_generation);

@@ -1179,7 +1179,7 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                         if (!waypoints.empty()) {
                                             Pathfinder::Get().StartPath(
                                                 waypoints,
-                                                GetMovementIntervalMs(GetAutoHuntSettings()));
+                                                [] { return GetMovementIntervalMs(GetAutoHuntSettings()); });
                                         }
                                     }
                                 }

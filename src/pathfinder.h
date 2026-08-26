@@ -1,5 +1,6 @@
 #pragma once
 #include "base.h"
+#include <functional>
 #include <vector>
 
 // Check if any entity occupies the given tile
@@ -10,7 +11,18 @@ class CGameMap;
 
 class Pathfinder {
 public:
-    void StartPath(const std::vector<Position>& waypoints, DWORD movementIntervalMs = 0);
+    // Session 11 [STALE SPEED FIX]: movementIntervalMs used to be a plain
+    // DWORD, snapshotted once when the route started and reused for the
+    // route's ENTIRE duration — so e.g. a player who was nearby at the
+    // moment a long multi-waypoint route began kept the WHOLE route pinned
+    // to legit/slow speeds even after they walked out of range, since
+    // nothing re-checked "is a player nearby" again until the next route.
+    // A provider callback is re-invoked fresh on every throttle check
+    // instead, so pacing tracks the CURRENT scan result live. Each caller
+    // supplies its own provider since Pathfinder is shared across multiple
+    // plugins with independent settings (hunt vs. mining vs. manual travel)
+    // — it has no business hardcoding which settings struct to read.
+    void StartPath(const std::vector<Position>& waypoints, std::function<DWORD()> movementIntervalProvider);
     void Stop();
     void Update();
     bool IsActive() const { return m_active; }
@@ -57,7 +69,7 @@ private:
     Position m_lastIssuedTarget = {};
     Position m_finalDestination = {};
     bool m_lastIssuedMoveWasImmediate = false;
-    DWORD m_movementIntervalMs = 0;
+    std::function<DWORD()> m_movementIntervalProvider;
     DWORD m_lastProgressTick = 0;
     uint32_t m_generation = 0;
 };

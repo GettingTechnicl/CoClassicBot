@@ -6,6 +6,7 @@
 #include "CEntitySet.h"
 #include "config.h"
 #include "hunt_settings.h"
+#include "hunt_intervals.h"
 #include "log.h"
 #include "imgui.h"
 #include <algorithm>
@@ -119,9 +120,14 @@ DWORD TravelPlugin::ElapsedMs() const
 
 void TravelPlugin::StartPathAndTrack(const std::vector<Position>& waypoints)
 {
+    // Session 11: this used to read the raw movementIntervalMs slider
+    // directly, bypassing ShouldUseAggressiveSpeeds() entirely — travel-
+    // plugin-driven routes (return to zone, travel to market) never sped up
+    // under speedhack at all, regardless of the toggle or whether a player
+    // was nearby.
     Pathfinder::Get().StartPath(
         waypoints,
-        static_cast<DWORD>(GetAutoHuntSettings().movementIntervalMs));
+        [] { return GetMovementIntervalMs(GetAutoHuntSettings()); });
     m_pathGeneration = Pathfinder::Get().GetGeneration();
 }
 

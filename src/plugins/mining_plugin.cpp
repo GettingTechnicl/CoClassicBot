@@ -842,7 +842,7 @@ bool MiningPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& desti
     if (waypoints.empty())
         return false;
 
-    Pathfinder::Get().StartPath(waypoints, GetMovementIntervalMs(GetMiningSettings()));
+    Pathfinder::Get().StartPath(waypoints, [] { return GetMovementIntervalMs(GetMiningSettings()); });
     m_lastMineTick = now;
     return true;
 }

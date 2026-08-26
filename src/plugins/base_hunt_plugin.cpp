@@ -695,7 +695,7 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
     if (waypoints.empty())
         return false;
 
-    Pathfinder::Get().StartPath(waypoints, movementIntervalMs);
+    Pathfinder::Get().StartPath(waypoints, [] { return GetMovementIntervalMs(GetAutoHuntSettings()); });
     m_lastMoveTick = now;
     return true;
 }
