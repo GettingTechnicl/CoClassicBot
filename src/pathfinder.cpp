@@ -345,9 +345,25 @@ void Pathfinder::Update()
                 m_active = false;
             }
         } else {
-            spdlog::debug("[path] Landed near waypoint at ({},{}) for ({},{}), recalculating to ({},{})",
-                hx, hy, wp.x, wp.y, m_finalDestination.x, m_finalDestination.y);
-            if (!RepathFrom(hero, map, m_finalDestination, canIssueMovementNow)) {
+            // Session 10 [MEMORY LEAK INVESTIGATION]: this used to
+            // unconditionally call RepathFrom() here — a full A* re-solve of
+            // the ENTIRE remaining route, up to 1,000,000 nodes — on every
+            // intermediate waypoint landing that was merely 1 tile off,
+            // even though the landing itself succeeded. That fires once per
+            // real jump (not once per decision-loop poll), which matches
+            // the evidence already gathered live for the project's
+            // confirmed memory leak far better than the decision-loop
+            // theory did (see coclassicbot-live-offsets memory: throttling
+            // the decision loop 150x didn't reduce growth; slowing real
+            // actions did). Mirror the final-waypoint branch above instead
+            // of the branch below: try to just continue toward the current
+            // waypoint first, only falling back to a full repath if that
+            // genuinely fails.
+            spdlog::debug("[path] Landed near waypoint at ({},{}) for ({},{}), adjusting toward it",
+                hx, hy, wp.x, wp.y);
+            if (canIssueMovementNow
+                && !IssueMovementToWaypoint(hero, map, wp)
+                && !RepathFrom(hero, map, m_finalDestination, canIssueMovementNow)) {
                 spdlog::error("[path] Re-route failed after near landing, stopping");
                 m_active = false;
             }
