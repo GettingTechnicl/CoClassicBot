@@ -79,29 +79,4 @@ namespace Entities
         uint32_t scans;        // completed scans since injection
     };
     Stats GetStats();
-
-    // ── Compatibility view ──
-    // The old call sites iterated a std::deque<PRole> and used .empty(),
-    // .size(), [i], plus `if (!ref)`, `ref.get()` and `ref->` on elements.
-    // This exposes that same surface over the scanned list so those ~25 loops
-    // become a one-token substitution (`mgr->m_deqRole` -> `Entities::Roles()`)
-    // rather than 25 hand-restructured loops, each a chance to introduce a bug.
-    struct RoleRef
-    {
-        CRole* p = nullptr;
-        explicit operator bool() const { return p != nullptr; }
-        CRole* get() const { return p; }
-        CRole* operator->() const { return p; }
-        operator CRole*() const { return p; }
-    };
-
-    class View
-    {
-    public:
-        bool   empty() const;
-        size_t size() const;
-        RoleRef operator[](size_t i) const;
-    };
-
-    View Roles();
 }

@@ -1308,10 +1308,10 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                             if (hasMgr && g_entityFilter != 4) {
                                 GuildSettings& guild = GetGuildSettings();
                                 bool deadFilter = guild.showDeadOnly && hero->HasSyndicate();
-                                for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
-                                    const auto ref = Entities::Roles()[i];
-                                    if (!ref) continue;
-                                    CRole* e = ref.get();
+                                const std::vector<CRole*> tableRoles = Entities::Get();
+                                for (size_t i = 0; i < tableRoles.size() && i < 500; i++) {
+                                    CRole* e = tableRoles[i];
+                                    if (!e) continue;
 
                                     bool isPlayer = e->IsPlayer();
                                     bool isMonster = e->IsMonster();

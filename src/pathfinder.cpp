@@ -45,13 +45,23 @@ DWORD ClampPathMovementIntervalMs(DWORD value)
 bool IsTileOccupied(int tileX, int tileY)
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
+    if (!mgr)
         return false;
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
-        const auto ref = Entities::Roles()[i];
-        if (!ref)
+    // Session 11: Entities::Roles() internally does a fresh Entities::Get()
+    // (full cache-check + vector copy) on EVERY call — this used to call it
+    // up to 1002 times per invocation (twice for the guard, twice per loop
+    // iteration for up to 500 iterations). One Get() call instead. This is
+    // one of the hottest call sites in the whole plugin system (every
+    // pathfinding decision, every minimap click), so this alone likely
+    // accounts for a large share of the redundant allocation churn found
+    // repeated across ~15 call sites this same way project-wide.
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
+        return false;
+    for (size_t i = 0; i < roles.size() && i < 500; i++) {
+        CRole* e = roles[i];
+        if (!e)
             continue;
-        CRole* e = ref.get();
         if (e->m_posMap.x == tileX && e->m_posMap.y == tileY)
             return true;
     }
@@ -79,12 +89,14 @@ void Pathfinder::LoadTilePath(const std::vector<Position>& tilePath, int hx, int
 static bool IsTileNearMonster(int tileX, int tileY, int radius)
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
+    if (!mgr)
         return false;
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
-        const auto ref = Entities::Roles()[i];
-        if (!ref) continue;
-        CRole* e = ref.get();
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
+        return false;
+    for (size_t i = 0; i < roles.size() && i < 500; i++) {
+        CRole* e = roles[i];
+        if (!e) continue;
         if (!e->IsMonster()) continue;
         if (CGameMap::TileDist(tileX, tileY, e->m_posMap.x, e->m_posMap.y) < radius)
             return true;
@@ -104,6 +116,15 @@ Position Pathfinder::FindSafeAlternative(CHero* hero, CGameMap* map, const Posit
     bool found = false;
     constexpr int kSearchRadius = 4;
 
+    // Session 11: was calling Entities::Roles() (a fresh Entities::Get() -
+    // full cache-check + vector copy - every single call) up to ~1002 times
+    // PER CANDIDATE TILE below, for up to (2*kSearchRadius+1)^2 = 81
+    // candidates - up to ~81,000 redundant calls in one FindSafeAlternative
+    // invocation. One Get() call for the whole function instead; monster
+    // positions don't change mid-search.
+    const CRoleMgr* mgr = Game::GetRoleMgr();
+    const std::vector<CRole*> roles = mgr ? Entities::Get() : std::vector<CRole*>{};
+
     for (int dx = -kSearchRadius; dx <= kSearchRadius; ++dx) {
         for (int dy = -kSearchRadius; dy <= kSearchRadius; ++dy) {
             const Position candidate = {target.x + dx, target.y + dy};
@@ -121,12 +142,10 @@ Position Pathfinder::FindSafeAlternative(CHero* hero, CGameMap* map, const Posit
 
             // Compute min distance to any monster
             int minMobDist = 999;
-            CRoleMgr* mgr = Game::GetRoleMgr();
-            if (mgr && !Entities::Roles().empty() && Entities::Roles().size() < 10000) {
-                for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
-                    const auto ref = Entities::Roles()[i];
-                    if (!ref) continue;
-                    CRole* e = ref.get();
+            if (!roles.empty() && roles.size() < 10000) {
+                for (size_t i = 0; i < roles.size() && i < 500; i++) {
+                    CRole* e = roles[i];
+                    if (!e) continue;
                     if (!e->IsMonster()) continue;
                     int d = CGameMap::TileDist(candidate.x, candidate.y, e->m_posMap.x, e->m_posMap.y);
                     if (d < minMobDist) minMobDist = d;

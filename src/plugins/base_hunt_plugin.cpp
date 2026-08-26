@@ -490,7 +490,16 @@ bool BaseHuntPlugin::CheckPlayerSafety(CHero* hero, CGameMap* map, TravelPlugin*
     }
 
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
+    if (!mgr)
+        return false;
+
+    // Session 11: this used to call Entities::Roles() (which internally does
+    // a fresh Entities::Get() - full cache-check + vector copy - on every
+    // single call) up to 1000+ times per invocation: twice for the guard
+    // check above, then twice more per loop iteration for up to 500
+    // iterations. One Get() call here instead.
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
         return false;
 
     const OBJID heroId = hero->GetID();
@@ -499,10 +508,9 @@ bool BaseHuntPlugin::CheckPlayerSafety(CHero* hero, CGameMap* map, TravelPlugin*
     const DWORD threshold = (DWORD)settings.safetyDetectionSec * 1000;
 
     std::unordered_set<OBJID> inRange;
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-        const auto& roleRef = Entities::Roles()[i];
-        if (!roleRef) continue;
-        CRole* role = roleRef.get();
+    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+        CRole* role = roles[i];
+        if (!role) continue;
         if (!role->IsPlayer() || role->GetID() == heroId)
             continue;
         if (IsPlayerWhitelisted(settings, role->GetName()))
@@ -532,8 +540,8 @@ bool BaseHuntPlugin::CheckPlayerSafety(CHero* hero, CGameMap* map, TravelPlugin*
         if (now - firstTick >= threshold) {
             // Resolve player name for logging/notification
             const char* playerName = "Unknown";
-            for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-                const auto& r = Entities::Roles()[i];
+            for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+                CRole* r = roles[i];
                 if (r && r->GetID() == id) { playerName = r->GetName(); break; }
             }
             spdlog::warn("[autohunt] Player '{}' ({}) nearby for {}s, triggering safety escape to Market",
@@ -2104,8 +2112,9 @@ void BaseHuntPlugin::RenderMonsterFilterUI(AutoHuntSettings& settings, CRoleMgr*
     if (mgr && ImGui::TreeNode("Nearby Monster Names")) {
         std::vector<std::string> names;
         std::unordered_set<std::string> seen;
-        for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-            const auto& roleRef = Entities::Roles()[i];
+        const std::vector<CRole*> roles = Entities::Get();
+        for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+            CRole* roleRef = roles[i];
             if (!roleRef || !roleRef->IsMonster())
                 continue;
 
@@ -2167,8 +2176,9 @@ void BaseHuntPlugin::RenderQuickSetupSection(BaseHuntPlugin* /*modePlugin*/)
 
     std::string currentTarget = "None";
     if (mgr && m_targetId != 0) {
-        for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-            const auto& roleRef = Entities::Roles()[i];
+        const std::vector<CRole*> roles = Entities::Get();
+        for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+            CRole* roleRef = roles[i];
             if (roleRef && roleRef->GetID() == m_targetId) {
                 currentTarget = std::string(roleRef->GetName()) + " (" + std::to_string(m_targetId) + ")";
                 break;

@@ -184,17 +184,19 @@ void TravelPlugin::BeginFinalPathfind(CHero* hero, CGameMap* map)
 CRole* TravelPlugin::FindNpcNear(const char* npcName, const Position& expectedPos, int radius)
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
+    if (!mgr)
+        return nullptr;
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
         return nullptr;
 
     if (npcName != nullptr) {
         CRole* best = nullptr;
         float bestDist = (float)(radius + 1);
 
-        for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
-            const auto ref = Entities::Roles()[i];
-            if (!ref) continue;
-            CRole* e = ref.get();
+        for (size_t i = 0; i < roles.size() && i < 500; i++) {
+            CRole* e = roles[i];
+            if (!e) continue;
             if (strcmp(e->GetName(), npcName) != 0) continue;
             float d = expectedPos.DistanceTo(e->m_posMap);
             if (d < bestDist) {
@@ -209,10 +211,9 @@ CRole* TravelPlugin::FindNpcNear(const char* npcName, const Position& expectedPo
     CRole* best = nullptr;
     float bestDist = (float)(radius + 1);
 
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
-        const auto ref = Entities::Roles()[i];
-        if (!ref) continue;
-        CRole* e = ref.get();
+    for (size_t i = 0; i < roles.size() && i < 500; i++) {
+        CRole* e = roles[i];
+        if (!e) continue;
         if (e->IsPlayer() || e->IsMonster()) continue;
         float d = expectedPos.DistanceTo(e->m_posMap);
         if (d < bestDist) {

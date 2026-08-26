@@ -87,15 +87,16 @@ CRole* MulePlugin::FindNearbyRequester(const Position& spot, OBJID requesterId, 
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
     CHero* hero = Game::GetHero();
-    if (!mgr || !hero || requesterId == 0 || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
+    if (!mgr || !hero || requesterId == 0)
+        return nullptr;
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
         return nullptr;
 
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-        const auto& roleRef = Entities::Roles()[i];
-        if (!roleRef)
+    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+        CRole* role = roles[i];
+        if (!role)
             continue;
-
-        CRole* role = roleRef.get();
         if (!role->IsPlayer() || role->GetID() == hero->GetID())
             continue;
         if (role->GetID() != requesterId)
@@ -113,17 +114,18 @@ CRole* MulePlugin::FindNearbyWhitelistedTrader(const MuleSettings& settings, con
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
     CHero* hero = Game::GetHero();
-    if (!mgr || !hero || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
+    if (!mgr || !hero)
+        return nullptr;
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
         return nullptr;
 
     CRole* best = nullptr;
     float bestDist = (float)(radius + 1);
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-        const auto& roleRef = Entities::Roles()[i];
-        if (!roleRef)
+    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+        CRole* role = roles[i];
+        if (!role)
             continue;
-
-        CRole* role = roleRef.get();
         if (!role->IsPlayer() || role->GetID() == hero->GetID())
             continue;
         if (!IsWhitelisted(settings, role->GetName()))

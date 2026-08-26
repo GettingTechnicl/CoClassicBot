@@ -896,18 +896,19 @@ bool MiningPlugin::StartPathNearTarget(CHero* hero, CGameMap* map, const Positio
 CRole* MiningPlugin::FindPlayerNearSpot(const Position& expectedPos, int radius, const char* playerName) const
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
+    if (!mgr)
+        return nullptr;
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
         return nullptr;
 
     CHero* hero = Game::GetHero();
     CRole* best = nullptr;
     float bestDist = (float)(radius + 1);
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-        const auto& roleRef = Entities::Roles()[i];
-        if (!roleRef)
+    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+        CRole* role = roles[i];
+        if (!role)
             continue;
-
-        CRole* role = roleRef.get();
         if (!role->IsPlayer())
             continue;
         if (hero && role->GetID() == hero->GetID())

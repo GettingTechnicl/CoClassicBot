@@ -18,13 +18,15 @@ CRole* FollowPlugin::FindTarget() const
         return nullptr;
 
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
+    if (!mgr)
+        return nullptr;
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
         return nullptr;
 
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-        const auto& ref = Entities::Roles()[i];
-        if (!ref) continue;
-        CRole* role = ref.get();
+    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+        CRole* role = roles[i];
+        if (!role) continue;
         if (!role->IsPlayer()) continue;
         if (_stricmp(role->GetName(), s.targetName) == 0)
             return role;
@@ -38,14 +40,16 @@ int FollowPlugin::NearestMobDistance() const
     if (!hero) return 999;
 
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
+    if (!mgr)
+        return 999;
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
         return 999;
 
     int best = 999;
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-        const auto& ref = Entities::Roles()[i];
-        if (!ref) continue;
-        CRole* e = ref.get();
+    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+        CRole* e = roles[i];
+        if (!e) continue;
         if (!e->IsMonster() || e->IsDead()) continue;
         int d = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
                                    e->m_posMap.x, e->m_posMap.y);
@@ -65,10 +69,10 @@ static int CollectMobs(MobPos* out, int maxCount)
     CRoleMgr* mgr = Game::GetRoleMgr();
     if (!mgr) return 0;
     int count = 0;
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
-        const auto& ref = Entities::Roles()[i];
-        if (!ref) continue;
-        CRole* e = ref.get();
+    const std::vector<CRole*> roles = Entities::Get();
+    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+        CRole* e = roles[i];
+        if (!e) continue;
         if (!e->IsMonster() || e->IsDead()) continue;
         if (count < maxCount)
             out[count++] = { e->m_posMap.x, e->m_posMap.y };

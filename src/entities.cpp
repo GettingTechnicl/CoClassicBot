@@ -315,14 +315,4 @@ namespace Entities
         return g_stats;
     }
 
-    bool   View::empty() const { return Get().empty(); }
-    size_t View::size()  const { return Get().size(); }
-
-    RoleRef View::operator[](size_t i) const
-    {
-        const std::vector<CRole*>& v = Get();
-        return RoleRef{ i < v.size() ? v[i] : nullptr };
-    }
-
-    View Roles() { return View{}; }
 }
