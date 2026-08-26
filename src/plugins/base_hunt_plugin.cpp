@@ -922,7 +922,8 @@ void BaseHuntPlugin::BeginTravelToMarket(TravelPlugin* travel, CHero* hero, cons
     if (m_lastMapId == MAP_MARKET) {
         if (settings.autoRepair && m_townService.NeedsRepair(hero, settings)) {
             SetState(AutoHuntState::Repair, "Moving to Pharmacist");
-        } else if (settings.autoStore && m_townService.NeedsStorage(hero, settings)) {
+        } else if (settings.autoStore && (m_townService.NeedsStorage(hero, settings)
+                || (settings.immediateReturnOnPriorityItems && m_townService.HasPriorityReturnItems(hero, settings)))) {
             SetState(AutoHuntState::StoreItems, "Processing storage rules");
         } else {
             BeginTravelToZone(travel, settings);
@@ -1010,7 +1011,8 @@ void BaseHuntPlugin::HandleTravelToMarket(TravelPlugin* travel, CHero* hero, con
     if (settings.autoRepair && m_townService.NeedsRepair(hero, settings)) {
         m_townService.ResetRepairSequence();
         SetState(AutoHuntState::Repair, "Moving to Pharmacist");
-    } else if (settings.autoStore && m_townService.NeedsStorage(hero, settings)) {
+    } else if (settings.autoStore && (m_townService.NeedsStorage(hero, settings)
+            || (settings.immediateReturnOnPriorityItems && m_townService.HasPriorityReturnItems(hero, settings)))) {
         m_townService.ResetStoreSequence();
         SetState(AutoHuntState::StoreItems, "Processing storage rules");
     } else {
@@ -1341,6 +1343,16 @@ void BaseHuntPlugin::Update()
     }
 
     // Meteor packing (shared)
+    if (hero) {
+        static DWORD s_lastPackDiagTick = 0;
+        const DWORD diagNow = GetTickCount();
+        if (diagNow - s_lastPackDiagTick >= 5000) {
+            s_lastPackDiagTick = diagNow;
+            spdlog::trace("[town-diag] packMeteorsIntoScrolls={} meteorCount={} autoRepair={} autoStore={} immediateReturnOnPriorityItems={}",
+                settings.packMeteorsIntoScrolls, CountInventoryItemsByType(hero, ItemTypeId::METEOR),
+                settings.autoRepair, settings.autoStore, settings.immediateReturnOnPriorityItems);
+        }
+    }
     if (settings.packMeteorsIntoScrolls && hero) {
         const DWORD packNow = GetTickCount();
         if (packNow - m_lastPackTick >= GetItemActionIntervalMs(settings)) {
@@ -2224,6 +2236,17 @@ void BaseHuntPlugin::RenderTownRunsSection()
     ImGui::SliderInt("Go To Town When Bag Has", &settings.bagStoreThreshold, 1, CHero::MAX_BAG_ITEMS);
     ImGui::Checkbox("Return to Town Immediately for Priority Items", &settings.immediateReturnOnPriorityItems);
     ImGui::Checkbox("Pack Meteors into Meteor Scrolls", &settings.packMeteorsIntoScrolls);
+    HelpMarkerOnSameLine("Self-service crafting, no NPC required - fires automatically anywhere once 10+ raw Meteors are in the bag.");
+
+    ImGui::SeparatorText("Bank Deposits");
+    ImGui::Checkbox("Auto-Deposit Meteors/DragonBalls at Treasure Bank", &settings.storeTreasureBank);
+    ImGui::Checkbox("Auto-Deposit +1/+2 Gear at Compose Bank", &settings.storeComposeBank);
+    HelpMarkerOnSameLine("Items matching an entry on the Warehouse or Priority Return list below always go to the Warehouse instead, even if these are checked.");
+    ImGui::Checkbox("Auto-Deposit Silver", &settings.autoDepositSilver);
+    if (settings.autoDepositSilver)
+        ImGui::InputInt("Keep This Much Silver On Hand", &settings.silverKeepAmount, 1000, 10000);
+    if (settings.silverKeepAmount < 0)
+        settings.silverKeepAmount = 0;
 
     ImGui::SeparatorText("Arrow Restock");
     ImGui::Checkbox("Buy Arrows", &settings.buyArrows);

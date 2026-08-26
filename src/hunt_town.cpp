@@ -158,22 +158,33 @@ bool HuntTownService::NeedTownRun(CHero* hero, const AutoHuntSettings& settings,
     if (!hero)
         return false;
 
-    if (NeedsRepair(hero, settings))
+    const bool needsRepair = NeedsRepair(hero, settings);
+    const bool priorityReturn = settings.autoStore && settings.immediateReturnOnPriorityItems
+        && HasPriorityReturnItems(hero, settings);
+    const bool needsStorage = NeedsStorage(hero, settings);
+    const int bagThreshold = CHero::ClampBagThreshold(settings.bagStoreThreshold);
+    const bool bagOverThreshold = (int)hero->m_deqItem.size() >= bagThreshold || hero->IsBagFull();
+
+    static DWORD s_lastDiagTick = 0;
+    const DWORD diagNow = GetTickCount();
+    if (diagNow - s_lastDiagTick >= 5000) {
+        s_lastDiagTick = diagNow;
+        spdlog::trace("[town-diag] NeedTownRun: needsRepair={} needsArrows={} priorityReturn={} needsStorage={} bagOverThreshold={} bagSize={}/{}",
+            needsRepair, needsArrows, priorityReturn, needsStorage, bagOverThreshold,
+            (int)hero->m_deqItem.size(), bagThreshold);
+    }
+
+    if (needsRepair)
         return true;
 
     if (needsArrows)
         return true;
 
-    if (settings.autoStore && settings.immediateReturnOnPriorityItems
-        && HasPriorityReturnItems(hero, settings)) {
+    if (priorityReturn)
         return true;
-    }
 
-    if (NeedsStorage(hero, settings)) {
-        const int bagThreshold = CHero::ClampBagThreshold(settings.bagStoreThreshold);
-        if ((int)hero->m_deqItem.size() >= bagThreshold || hero->IsBagFull())
-            return true;
-    }
+    if (needsStorage && bagOverThreshold)
+        return true;
 
     return false;
 }
@@ -323,17 +334,23 @@ bool HuntTownService::ShouldStoreWarehouseItem(const AutoHuntSettings& settings,
             return false;
     }
 
-    if (settings.storeTreasureBank && IsTreasureBankItem(item))
-        return false;
-
-    if (settings.storeComposeBank && IsComposeBankItem(item))
-        return false;
-
+    // User-explicit selections always win over the default Treasure/Compose
+    // Bank auto-routing below — e.g. a Meteor added to the Priority Return
+    // list should go to the Warehouse even though storeTreasureBank would
+    // otherwise silently claim it first (that default has no UI toggle, so
+    // without this the user's own list picks would look completely inert
+    // for any item type the Treasure/Compose Bank auto-routing also covers).
     if (IsSelectedPriorityReturnItem(settings, item.GetTypeID()))
         return true;
 
     if (IsSelectedWarehouseItem(settings, item.GetTypeID()))
         return true;
+
+    if (settings.storeTreasureBank && IsTreasureBankItem(item))
+        return false;
+
+    if (settings.storeComposeBank && IsComposeBankItem(item))
+        return false;
 
     if (IsEquipmentQualitySort(item.GetSort())) {
         const int quality = item.GetQuality();
@@ -804,6 +821,17 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
             return;
 
         case StorePhase::WaitTreasureBank:
+            // town-diag: OpenTreasureBank has no accompanying "open window"
+            // packet the way OpenWarehouse does — this phase can advance
+            // purely off the 1200ms timeout below even if the bank window
+            // never actually opened server-side. Log which path fired so a
+            // live capture can confirm whether IsNpcActive() ever goes true
+            // for this NPC at all.
+            if (hero->IsNpcActive() && hero->GetActiveNpc() == m_treasureBankNpcId) {
+                spdlog::debug("[town-diag] WaitTreasureBank: NPC {} confirmed active, proceeding to deposit", m_treasureBankNpcId);
+            } else if (now - m_lastNpcActionTick > 1200) {
+                spdlog::warn("[town-diag] WaitTreasureBank: timed out after 1200ms WITHOUT IsNpcActive() confirming NPC {} - proceeding anyway, deposit may silently fail server-side", m_treasureBankNpcId);
+            }
             if ((hero->IsNpcActive() && hero->GetActiveNpc() == m_treasureBankNpcId)
                 || now - m_lastNpcActionTick > 1200) {
                 m_storePhase = HasTreasureBankMeteorItems(hero)
