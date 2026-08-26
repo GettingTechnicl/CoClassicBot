@@ -122,7 +122,7 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
     }
     printf("[auto-login] Login window found.\n");
 
-    Sleep(500);  // let it finish laying out/rendering after first appearing
+    Sleep(1500);  // let it finish laying out/rendering after first appearing
 
     SetForegroundWindow(loginWnd);
     Sleep(200);
@@ -136,18 +136,22 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
     const POINT usernamePt = ResolveScreenPoint(loginWnd, kUsernameField);
     printf("[auto-login] Clicking username field at (%ld,%ld)\n", usernamePt.x, usernamePt.y);
     SendClick(usernamePt);
-    Sleep(150);
-    // Select-all first in case the field has leftover text from a previous
-    // session (e.g. the game's own "Remember Login?" username autofill)
-    // before typing the real value.
-    {
-        INPUT ctrlA[4] = {};
-        ctrlA[0].type = INPUT_KEYBOARD; ctrlA[0].ki.wVk = VK_CONTROL;
-        ctrlA[1].type = INPUT_KEYBOARD; ctrlA[1].ki.wVk = 'A';
-        ctrlA[2].type = INPUT_KEYBOARD; ctrlA[2].ki.wVk = 'A'; ctrlA[2].ki.dwFlags = KEYEVENTF_KEYUP;
-        ctrlA[3].type = INPUT_KEYBOARD; ctrlA[3].ki.wVk = VK_CONTROL; ctrlA[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(4, ctrlA, sizeof(INPUT));
-    }
+    // Session 10: click coordinates confirmed pixel-accurate live (matched
+    // the measured field position almost exactly), yet username still came
+    // up empty while password (identical click+type pattern, just later in
+    // the sequence) worked. Two candidate causes, addressed together since
+    // there's no way to isolate them without another live round-trip: (1) a
+    // Ctrl+A select-all was sent before typing username but not password —
+    // if this custom-rendered UI doesn't handle Ctrl+A like a real text
+    // field, that keystroke could itself be what dropped focus/input state
+    // right before typing; removed rather than debugged further, since nothing
+    // here actually needs it (the account picker always provides the full
+    // username, so there's no partial-text-append risk to guard against).
+    // (2) the field may simply not be ready to receive input yet this soon
+    // after the window first appears/gains focus — the 150ms gap here was
+    // much shorter than the ~700ms+ that had already elapsed by the time
+    // password's click ran. Longer, equal delay before both now.
+    Sleep(600);
     SendText(request.username);
     printf("[auto-login] Username typed.\n");
 

@@ -163,6 +163,11 @@ std::vector<AccountProfile> LoadAll()
         profile.server = entry.value("server", "");
         const std::string encoded = entry.value("password", "");
         profile.password = DpapiDecrypt(Base64Decode(encoded));
+        profile.useProxy = entry.value("useProxy", false);
+        profile.proxyHostPort = entry.value("proxyHostPort", "");
+        profile.proxyUser = entry.value("proxyUser", "");
+        const std::string encodedProxyPassword = entry.value("proxyPassword", "");
+        profile.proxyPassword = DpapiDecrypt(Base64Decode(encodedProxyPassword));
         if (profile.username.empty())
             continue;  // corrupt entry — skip rather than fail the whole load
         profiles.push_back(std::move(profile));
@@ -180,6 +185,10 @@ bool SaveAll(const std::vector<AccountProfile>& profiles)
         entry["username"] = profile.username;
         entry["server"] = profile.server;
         entry["password"] = DpapiEncrypt(profile.password);
+        entry["useProxy"] = profile.useProxy;
+        entry["proxyHostPort"] = profile.proxyHostPort;
+        entry["proxyUser"] = profile.proxyUser;
+        entry["proxyPassword"] = DpapiEncrypt(profile.proxyPassword);
         root.push_back(std::move(entry));
     }
 

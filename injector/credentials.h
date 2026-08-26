@@ -21,6 +21,15 @@ struct AccountProfile
     std::string username;
     std::string password;  // plaintext in memory only; encrypted at rest
     std::string server;    // matches the login form's Server dropdown text
+
+    // Saved SOCKS5 proxy choice for this account — lets launcher.exe skip
+    // its interactive proxy setup dialog entirely once an account is
+    // selected, reusing whatever was chosen when the account was added.
+    // useProxy=false means "connect directly", not "not decided yet".
+    bool useProxy = false;
+    std::string proxyHostPort;   // "host:port", e.g. "127.0.0.1:1080"
+    std::string proxyUser;       // empty if the proxy needs no auth
+    std::string proxyPassword;   // plaintext in memory only; encrypted at rest
 };
 
 namespace Credentials {

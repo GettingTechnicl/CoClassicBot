@@ -253,11 +253,40 @@ static bool ShowAccountPickerDialog(AccountProfile* outProfile)
                         return 0;
                     if (!InputBox(hwnd, "Add Account - Server", "Server (as shown in the login screen's dropdown):", server, sizeof(server), server))
                         return 0;
+
                     AccountProfile profile;
                     profile.label = label;
                     profile.username = username;
                     profile.password = password;
                     profile.server = server;
+
+                    // Saved here so selecting this account later skips the
+                    // interactive SOCKS5 dialog entirely — see main()'s use
+                    // of haveProfile/selectedProfile.useProxy.
+                    const int useProxy = MessageBoxA(hwnd,
+                        "Use a SOCKS5 proxy for this account?\n\n"
+                        "Select YES to save a proxy for this account (skips the proxy setup "
+                        "dialog on future launches). Select NO to always connect directly.",
+                        "Add Account - Proxy", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
+                    if (useProxy == IDYES) {
+                        char hostPort[128] = "", proxyUser[128] = "", proxyPassword[128] = "";
+                        if (!InputBox(hwnd, "Add Account - Proxy Address", "Proxy host:port (e.g. 127.0.0.1:1080):",
+                                hostPort, sizeof(hostPort)))
+                            return 0;
+                        const int useAuth = MessageBoxA(hwnd, "Does this proxy require a username/password?",
+                            "Add Account - Proxy Auth", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
+                        if (useAuth == IDYES) {
+                            if (!InputBox(hwnd, "Add Account - Proxy Username", "Proxy username:", proxyUser, sizeof(proxyUser)))
+                                return 0;
+                            if (!InputBox(hwnd, "Add Account - Proxy Password", "Proxy password:", proxyPassword, sizeof(proxyPassword), "", true))
+                                return 0;
+                        }
+                        profile.useProxy = true;
+                        profile.proxyHostPort = hostPort;
+                        profile.proxyUser = proxyUser;
+                        profile.proxyPassword = proxyPassword;
+                    }
+
                     s_profiles.push_back(std::move(profile));
                     Credentials::SaveAll(s_profiles);
                     refreshList(s_listBox);
@@ -1701,10 +1730,28 @@ int main(int argc, char** argv)
     else
         printf("[*] No account selected — you'll need to log in manually this session.\n");
 
-    // Show SOCKS5 configuration dialog if:
+    // A selected account carries its own saved proxy choice (see
+    // AccountProfile::useProxy in credentials.h) — bypass the interactive
+    // SOCKS5 dialog entirely in that case, whichever way it was saved.
+    // Otherwise fall back to the original interactive flow, shown if:
     // 1. --proxy was not provided via command line
     // 2. --no-prompt was not specified
-    if (!options.m_noPrompt && !options.m_proxy.has_value()) {
+    if (haveProfile) {
+        if (selectedProfile.useProxy) {
+            Endpoint proxyEndpoint;
+            if (ParseEndpoint(selectedProfile.proxyHostPort, &proxyEndpoint)) {
+                options.m_proxy = proxyEndpoint;
+                options.m_proxyUser = selectedProfile.proxyUser;
+                options.m_proxyPassword = selectedProfile.proxyPassword;
+                printf("[+] Using saved proxy for this account: %s\n", selectedProfile.proxyHostPort.c_str());
+            } else {
+                printf("[!] Saved proxy address \"%s\" is invalid — connecting directly instead.\n",
+                    selectedProfile.proxyHostPort.c_str());
+            }
+        } else {
+            printf("[*] This account is configured to connect directly (no proxy).\n");
+        }
+    } else if (!options.m_noPrompt && !options.m_proxy.has_value()) {
         Socks5PromptResult promptResult = ShowSocks5ConfigDialog(&options);
         if (promptResult == Socks5PromptResult::Configured) {
             printf("[+] SOCKS5 proxy configured via dialog.\n");
