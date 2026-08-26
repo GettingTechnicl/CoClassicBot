@@ -297,6 +297,15 @@ private:
     }
 public:
 
+    // Session 10 [SAFETY]: Offsets::ENTITY_SET/ENTITY_INFO are marked
+    // UNVERIFIED for v1074 above (same family as the old GAME_MAP RVA, which
+    // WAS confirmed garbage and fixed — these two siblings never got the
+    // same treatment). GetEntitySet()'s Resolve() is a pure address cast (no
+    // memory touched here), so the real risk lives in CEntitySet.cpp/
+    // CEntityInfo.cpp's field reads on the returned pointer — see the
+    // SEH-guarded helpers there. GetEntityInfo() is different: it actually
+    // DEREFERENCES base+RVA to read the pointer stored there, so THAT read
+    // itself needs guarding here, at the one place both callers go through.
     static CEntitySet* GetEntitySet() {
         if (!g_qwModuleBase) return nullptr;
         return Resolve<CEntitySet*>(Offsets::ENTITY_SET);
@@ -304,7 +313,11 @@ public:
 
     static CEntityInfo* GetEntityInfo() {
         if (!g_qwModuleBase) return nullptr;
-        return *Resolve<CEntityInfo**>(Offsets::ENTITY_INFO);
+        __try {
+            return *Resolve<CEntityInfo**>(Offsets::ENTITY_INFO);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return nullptr;
+        }
     }
 
     static CHero* GetHero() {
