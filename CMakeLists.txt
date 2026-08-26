@@ -107,6 +107,21 @@ set_target_properties(coclassic PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# Session 11: emit a PDB alongside the Release DLL so a crash address can be
+# symbolized directly against the exact binary that's actually running,
+# instead of having to reconstruct a matching build after the fact (which
+# turned out to be unreliable — a from-scratch worktree rebuild with /Zi
+# added via an overridden CMAKE_CXX_FLAGS_RELEASE came out roughly 2x the
+# size with a totally different code layout, because MSVC's linker disables
+# /OPT:REF,ICF by default once /DEBUG is present unless re-enabled — so a
+# naive debug rebuild silently stops folding/stripping code the same way,
+# and its addresses no longer correspond to the shipping binary at all).
+# /Zi + /DEBUG + explicit /OPT:REF,ICF keeps codegen and layout identical to
+# a plain Release build, just with debug records added on top — this has no
+# runtime behavior or performance cost, only extra disk space for the PDB.
+target_compile_options(coclassic PRIVATE $<$<CONFIG:Release>:/Zi>)
+target_link_options(coclassic PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
+
 add_executable(launcher
     injector/main.cpp
     injector/credentials.cpp
