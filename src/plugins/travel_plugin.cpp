@@ -196,7 +196,7 @@ CRole* TravelPlugin::FindNpcNear(const char* npcName, const Position& expectedPo
 
         for (size_t i = 0; i < roles.size() && i < 500; i++) {
             CRole* e = roles[i];
-            if (!e) continue;
+            if (!e || !Entities::IsAlive(e)) continue;
             if (strcmp(e->GetName(), npcName) != 0) continue;
             float d = expectedPos.DistanceTo(e->m_posMap);
             if (d < bestDist) {
@@ -213,7 +213,7 @@ CRole* TravelPlugin::FindNpcNear(const char* npcName, const Position& expectedPo
 
     for (size_t i = 0; i < roles.size() && i < 500; i++) {
         CRole* e = roles[i];
-        if (!e) continue;
+        if (!e || !Entities::IsAlive(e)) continue;
         if (e->IsPlayer() || e->IsMonster()) continue;
         float d = expectedPos.DistanceTo(e->m_posMap);
         if (d < bestDist) {

@@ -95,7 +95,7 @@ CRole* MulePlugin::FindNearbyRequester(const Position& spot, OBJID requesterId, 
 
     for (size_t i = 0; i < roles.size() && i < 500; ++i) {
         CRole* role = roles[i];
-        if (!role)
+        if (!role || !Entities::IsAlive(role))
             continue;
         if (!role->IsPlayer() || role->GetID() == hero->GetID())
             continue;
@@ -124,7 +124,7 @@ CRole* MulePlugin::FindNearbyWhitelistedTrader(const MuleSettings& settings, con
     float bestDist = (float)(radius + 1);
     for (size_t i = 0; i < roles.size() && i < 500; ++i) {
         CRole* role = roles[i];
-        if (!role)
+        if (!role || !Entities::IsAlive(role))
             continue;
         if (!role->IsPlayer() || role->GetID() == hero->GetID())
             continue;

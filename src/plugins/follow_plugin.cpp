@@ -26,7 +26,7 @@ CRole* FollowPlugin::FindTarget() const
 
     for (size_t i = 0; i < roles.size() && i < 500; ++i) {
         CRole* role = roles[i];
-        if (!role) continue;
+        if (!role || !Entities::IsAlive(role)) continue;
         if (!role->IsPlayer()) continue;
         if (_stricmp(role->GetName(), s.targetName) == 0)
             return role;
@@ -49,7 +49,7 @@ int FollowPlugin::NearestMobDistance() const
     int best = 999;
     for (size_t i = 0; i < roles.size() && i < 500; ++i) {
         CRole* e = roles[i];
-        if (!e) continue;
+        if (!e || !Entities::IsAlive(e)) continue;
         if (!e->IsMonster() || e->IsDead()) continue;
         int d = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
                                    e->m_posMap.x, e->m_posMap.y);
@@ -72,7 +72,7 @@ static int CollectMobs(MobPos* out, int maxCount)
     const std::vector<CRole*> roles = Entities::Get();
     for (size_t i = 0; i < roles.size() && i < 500; ++i) {
         CRole* e = roles[i];
-        if (!e) continue;
+        if (!e || !Entities::IsAlive(e)) continue;
         if (!e->IsMonster() || e->IsDead()) continue;
         if (count < maxCount)
             out[count++] = { e->m_posMap.x, e->m_posMap.y };

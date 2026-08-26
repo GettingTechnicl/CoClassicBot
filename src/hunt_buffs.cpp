@@ -339,7 +339,11 @@ CMapItem* HuntBuffManager::FindNearbyPotionLoot(
     CMapItem* best = nullptr;
     float bestDist = (std::numeric_limits<float>::max)();
     for (CMapItem* itemRef : MapItems::Get()) {
-        if (!itemRef)
+        // Session 11 [CRASH FIX]: same hazard class as the loot-scanning
+        // functions fixed earlier this session — ground items are raw
+        // pointers into the game's own heap, freeable at any moment
+        // between the scan snapshot and this loop touching them.
+        if (!itemRef || !MapItems::IsAlive(itemRef))
             continue;
 
         if (cb.isLootPickupIgnoredFn && cb.isLootPickupIgnoredFn(itemRef->m_id, now))

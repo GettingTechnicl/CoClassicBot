@@ -2148,7 +2148,7 @@ void BaseHuntPlugin::RenderMonsterFilterUI(AutoHuntSettings& settings, CRoleMgr*
         const std::vector<CRole*> roles = Entities::Get();
         for (size_t i = 0; i < roles.size() && i < 500; ++i) {
             CRole* roleRef = roles[i];
-            if (!roleRef || !roleRef->IsMonster())
+            if (!roleRef || !Entities::IsAlive(roleRef) || !roleRef->IsMonster())
                 continue;
 
             const std::string name = roleRef->GetName();
@@ -2212,7 +2212,7 @@ void BaseHuntPlugin::RenderQuickSetupSection(BaseHuntPlugin* /*modePlugin*/)
         const std::vector<CRole*> roles = Entities::Get();
         for (size_t i = 0; i < roles.size() && i < 500; ++i) {
             CRole* roleRef = roles[i];
-            if (roleRef && roleRef->GetID() == m_targetId) {
+            if (roleRef && Entities::IsAlive(roleRef) && roleRef->GetID() == m_targetId) {
                 currentTarget = std::string(roleRef->GetName()) + " (" + std::to_string(m_targetId) + ")";
                 break;
             }

@@ -120,7 +120,7 @@ bool HasGroundItemOnTile(const CGameMap* map, const Position& pos)
         return false;
 
     for (CMapItem* itemRef : MapItems::Get()) {
-        if (!itemRef)
+        if (!itemRef || !MapItems::IsAlive(itemRef))
             continue;
         if (itemRef->m_pos.x == pos.x && itemRef->m_pos.y == pos.y)
             return true;
@@ -907,7 +907,7 @@ CRole* MiningPlugin::FindPlayerNearSpot(const Position& expectedPos, int radius,
     float bestDist = (float)(radius + 1);
     for (size_t i = 0; i < roles.size() && i < 500; ++i) {
         CRole* role = roles[i];
-        if (!role)
+        if (!role || !Entities::IsAlive(role))
             continue;
         if (!role->IsPlayer())
             continue;

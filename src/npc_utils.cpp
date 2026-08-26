@@ -9,7 +9,7 @@ CRole* FindNpcByName(const char* name, const Position& expectedPos, int radius)
     CRole* best = nullptr;
     float bestDist = (float)(radius + 1);
     for (CRole* role : Entities::Get()) {
-        if (!role)
+        if (!role || !Entities::IsAlive(role))
             continue;
 
         if (role->IsPlayer() || role->IsMonster())

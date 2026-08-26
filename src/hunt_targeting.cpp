@@ -172,7 +172,13 @@ std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool pr
     targets.reserve((std::min)(roles.size(), size_t(128)));
 
     for (CRole* role : roles) {
-        if (!role)
+        // Session 11 [CRASH FIX]: same hazard class as the loot-scanning
+        // functions fixed earlier this session — a raw pointer into the
+        // game's own heap, freeable at any moment between the scan
+        // snapshot and this loop touching it. This is one of the hottest
+        // consumers of Entities::Get() in the whole codebase (every
+        // combat-target-selection tick), so it's a high-value fix.
+        if (!role || !Entities::IsAlive(role))
             continue;
 
         if (!role->IsMonster() || role->IsDead() || role->TestState(USERSTATUS_GHOST))

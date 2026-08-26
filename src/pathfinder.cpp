@@ -60,7 +60,11 @@ bool IsTileOccupied(int tileX, int tileY)
         return false;
     for (size_t i = 0; i < roles.size() && i < 500; i++) {
         CRole* e = roles[i];
-        if (!e)
+        // Session 11 [CRASH FIX]: same hazard class as the loot-scanning
+        // functions fixed elsewhere this session — a raw pointer into the
+        // game's own heap, freeable at any moment between the scan
+        // snapshot and this loop touching it.
+        if (!e || !Entities::IsAlive(e))
             continue;
         if (e->m_posMap.x == tileX && e->m_posMap.y == tileY)
             return true;
@@ -96,7 +100,7 @@ static bool IsTileNearMonster(int tileX, int tileY, int radius)
         return false;
     for (size_t i = 0; i < roles.size() && i < 500; i++) {
         CRole* e = roles[i];
-        if (!e) continue;
+        if (!e || !Entities::IsAlive(e)) continue;
         if (!e->IsMonster()) continue;
         if (CGameMap::TileDist(tileX, tileY, e->m_posMap.x, e->m_posMap.y) < radius)
             return true;
@@ -145,7 +149,7 @@ Position Pathfinder::FindSafeAlternative(CHero* hero, CGameMap* map, const Posit
             if (!roles.empty() && roles.size() < 10000) {
                 for (size_t i = 0; i < roles.size() && i < 500; i++) {
                     CRole* e = roles[i];
-                    if (!e) continue;
+                    if (!e || !Entities::IsAlive(e)) continue;
                     if (!e->IsMonster()) continue;
                     int d = CGameMap::TileDist(candidate.x, candidate.y, e->m_posMap.x, e->m_posMap.y);
                     if (d < minMobDist) minMobDist = d;

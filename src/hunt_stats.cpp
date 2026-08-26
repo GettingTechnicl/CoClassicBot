@@ -238,7 +238,11 @@ void CollectMonstersInZone(CRoleMgr* mgr, OBJID currentMapId,
         return;
     // Session 9: CRoleMgr::m_deqRole is not a deque on v1074 — see entities.h.
     for (CRole* role : Entities::Get()) {
-        if (!role) continue;
+        // Session 11 [CRASH FIX]: same hazard class as the loot-scanning
+        // functions fixed earlier this session — a raw pointer into the
+        // game's own heap, freeable at any moment between the scan
+        // snapshot and this loop touching it.
+        if (!role || !Entities::IsAlive(role)) continue;
         if (!role->IsMonster()) continue;
         if (role->IsDead()) continue;
         if (!IsPointInHuntZone(settings, currentMapId, role->m_posMap))

@@ -300,7 +300,7 @@ void CHero::Attack(OBJID idTarget)
 {
     // Session 9: CRoleMgr::m_deqRole is not a deque on v1074 — see entities.h.
     for (CRole* role : Entities::Get()) {
-        if (role && role->GetID() == idTarget) {
+        if (role && Entities::IsAlive(role) && role->GetID() == idTarget) {
             AttackTarget(idTarget, role->m_posMap);
             return;
         }
@@ -363,7 +363,7 @@ void CHero::PickupItem(OBJID idItem, const Position& pos)
 {
     if (CGameMap* map = Game::GetMap()) {
         for (CMapItem* itemRef : MapItems::Get()) {
-            if (!itemRef || itemRef->m_id != idItem)
+            if (!itemRef || !MapItems::IsAlive(itemRef) || itemRef->m_id != idItem)
                 continue;
             if (itemRef->m_pos.x != pos.x || itemRef->m_pos.y != pos.y)
                 continue;

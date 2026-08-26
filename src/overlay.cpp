@@ -791,7 +791,13 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                 GuildSettings& guild = GetGuildSettings();
                                 bool deadFilter = guild.showDeadOnly && hero->HasSyndicate();
                                 for (CRole* e : entityList) {
-                                    if (!e) continue;
+                                    // Session 11 [CRASH FIX]: same hazard class as the
+                                    // ground-item loop below (and the loot-scanning
+                                    // functions fixed earlier this session) - a raw
+                                    // pointer into the game's own heap, freeable at
+                                    // any moment (entity dies/despawns) between the
+                                    // scan snapshot and this render loop touching it.
+                                    if (!e || !Entities::IsAlive(e)) continue;
                                     if (e->GetID() == hero->GetID()) continue;
 
                                     bool isPlayer = e->IsPlayer();
@@ -831,7 +837,13 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                 const auto& mapItemList = MapItems::Get();
                                 for (size_t i = 0; i < mapItemList.size() && i < 500; i++) {
                                     CMapItem* item = mapItemList[i];
-                                    if (!item) continue;
+                                    // Session 11 [CRASH FIX]: confirmed live crash site -
+                                    // same hazard as the loot-scanning functions fixed
+                                    // earlier this session (hunt_loot.cpp) - ground items
+                                    // are raw pointers into the game's own heap, freeable
+                                    // at any moment (picked up/despawned) between the scan
+                                    // snapshot and this render loop touching item->m_pos.
+                                    if (!item || !MapItems::IsAlive(item)) continue;
 
                                     float edx = (float)item->m_pos.x - camTileX;
                                     float edy = (float)item->m_pos.y - camTileY;
@@ -1311,7 +1323,9 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                 const std::vector<CRole*> tableRoles = Entities::Get();
                                 for (size_t i = 0; i < tableRoles.size() && i < 500; i++) {
                                     CRole* e = tableRoles[i];
-                                    if (!e) continue;
+                                    // Session 11 [CRASH FIX]: same hazard as the minimap's
+                                    // entity loop earlier in this function - see its comment.
+                                    if (!e || !Entities::IsAlive(e)) continue;
 
                                     bool isPlayer = e->IsPlayer();
                                     bool isMonster = e->IsMonster();
@@ -1372,7 +1386,9 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                 const auto& mapItemList = MapItems::Get();
                                 for (size_t i = 0; i < mapItemList.size() && i < 500; i++) {
                                     CMapItem* item = mapItemList[i];
-                                    if (!item) continue;
+                                    // Session 11 [CRASH FIX]: same hazard as the minimap's
+                                    // ground-item loop above - see its comment.
+                                    if (!item || !MapItems::IsAlive(item)) continue;
 
                                     ImGui::PushID((int)(10000 + i));
 
@@ -2041,7 +2057,7 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                         float bestDist = 1e9f;
                         if (hero) {
                             for (CRole* r : Entities::Get()) {
-                                if (!r || !r->IsMonster() || r->IsDead())
+                                if (!r || !Entities::IsAlive(r) || !r->IsMonster() || r->IsDead())
                                     continue;
                                 const float d = hero->m_posMap.DistanceTo(r->m_posMap);
                                 if (d < bestDist) { bestDist = d; nearest = r; }
