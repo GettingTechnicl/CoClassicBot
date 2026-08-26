@@ -21,12 +21,16 @@ All dependencies are vendored — no package manager needed.
 2. Select **Release | x64**
 3. Build the solution
 
+> **Note:** `coclassic.sln`/`coclassic.vcxproj` only builds the main DLL — there is currently no Visual Studio project for `launcher.exe`. Use CMake (below) to build the launcher, or to build everything in one step.
+
 ### CMake
 
 ```bash
-cmake -B build -G "Visual Studio 17 2022" -A x64
+cmake -B build -A x64
 cmake --build build --config Release
 ```
+
+CMake auto-detects whatever Visual Studio toolset is installed (add `-G "Visual Studio 17 2022"` etc. to pin a specific one). **This is the actively maintained build path** — `coclassic.vcxproj`'s source-file list must be kept in sync with `CMakeLists.txt` by hand when adding files (see Build Notes), and `launcher.exe` (the `injector/` sources) currently has no Visual Studio project file at all, so it can only be built via CMake.
 
 ### Output
 
@@ -41,16 +45,22 @@ cmake --build build --config Release
 ## Usage
 
 1. Build the solution (see above)
-2. Launch `launcher.exe` — it will start a fresh game process and inject the DLL, OR use a DLL injector and inject after logging in.
+2. Run `launcher.exe` **as Administrator** (the game itself requires elevation, and the launcher auto-requests it). A character-select dialog appears first:
+   - Pick a saved account to log in automatically, add a new one (label, username, password, server, optional per-account proxy — credentials are DPAPI-encrypted, tied to the current Windows user account, stored in `accounts.dat` next to `launcher.exe`), or skip to fall through to a manual/proxy-only launch.
+   - If an account is selected, the launcher starts the game, injects the DLL, and drives the login screen itself (the login window is custom-rendered with no real Win32 controls, so this is coordinate-based synthetic input, not `WM_SETTEXT`) — no manual login needed.
+   - The launcher then supervises the game process. If it crashes, it automatically relaunches and re-logs in with the same account, and any plugin that was enabled before the crash (autohunt, mining, etc.) resumes automatically — this resume-on-relaunch behavior is one-shot and only fires after a crash, never on a fresh manual login.
+   - Skipping the account picker falls back to the previous behavior: inject into a fresh or already-running game process, log in manually, no auto-relaunch.
 3. Press **Insert** to toggle the overlay
 
 ### Launcher Networking
 
 The launcher can launch directly, route the game login connection through a SOCKS5 relay, or be used while a system VPN is already connected.
 
+Proxy settings can now be saved per-account in the character-select dialog (prompted when adding a new account). If a saved account with its own proxy settings is selected, those are used directly and the standalone SOCKS5 prompt below is skipped entirely. The prompt only appears when skipping the account picker (or when no accounts are saved yet).
+
 #### Interactive SOCKS5 Prompt
 
-Running `launcher.exe` with no proxy arguments shows a pre-launch SOCKS5 prompt:
+Running `launcher.exe` with no proxy arguments (and no account selected) shows a pre-launch SOCKS5 prompt:
 
 1. Choose whether to use SOCKS5.
 2. Enter proxy `host:port`.
@@ -123,7 +133,7 @@ Plugins are C++ classes implementing the `IPlugin` interface. They are compiled 
 
 | Plugin                       | Description |
 |------------------------------|-------------|
-| **Melee Hunt** / **Archer Hunt** | Hunting automation with zone selection, combat, loot, and town runs |
+| **Melee Hunt** / **Archer Hunt** | Hunting automation with zone selection, combat, loot, town runs, and Player Safety/Paranoia Mode player-avoidance |
 | **Mining**                   | Mine-travel automation with warehouse storage and mule trading |
 | **Mule**                     | Market trade helper that accepts trades from whitelisted players |
 | **Travel**                   | Cross-map travel via portals, NPCs, and VIP teleport gateways |
@@ -136,12 +146,15 @@ Plugins are C++ classes implementing the `IPlugin` interface. They are compiled 
 ### Core Systems
 
 - **Overlay** — Hooks `IDXGISwapChain::Present` for ImGui rendering on the game's D3D10.1 device
-- **Entity Hooks** — `RenderEntityVisual` hook dispatches per-entity callbacks to plugins
-- **Pathfinder** — Singleton jump-by-waypoint path executor with stuck detection
+- **Entity Hooks** — `RenderEntityVisual` hook dispatches per-entity callbacks to plugins; a background heap scan (`entities.cpp`) also drives live entity/ground-item enumeration (`Entities::Get()`/`MapItems::Get()`)
+- **Pathfinder** — Singleton jump/walk-by-waypoint path executor with stuck detection; movement pacing (speedhack-aware) is supplied live per-call via a callback rather than fixed once per route
 - **Gateway Graph** — Dijkstra pathfinding through inter-map portals and gateways
 - **Config** — Per-character INI persistence with autosave
 - **Packet Logger** — Hooks `CNetClient::SendMsg` to log outbound packets
 - **Discord Webhooks** — Whisper notification forwarding
+- **Auto-Login / Crash-Recovery Supervision** (`injector/`) — DPAPI-encrypted multi-account credential store, coordinate-based synthetic-input login automation, and a supervisor loop that auto-relaunches and re-logs-in after a crash, resuming any plugin that was enabled beforehand
+- **Player Safety / Paranoia Mode** — detects nearby non-whitelisted players and either fully retreats to Market and idles (Player Safety) or biases normal hunting decisions — target choice, idle-exploration destination, zone-leash tolerance — away from the detected player while continuing to hunt (Paranoia Mode); both are positioning/distance-based only, no facing/camera data is available for other players
+- **Spawn Memory** — a per-map heatmap of observed monster positions that biases idle-exploration destinations toward historically monster-dense areas
 
 ## Project Structure
 
@@ -162,17 +175,23 @@ coclassic/
 │       ├── plugin_mgr.cpp/h # Plugin manager singleton
 │       └── *_plugin.cpp/h   # Individual plugins
 ├── injector/               # Standalone launcher executable
-│   └── main.cpp
+│   ├── main.cpp             # Entry point, account picker, proxy/relay, crash-recovery supervision loop
+│   ├── credentials.cpp/h    # DPAPI-encrypted multi-account credential store (accounts.dat)
+│   └── auto_login.cpp/h     # Coordinate-based synthetic-input login automation
 ├── tests/                  # Unit tests
 │   └── map_tests.cpp
+├── tools/                  # Standalone diagnostic scripts (not part of the build)
+│   ├── parse_minidump.ps1   # Minidump exception/module-list parser
+│   ├── symbolize.ps1        # DbgHelp-based address -> symbol/source-line resolver
+│   └── dump_streams.ps1     # Minidump stream dumper
 ├── vendor/                 # Vendored dependencies
 │   ├── Detours/            # Microsoft Detours
 │   ├── imgui/              # Dear ImGui (D3D10 + Win32 backends)
 │   ├── json/               # nlohmann/json
 │   └── spdlog/             # spdlog logging
-├── coclassic.sln           # Visual Studio solution
+├── coclassic.sln           # Visual Studio solution (main DLL only, see Building)
 ├── coclassic.vcxproj       # Main DLL project
-└── CMakeLists.txt          # CMake build configuration
+└── CMakeLists.txt          # CMake build configuration (main DLL, launcher, tests, and diagnostic targets)
 ```
 
 ## Contributing
@@ -213,6 +232,9 @@ This project works with a Themida-packed binary analyzed through a Scylla-dumped
   ```
   MSBuild.exe coclassic.sln -t:Rebuild -p:Configuration=Release -p:Platform=x64
   ```
+- **`coclassic.vcxproj`'s source-file list is not auto-synced with `CMakeLists.txt`.** When adding a new `.cpp`/`.h` to the main DLL, add it to both, or the CMake build will succeed while the Visual Studio build silently omits the file (this has happened before — several core files were missing from the `.vcxproj` for a while before being caught and fixed).
+- The Release build emits `coclassic.pdb` alongside `coclassic.dll` (`/Zi` + `/DEBUG` + explicit `/OPT:REF,ICF` in `CMakeLists.txt`, so code layout matches a plain Release build exactly — MSVC otherwise silently disables those optimizations once `/DEBUG` is present). This has no runtime cost and means a crash address from a minidump can be symbolized directly against the shipped binary (`tools/symbolize.ps1`) without reconstructing a separate build.
+- If the linker fails with LNK1104 while the DLL is injected into a running game, close the game (or kill `ImConquer.exe`/`launcher.exe`) before rebuilding — the crash-recovery supervisor in `launcher.exe` will otherwise relaunch the game and re-lock the DLL between build attempts.
 
 ## Dependencies
 
@@ -224,6 +246,12 @@ This project works with a Themida-packed binary analyzed through a Scylla-dumped
 | [spdlog](https://github.com/gabime/spdlog) | Logging | `vendor/spdlog/` |
 
 System libraries: `d3d11.lib`, `dxgi.lib`, `d3dcompiler.lib`, `winhttp.lib`, `ws2_32.lib`
+
+## Known Issues
+
+- **Some `gateway.cpp` map-ID constants are unverified against current game data** — e.g. `MAP_APE_MOUNTAIN` resolves to a map the game's own data labels "Bird Island," and at least one real hunt-zone map has no gateway routes to/from it at all, so automated travel to it fails outright (this fails safely — the bot disables hunting after repeated failures rather than looping or freezing — but doesn't fix the underlying routing gap).
+- **Treasure Bank / Compose Bank NPC deposits are not confirmed working.** The client never confirms these bank windows actually opened server-side (unlike the Warehouse NPC flow, which sends 2 additional confirmation packets these two don't); the bot now gives up cleanly after a few failed attempts instead of the game freezing, but the deposits themselves may not be completing.
+- **Player Safety / Paranoia Mode have no visibility into another player's facing or camera** — there is no such field readable anywhere on `CRole`/`CHero`. Both features are positioning/distance-based only.
 
 ## Limitations
 Nothing is currently omitted from the source — the plugin list above and `PluginManager::Init()` reflect what actually builds and runs.

@@ -105,6 +105,12 @@
     <ClCompile Include="src\plugins\revive_helper_plugin.cpp" />
     <ClCompile Include="src\plugins\artisan_spammer_plugin.cpp" />
     <ClCompile Include="src\plugins\skill_trainer_plugin.cpp" />
+    <ClCompile Include="src\entities.cpp" />
+    <ClCompile Include="src\mapdata.cpp" />
+    <ClCompile Include="src\map_items.cpp" />
+    <ClCompile Include="src\spawn_memory.cpp" />
+    <ClCompile Include="src\mem_stats.cpp" />
+    <ClCompile Include="src\map_probe.cpp" />
     <!-- Detours (vendor) -->
     <ClCompile Include="vendor\Detours\src\detours.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="vendor\Detours\src\modules.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
@@ -172,6 +178,14 @@
     <ClInclude Include="src\plugins\revive_helper_plugin.h" />
     <ClInclude Include="src\plugins\artisan_spammer_plugin.h" />
     <ClInclude Include="src\plugins\skill_trainer_plugin.h" />
+    <ClInclude Include="src\entities.h" />
+    <ClInclude Include="src\mapdata.h" />
+    <ClInclude Include="src\map_items.h" />
+    <ClInclude Include="src\spawn_memory.h" />
+    <ClInclude Include="src\mem_stats.h" />
+    <ClInclude Include="src\map_probe.h" />
+    <ClInclude Include="src\jitter.h" />
+    <ClInclude Include="src\hunt_intervals.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
