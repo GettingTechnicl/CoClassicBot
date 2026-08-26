@@ -53,7 +53,7 @@ namespace Entities
     // Live entity list (hero included). Rescans if the cache has expired.
     // Pointers are validated by signature at scan time and re-validated
     // cheaply by IsAlive() before use.
-    const std::vector<CRole*>& Get();
+    std::vector<CRole*> Get();
 
     // Force a rescan on the next Get(), e.g. after a map change or teleport.
     void Invalidate();

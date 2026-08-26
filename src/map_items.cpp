@@ -167,11 +167,24 @@ namespace MapItems
         return g_refreshIntervalMs.load(std::memory_order_relaxed);
     }
 
-    const std::vector<CMapItem*>& Get()
+    // Session 10 [CRASH HARDENING]: used to return `const vector&` aliasing
+    // g_front directly. Every caller iterates the result with NO lock held
+    // (by design — the lock only needs to protect the swap itself), but that
+    // means if a second Get() call anywhere lands while an earlier one is
+    // still being iterated, its swap silently exchanges g_front's buffer out
+    // from under the in-flight iteration; the scanner thread's next Rescan()
+    // can then destroy that buffer via its own swap-and-drop of `found`,
+    // leaving the original iterator dangling into freed memory. Returning a
+    // copy instead closes this off structurally — at most 1024 pointers
+    // (the scan cap), trivially cheap — without having to prove which call
+    // site actually re-enters. Individual CMapItem* staleness is a separate,
+    // already-handled concern (see IsAlive() below); this only protects the
+    // container itself.
+    std::vector<CMapItem*> Get()
     {
         EnsureThread();
+        std::lock_guard<std::mutex> lk(g_backMutex);
         if (g_backReady.load(std::memory_order_acquire)) {
-            std::lock_guard<std::mutex> lk(g_backMutex);
             g_front.swap(g_back);
             g_backReady.store(false, std::memory_order_relaxed);
         }

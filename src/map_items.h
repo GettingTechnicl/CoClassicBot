@@ -37,7 +37,7 @@ namespace MapItems
     // Live ground-item list. Rescans on the interval; pointers are raw CMapItem*
     // into the game's heap (SEH-guard any read at the call site — items can
     // despawn between scans).
-    const std::vector<CMapItem*>& Get();
+    std::vector<CMapItem*> Get();
 
     void Invalidate();
 
