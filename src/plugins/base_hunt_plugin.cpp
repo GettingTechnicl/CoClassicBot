@@ -58,6 +58,8 @@ constexpr int kMaxManualControlPauseMs = 30000;
 constexpr int kMinReviveDelayMs = 0;
 constexpr int kMaxReviveDelayMs = 60000;
 constexpr DWORD kPendingJumpStallMs = 500;
+// Session 11 [LOCKUP FIX]: see m_zoneTravelFailCount's comment in the header.
+constexpr int kMaxZoneTravelFailures = 3;
 // Session 10: hard cap on a path that claims to be active while the hero is
 // not actually moving. The pathfinder has its own stall recovery, but it was
 // observed failing to fire for over a minute, freezing movement AND combat.
@@ -943,6 +945,7 @@ void BaseHuntPlugin::HandleTravelToZone(TravelPlugin* travel, const AutoHuntSett
     }
 
     if (travel->GetState() == TravelState::Failed) {
+        ++m_zoneTravelFailCount;
         SetState(AutoHuntState::Failed, "Failed to reach hunt zone");
         return;
     }
@@ -950,6 +953,7 @@ void BaseHuntPlugin::HandleTravelToZone(TravelPlugin* travel, const AutoHuntSett
     if (travel->IsTraveling()) {
         if (m_lastMapId == settings.zoneMapId && IsPointInZone(settings, m_lastMapId, m_lastHeroPos)) {
             travel->CancelTravel();
+            m_zoneTravelFailCount = 0;
             CHero* zoneHero = Game::GetHero();
             if (zoneHero && NeedsTownRunArrows(zoneHero, settings) && HuntTownService::HasBlacksmithOnMap(m_lastMapId)) {
                 m_townService.ResetBuyArrowsSequence();
@@ -976,6 +980,7 @@ void BaseHuntPlugin::HandleTravelToZone(TravelPlugin* travel, const AutoHuntSett
         return;
     }
 
+    m_zoneTravelFailCount = 0;
     m_targetId = 0;
     SetState(AutoHuntState::AcquireTarget, "Scanning hunt zone");
 }
@@ -1392,6 +1397,19 @@ void BaseHuntPlugin::Update()
     if (Game::GetCurrentMapId() != settings.zoneMapId
         || !IsPointNearHuntZone(settings, Game::GetCurrentMapId(), hero->m_posMap,
                                 GetHuntLeash(settings))) {
+        // Session 11 [LOCKUP FIX]: give up after repeated failures instead of
+        // retrying forever — see m_zoneTravelFailCount's comment in the
+        // header. A genuinely-unreachable zone (bad gateway data, wrong
+        // zoneMapId) used to loop this every tick indefinitely with no way
+        // to stop it short of editing the config file with the game closed.
+        if (m_zoneTravelFailCount >= kMaxZoneTravelFailures) {
+            spdlog::error("[hunt] Giving up reaching hunt zone after {} failed attempts — disabling hunting. Check zoneMapId ({}) and gateway routes.",
+                m_zoneTravelFailCount, settings.zoneMapId);
+            m_zoneTravelFailCount = 0;
+            ApplyHuntModeSelection(settings.combatMode, false);
+            SetState(AutoHuntState::Failed, "Could not reach hunt zone after repeated attempts — hunting disabled");
+            return;
+        }
         BeginTravelToZone(travel, settings);
         return;
     }
@@ -1876,6 +1894,9 @@ void BaseHuntPlugin::ApplyHuntModeSelection(AutoHuntCombatMode mode, bool enable
             hunt->SetAutomationEnabled(false);
         } else {
             hunt->m_enabled = true;
+            // Fresh enable gets a clean slate — don't inherit a stale fail
+            // count from a previous session/attempt (see kMaxZoneTravelFailures).
+            hunt->m_zoneTravelFailCount = 0;
         }
     }
 

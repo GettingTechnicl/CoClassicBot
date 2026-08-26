@@ -231,6 +231,17 @@ protected:
     OBJID m_unreachableTargetId = 0;
     DWORD m_unreachableExpireTick = 0;
 
+    // Session 11 [LOCKUP FIX]: BeginTravelToZone used to get re-triggered
+    // every tick (the zone-leash check outside any state guard) whenever the
+    // hero isn't on/near the hunt zone map, with no limit — if the zone map
+    // is genuinely unreachable (bad gateway data, wrong zoneMapId, etc.) this
+    // retried forever, "Idle -> Travel To Zone -> Failed -> Idle -> ..." on
+    // loop, which is exactly what made the bot impossible to turn off live.
+    // Bounded retry + auto-disable on repeated failure (see StartPathTo/
+    // BeginTravelToZone in base_hunt_plugin.cpp) fixes that regardless of
+    // whatever the underlying map-data problem turns out to be.
+    int m_zoneTravelFailCount = 0;
+
     ReviveState m_reviveState;
     HuntBuffManager m_buffMgr;
     HuntLootManager m_lootMgr;
