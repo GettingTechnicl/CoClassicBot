@@ -31,7 +31,6 @@ constexpr uint32_t kMsgActionModeWalk = 84;
 // value hasn't changed (capture a walk packet the same way and compare)
 // before assuming something else is wrong.
 constexpr uint32_t kWalkTag8Value = 193661;
-using GetTimestampFn = long long*(*)(long long*);
 
 struct MsgActionPacket
 {
@@ -50,17 +49,6 @@ struct MsgActionPacket
 uint32_t g_jumpSpeedTimer = 0;
 static DWORD g_lastSpeedHackJumpTick = 0;
 constexpr DWORD kSpeedTimerResetGapMs = 1000;
-
-uint64_t GetGameTimestampMs()
-{
-    static auto fn = Game::Resolve<GetTimestampFn>(0x0C6A80);
-    if (!fn)
-        return 0;
-
-    long long timestampNs = 0;
-    fn(&timestampNs);
-    return static_cast<uint64_t>(timestampNs / 1000000);
-}
 
 static int WriteVarint(uint8_t* buf, uint32_t value)
 {

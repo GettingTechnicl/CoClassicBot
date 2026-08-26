@@ -73,6 +73,33 @@ bool IsPlausibleUntrustedSilverValue(uint32_t candidate)
     return delta <= kMaxUntrustedSilverDelta;
 }
 
+// Session 10 [SAFETY]: 0x0C6A80 is CONFIRMED to resolve to a function
+// epilogue on v1074, not a real entry point (see game.h's GameRva comment —
+// this is the exact same address whose call crashed CHero::Walk()'s first
+// packet-send attempt this session; packets.cpp's fix was to stop calling it
+// entirely). This copy is a separate, still-live landmine: RefreshSilverCache
+// below only avoids it today because its one call site happens to pass
+// trusted=true, but the function's OWN default parameter is false — the next
+// new `hero->RefreshSilverCache()` call with no arguments reintroduces the
+// identical crash. SEH-guarded rather than removed (unlike packets.cpp) since
+// this call's caller doesn't have an equally-simple safe substitute in hand;
+// this at least converts "call it now" from a guaranteed crash into a
+// graceful 0.
+namespace {
+// The static-local's thread-safe init guard above conflicts with __try
+// living in the same function (MSVC C2712), so the guarded call itself has
+// to be a separate function with no such local.
+bool TryCallGameTimestamp(GetTimestampFn fn, long long* outNs)
+{
+    __try {
+        fn(outNs);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+}
+
 uint64_t GetGameTimestampMs()
 {
     static auto fn = Game::Resolve<GetTimestampFn>(0x0C6A80);
@@ -80,7 +107,8 @@ uint64_t GetGameTimestampMs()
         return 0;
 
     long long timestampNs = 0;
-    fn(&timestampNs);
+    if (!TryCallGameTimestamp(fn, &timestampNs))
+        return 0;
     return static_cast<uint64_t>(timestampNs / 1000000);
 }
 
