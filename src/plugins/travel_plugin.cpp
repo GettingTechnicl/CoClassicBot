@@ -796,7 +796,10 @@ void TravelPlugin::RenderUI()
     {
         TravelSettings& travel = GetTravelSettings();
         ImGui::Checkbox("Speedhack If No Players Nearby##travel", &travel.usePacketJump);
-        ImGui::TextDisabled("Send raw jump packets for faster travel. Falls back to normal jumps when players are nearby.");
+        ImGui::TextDisabled("Send raw jump packets for faster travel, and run autohunt's movement/attack/target-switch/"
+            "scanning/pickup-delay/decision-throttle intervals at their fastest settings. Falls back to normal jumps "
+            "and your own configured slider values the moment a non-whitelisted player is detected nearby "
+            "(uses the Player Safety detection range/whitelist).");
 
         auto& pf = Pathfinder::Get();
         bool avoidMobs = pf.GetAvoidMobs();

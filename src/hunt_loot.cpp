@@ -34,6 +34,8 @@ DWORD GetLootPickupIgnoreMs(const AutoHuntSettings& settings)
 
 DWORD GetItemPickupDelayMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return kMinItemPickupDelayMs;
     return ClampMs(settings.itemPickupDelayMs, kMinItemPickupDelayMs, kMaxItemPickupDelayMs);
 }
 

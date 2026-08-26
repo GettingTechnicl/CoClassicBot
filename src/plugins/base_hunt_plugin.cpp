@@ -82,11 +82,15 @@ DWORD GetJumpMovementIntervalMs(const AutoHuntSettings& settings, const CHero* /
 
 DWORD GetEntityScanIntervalMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return kMinEntityScanIntervalMs;
     return ClampMs(settings.entityScanIntervalMs, kMinEntityScanIntervalMs, kMaxEntityScanIntervalMs);
 }
 
 DWORD GetDecisionThrottleMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return kMinDecisionThrottleMs;
     return ClampMs(settings.decisionThrottleMs, kMinDecisionThrottleMs, kMaxDecisionThrottleMs);
 }
 

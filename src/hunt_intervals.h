@@ -2,6 +2,13 @@
 #include "base.h"
 #include "hunt_settings.h"
 #include "jitter.h"
+#include "entities.h"
+#include "hunt_targeting.h"
+#include "config.h"
+#include "game.h"
+#include "CHero.h"
+#include "CRole.h"
+#include "CGameMap.h"
 #include <algorithm>
 
 // =====================================================================
@@ -27,10 +34,54 @@ inline DWORD ClampMs(int value, int minValue, int maxValue)
     return static_cast<DWORD>(std::clamp(value, minValue, maxValue));
 }
 
+// Session 10: the Travel tab's "Speedhack If No Players Nearby" checkbox
+// (TravelSettings::usePacketJump — NOT AutoHuntSettings::usePacketJump,
+// which is a separate, identically-named checkbox on Melee Hunt's own
+// combat tab controlling only its packet-jump movement) originally had no
+// effect outside the travel plugin. Repurposed here to also gate every
+// action-pacing interval below: run at each one's floor (== its own kMin*
+// constant, not a separate value — every floor the user asked for already
+// matched an existing clamp minimum) when no non-whitelisted player is
+// nearby, and fall back to the user's own slider value the moment one is
+// detected. Reuses the Player Safety feature's own detection range/
+// whitelist (settings.safetyPlayerRange/playerWhitelist) rather than adding
+// a second, redundant "how close counts as nearby" setting — this is
+// independent of settings.safetyEnabled itself, so the speed behavior works
+// whether or not the safety-rest feature is separately turned on.
+inline bool IsAnyPlayerNearby(const AutoHuntSettings& settings)
+{
+    CHero* hero = Game::GetHero();
+    if (!hero)
+        return false;
+
+    const OBJID heroId = hero->GetID();
+    const int range = settings.safetyPlayerRange;  // 0 = unlimited, matches CheckPlayerSafety's own semantics
+    const std::vector<std::string> whitelist = ParseTokens(settings.playerWhitelist);
+
+    for (CRole* role : Entities::Get()) {
+        if (!role || !role->IsPlayer() || role->GetID() == heroId)
+            continue;
+        if (!whitelist.empty() && NameMatchesFilters(role->GetName(), whitelist))
+            continue;
+        if (range > 0
+            && CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, role->m_posMap.x, role->m_posMap.y) > range)
+            continue;
+        return true;
+    }
+    return false;
+}
+
+inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)
+{
+    return GetTravelSettings().usePacketJump && !IsAnyPlayerNearby(settings);
+}
+
 constexpr int kMinMovementIntervalMs = 100;
 constexpr int kMaxMovementIntervalMs = 5000;
 inline DWORD GetMovementIntervalMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return WithActionJitter(kMinMovementIntervalMs);
     return WithActionJitter(ClampMs(settings.movementIntervalMs, kMinMovementIntervalMs, kMaxMovementIntervalMs));
 }
 
@@ -38,10 +89,14 @@ constexpr int kMinAttackIntervalMs = 25;
 constexpr int kMaxAttackIntervalMs = 5000;
 inline DWORD GetAttackIntervalMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return WithActionJitter(kMinAttackIntervalMs);
     return WithActionJitter(ClampMs(settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
 }
 inline DWORD GetCycloneAttackIntervalMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return WithActionJitter(kMinAttackIntervalMs);
     return WithActionJitter(ClampMs(settings.cycloneAttackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
 }
 
@@ -49,6 +104,8 @@ constexpr int kMinTargetSwitchAttackIntervalMs = 0;
 constexpr int kMaxTargetSwitchAttackIntervalMs = 5000;
 inline DWORD GetTargetSwitchAttackIntervalMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return WithActionJitter(kMinTargetSwitchAttackIntervalMs);
     return WithActionJitter(ClampMs(settings.targetSwitchAttackIntervalMs,
         kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs));
 }
