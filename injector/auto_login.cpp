@@ -33,6 +33,34 @@ constexpr FieldOffset kUsernameField{-1, 101};
 constexpr FieldOffset kPasswordField{-1, 139};
 constexpr FieldOffset kLoginButton{-1, 222};
 
+// SetForegroundWindow alone is unreliable when called from a background
+// process — Windows deliberately restricts which processes may steal
+// foreground focus, and a plain SetForegroundWindow call can silently no-op
+// (just flash the taskbar icon instead). AttachThreadInput temporarily joins
+// this thread's input state with the target window's owning thread, which is
+// the standard, reliable way external tools force focus onto another
+// process's window. Returns whether the target actually ended up foreground
+// — checked explicitly rather than assumed, since a silent failure here
+// means every subsequent click/keystroke goes to the wrong place.
+bool ForceForegroundWindow(HWND target)
+{
+    const DWORD targetThreadId = GetWindowThreadProcessId(target, nullptr);
+    const DWORD currentThreadId = GetCurrentThreadId();
+
+    const bool attached = targetThreadId != currentThreadId
+        && AttachThreadInput(currentThreadId, targetThreadId, TRUE) != 0;
+
+    BringWindowToTop(target);
+    SetForegroundWindow(target);
+    SetFocus(target);
+    SetActiveWindow(target);
+
+    if (attached)
+        AttachThreadInput(currentThreadId, targetThreadId, FALSE);
+
+    return GetForegroundWindow() == target;
+}
+
 HWND FindLoginWindow(uint32_t timeoutMs)
 {
     const DWORD start = GetTickCount();
@@ -124,7 +152,11 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
 
     Sleep(1500);  // let it finish laying out/rendering after first appearing
 
-    SetForegroundWindow(loginWnd);
+    if (ForceForegroundWindow(loginWnd))
+        printf("[auto-login] Login window confirmed foreground.\n");
+    else
+        printf("[auto-login] WARNING: login window did NOT become foreground — "
+            "clicks/keystrokes will likely go to the wrong window.\n");
     Sleep(200);
 
     RECT windowRect{};
