@@ -95,6 +95,13 @@ CMapItem* HuntLootManager::FindBestLoot(
     float bestDist = (std::numeric_limits<float>::max)();
     int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0;
 
+    // True if this is a money drop we actually want (lootMoney on AND at/above
+    // the configured minimum tier) — reused below since both the gold-value
+    // floor bypass and the primary inclusion gate need the same check.
+    auto isWantedMoney = [&settings](const CMapItem& item) {
+        return settings.lootMoney && HuntTownService::GetMoneyTier(item) >= settings.minimumGoldTier;
+    };
+
     for (CMapItem* itemRef : MapItems::Get()) {
         if (!itemRef) continue;
         ++totalItems;
@@ -109,7 +116,7 @@ CMapItem* HuntLootManager::FindBestLoot(
         // the floor (user-curated whitelist always wins).
         if (settings.minimumLootGoldValue > 0
             && !HuntTownService::IsSelectedLootItem(settings, itemRef->m_idType)
-            && !(settings.lootMoney && HuntTownService::IsMoneyMapItem(*itemRef))) {
+            && !isWantedMoney(*itemRef)) {
             const ItemTypeInfo* info = GetItemTypeInfo(itemRef->m_idType);
             if (info && info->price < (uint32_t)settings.minimumLootGoldValue) {
                 ++skippedFilter;
@@ -123,7 +130,7 @@ CMapItem* HuntLootManager::FindBestLoot(
         if (!confirmed) {
             if (!HuntTownService::ShouldLootMapItem(settings, *itemRef)) { ++skippedFilter; continue; }
             if (!HuntTownService::IsSelectedLootItem(settings, itemRef->m_idType)
-                && !(settings.lootMoney && HuntTownService::IsMoneyMapItem(*itemRef))) {
+                && !isWantedMoney(*itemRef)) {
                 ++skippedNotOurDrop;
                 continue;
             }

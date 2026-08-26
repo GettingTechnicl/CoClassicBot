@@ -126,6 +126,10 @@ struct AutoHuntSettings
     bool lootElite = false;
     bool lootSuper = false;
     bool lootMoney = true;
+    // 0=Silver, 1=Sycee, 2=Gold, 3=GoldBullion, 4=GoldBar, 5=GoldBars — this
+    // tier and better get picked up. 0 (default) = every tier, matching the
+    // previous behavior of picking up any money drop.
+    int minimumGoldTier = 0;
     bool storeRefined = false;
     bool storeUnique = false;
     bool storeElite = false;

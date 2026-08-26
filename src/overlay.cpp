@@ -21,6 +21,7 @@
 #include "plugins/archer_hunt_plugin.h"
 #include "hunt_settings.h"
 #include "hunt_targeting.h"
+#include "hunt_intervals.h"
 #include "inventory_utils.h"
 #include "plugins/travel_plugin.h"
 #include "log.h"
@@ -1167,7 +1168,7 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                         if (!waypoints.empty()) {
                                             Pathfinder::Get().StartPath(
                                                 waypoints,
-                                                static_cast<DWORD>(GetAutoHuntSettings().movementIntervalMs));
+                                                GetMovementIntervalMs(GetAutoHuntSettings()));
                                         }
                                     }
                                 }

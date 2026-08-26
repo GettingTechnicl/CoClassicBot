@@ -344,6 +344,7 @@ static std::string BuildCurrentConfigSnapshot()
     AppendIntSnapshot(snapshot, "minimumLootPlus", autoHunt.minimumLootPlus);
     AppendIntSnapshot(snapshot, "minimumStorePlus", autoHunt.minimumStorePlus);
     AppendIntSnapshot(snapshot, "minimumLootGoldValue", autoHunt.minimumLootGoldValue);
+    AppendIntSnapshot(snapshot, "minimumGoldTier", autoHunt.minimumGoldTier);
     AppendBoolSnapshot(snapshot, "autoDropTrashWhenFull", autoHunt.autoDropTrashWhenFull);
     AppendIntSnapshot(snapshot, "autoDropMinKeepQuality", autoHunt.autoDropMinKeepQuality);
     AppendIntSnapshot(snapshot, "autoDropMinKeepPrice", autoHunt.autoDropMinKeepPrice);
@@ -542,6 +543,7 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "minimumLootPlus", autoHunt.minimumLootPlus);
     WriteInt(file, section, "minimumStorePlus", autoHunt.minimumStorePlus);
     WriteInt(file, section, "minimumLootGoldValue", autoHunt.minimumLootGoldValue);
+    WriteInt(file, section, "minimumGoldTier", autoHunt.minimumGoldTier);
     WriteInt(file, section, "autoDropTrashWhenFull", autoHunt.autoDropTrashWhenFull ? 1 : 0);
     WriteInt(file, section, "autoDropMinKeepQuality", autoHunt.autoDropMinKeepQuality);
     WriteInt(file, section, "autoDropMinKeepPrice", autoHunt.autoDropMinKeepPrice);
@@ -783,6 +785,9 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     autoHunt.minimumStorePlus = ReadInt(file, section, "minimumStorePlus", autoHunt.minimumLootPlus);
     autoHunt.minimumLootGoldValue = ReadInt(file, section, "minimumLootGoldValue", 0);
     if (autoHunt.minimumLootGoldValue < 0) autoHunt.minimumLootGoldValue = 0;
+    autoHunt.minimumGoldTier = ReadInt(file, section, "minimumGoldTier", 0);
+    if (autoHunt.minimumGoldTier < 0) autoHunt.minimumGoldTier = 0;
+    if (autoHunt.minimumGoldTier > 5) autoHunt.minimumGoldTier = 5;
     autoHunt.autoDropTrashWhenFull = ReadInt(file, section, "autoDropTrashWhenFull", 0) != 0;
     autoHunt.autoDropMinKeepQuality = ReadInt(file, section, "autoDropMinKeepQuality", 0);
     if (autoHunt.autoDropMinKeepQuality < 0) autoHunt.autoDropMinKeepQuality = 0;

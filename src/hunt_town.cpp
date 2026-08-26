@@ -210,6 +210,34 @@ bool HuntTownService::IsMoneyMapItem(const CMapItem& item)
     return item.m_idType >= 1090000 && item.m_idType <= 1091020;
 }
 
+int HuntTownService::GetMoneyTier(const CMapItem& item)
+{
+    switch (item.m_idType) {
+        case 1090000: return 0;  // Silver
+        case 1090010: return 1;  // Sycee
+        case 1090020: return 2;  // Gold
+        case 1091000: return 3;  // GoldBullion
+        case 1091010: return 4;  // GoldBar
+        case 1091020: return 5;  // GoldBars
+        default:      return -1;
+    }
+}
+
+bool HuntTownService::IsPriorityLootItem(const CMapItem& item)
+{
+    if (item.GetPlus() > 0)
+        return true;
+    // Base DragonBall/Meteor/MeteorTear trio (contiguous IDs) plus the
+    // separately-numbered star-tiered/Epic DragonBalls — CItem::IsTreasureItem()
+    // only covers the base trio, which is correct for its own (treasure-bank
+    // storage) purpose but not broad enough for "is this worth detouring for".
+    if (item.m_idType >= ItemTypeId::DRAGONBALL && item.m_idType <= ItemTypeId::METEOR_TEAR)
+        return true;
+    if (item.m_idType >= 2000031 && item.m_idType <= 2000038)  // 1-7 Star + Epic DragonBall
+        return true;
+    return false;
+}
+
 bool HuntTownService::ShouldLootMapItem(const AutoHuntSettings& settings, const CMapItem& item)
 {
     if (settings.lootMoney && IsMoneyMapItem(item))

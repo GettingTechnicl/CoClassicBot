@@ -103,6 +103,19 @@ public:
     static bool IsSelectedWarehouseItem(const AutoHuntSettings& settings, uint32_t typeId);
     static bool IsSelectedPriorityReturnItem(const AutoHuntSettings& settings, uint32_t typeId);
     static bool IsMoneyMapItem(const CMapItem& item);
+
+    // Money tier, ascending value: 0=Silver, 1=Sycee, 2=Gold, 3=GoldBullion,
+    // 4=GoldBar, 5=GoldBars. -1 if not a money item at all.
+    static int GetMoneyTier(const CMapItem& item);
+
+    // +items (any refine level), Meteor/MeteorTear/DragonBall (including all
+    // star tiers + Epic) — Session 10: these should never be skipped just for
+    // being outside the configured Loot Range (that setting is meant to
+    // control how eagerly to detour for ordinary/money drops, not whether a
+    // rare, high-value item is worth fetching at all). See
+    // IsWithinLootPickupRange in base_hunt_plugin.cpp.
+    static bool IsPriorityLootItem(const CMapItem& item);
+
     static bool ShouldLootMapItem(const AutoHuntSettings& settings, const CMapItem& item);
     static bool CanAffordArrowPurchase(const CHero* hero);
 

@@ -69,8 +69,18 @@ int GetLootRange(const AutoHuntSettings& settings)
     return std::clamp(settings.lootRange, kMinLootRange, kMaxLootRange);
 }
 
-bool IsWithinLootPickupRange(const AutoHuntSettings& settings, int distance)
+// Session 10: Loot Range is meant to control how eagerly the bot detours
+// for ordinary drops/money — a rare, high-value item (any +item, Meteor/
+// DragonBall family) is always worth fetching regardless of that setting,
+// so those bypass the range check entirely here rather than needing a
+// separately-configured "unlimited" Loot Range that would also loosen it
+// for everything else. The bot still only reaches it via normal pathing,
+// so real reachability/zone limits still apply — this only removes the
+// extra Loot Range cap specifically.
+bool IsWithinLootPickupRange(const AutoHuntSettings& settings, int distance, const CMapItem& item)
 {
+    if (HuntTownService::IsPriorityLootItem(item))
+        return true;
     const int lootRange = GetLootRange(settings);
     return lootRange > 0 ? distance <= lootRange : distance == 0;
 }
@@ -1414,10 +1424,10 @@ void BaseHuntPlugin::Update()
         // client-side animation), but it does stop the pathfinder from
         // queuing the next waypoint once this one lands, so the hero
         // actually comes to rest on the item instead of coasting through.
-        if (IsWithinLootPickupRange(settings, lootDist) && Pathfinder::Get().IsActive())
+        if (IsWithinLootPickupRange(settings, lootDist, *loot) && Pathfinder::Get().IsActive())
             Pathfinder::Get().Stop();
 
-        if (IsWithinLootPickupRange(settings, lootDist) && m_lootMgr.TryPickupLootItem(hero, settings, loot, pickupNow,
+        if (IsWithinLootPickupRange(settings, lootDist, *loot) && m_lootMgr.TryPickupLootItem(hero, settings, loot, pickupNow,
                 [this, hero](DWORD t) { return UpdatePendingJumpState(hero, t); })) {
             m_targetId = loot->m_id;
             SetState(AutoHuntState::LootNearby, "Picking up nearby loot");
@@ -1429,7 +1439,7 @@ void BaseHuntPlugin::Update()
                 SetState(AutoHuntState::LootNearby, "Jumping to loot");
                 return;
             }
-            if (IsWithinLootPickupRange(settings, lootDist)) {
+            if (IsWithinLootPickupRange(settings, lootDist, *loot)) {
                 // Session 10: reaching here means dist != 0 (the pickup
                 // attempt above already handles dist==0) AND the pathfinder
                 // failed to queue a route to close that gap. Previously this
@@ -2148,7 +2158,12 @@ void BaseHuntPlugin::RenderLootSection()
 {
     AutoHuntSettings& settings = GetAutoHuntSettings();
     ImGui::Checkbox("Loot Silver / Gold / Money", &settings.lootMoney);
+    static const char* kGoldTierNames[] = { "Silver and better", "Sycee and better",
+        "Gold and better", "Gold Bullion and better", "Gold Bar and better", "Gold Bars only" };
+    ImGui::Combo("Minimum Gold Tier", &settings.minimumGoldTier, kGoldTierNames, IM_ARRAYSIZE(kGoldTierNames));
+    HelpMarkerOnSameLine("Money drops below this tier are ignored entirely.");
     ImGui::SliderInt("Loot Range", &settings.lootRange, 0, CGameMap::MAX_JUMP_DIST);
+    HelpMarkerOnSameLine("Only limits how far to detour for money drops. Plus items and Meteors/DragonBalls are always fetched regardless of range.");
     ImGui::SliderInt("Minimum Loot Plus", &settings.minimumLootPlus, 0, 12);
     ImGui::InputInt("Minimum Sell Value to Loot", &settings.minimumLootGoldValue, 100, 1000);
     if (settings.minimumLootGoldValue < 0)
