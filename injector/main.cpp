@@ -291,16 +291,28 @@ static bool ShowAccountPickerDialog(AccountProfile* outProfile)
         classRegistered = true;
     }
 
+    // The w/h passed to CreateWindowExA are OUTER window dimensions
+    // (including title bar + borders), not client-area size — using the
+    // desired client size directly clipped the bottom row of buttons under
+    // the title bar. AdjustWindowRectEx computes the correct outer size for
+    // a given client area, style, and exstyle (title bar height varies with
+    // Windows theme/DPI, so a hardcoded fudge factor isn't reliable).
+    constexpr DWORD kStyle = WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE;
+    constexpr DWORD kExStyle = WS_EX_DLGMODALFRAME | WS_EX_TOPMOST;
+    RECT clientRect{0, 0, 420, 310};
+    AdjustWindowRectEx(&clientRect, kStyle, FALSE, kExStyle);
+    const int w = clientRect.right - clientRect.left;
+    const int h = clientRect.bottom - clientRect.top;
+
     const int screenW = GetSystemMetrics(SM_CXSCREEN);
     const int screenH = GetSystemMetrics(SM_CYSCREEN);
-    const int w = 420, h = 320;
     const int x = (screenW - w) / 2, y = (screenH - h) / 2;
 
     HWND dlg = CreateWindowExA(
-        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+        kExStyle,
         "AccountPickerDlg",
         "coclassic - Select Account",
-        WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE,
+        kStyle,
         x, y, w, h,
         nullptr, nullptr, GetModuleHandleA(nullptr), nullptr);
     if (!dlg)
