@@ -159,6 +159,11 @@ struct AutoHuntSettings
     int targetSwitchAttackIntervalMs = 75;
     int itemActionIntervalMs = 700;
     int lootSpawnGraceMs = 1000;
+    // Session 11: same idea as lootSpawnGraceMs but for monster targets — a
+    // monster that just spawned (e.g. the rest of a clump was killed and one
+    // more spawns in mid-animation) can get the bot stuck repeatedly trying
+    // to attack a target that isn't actually engageable yet. 0 = off.
+    int monsterSpawnGraceMs = 0;
     // Session 10: how long the background heap scanners (entities.h, map_items.h)
     // cache their results before rescanning. Exposed as a slider mainly so the
     // Themida-anti-tamper crash hypothesis can be tested live (slow the scan

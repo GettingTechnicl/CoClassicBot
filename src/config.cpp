@@ -335,6 +335,7 @@ static std::string BuildCurrentConfigSnapshot()
     AppendIntSnapshot(snapshot, "targetSwitchAttackIntervalMs", autoHunt.targetSwitchAttackIntervalMs);
     AppendIntSnapshot(snapshot, "itemActionIntervalMs", autoHunt.itemActionIntervalMs);
     AppendIntSnapshot(snapshot, "lootSpawnGraceMs", autoHunt.lootSpawnGraceMs);
+    AppendIntSnapshot(snapshot, "monsterSpawnGraceMs", autoHunt.monsterSpawnGraceMs);
     AppendIntSnapshot(snapshot, "selfCastIntervalMs", autoHunt.selfCastIntervalMs);
     AppendIntSnapshot(snapshot, "npcActionIntervalMs", autoHunt.npcActionIntervalMs);
     AppendIntSnapshot(snapshot, "lootPickupIgnoreMs", autoHunt.lootPickupIgnoreMs);
@@ -535,6 +536,7 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "targetSwitchAttackIntervalMs", autoHunt.targetSwitchAttackIntervalMs);
     WriteInt(file, section, "itemActionIntervalMs", autoHunt.itemActionIntervalMs);
     WriteInt(file, section, "lootSpawnGraceMs", autoHunt.lootSpawnGraceMs);
+    WriteInt(file, section, "monsterSpawnGraceMs", autoHunt.monsterSpawnGraceMs);
     WriteInt(file, section, "selfCastIntervalMs", autoHunt.selfCastIntervalMs);
     WriteInt(file, section, "npcActionIntervalMs", autoHunt.npcActionIntervalMs);
     WriteInt(file, section, "lootPickupIgnoreMs", autoHunt.lootPickupIgnoreMs);
@@ -753,6 +755,11 @@ static void LoadAutoHuntSection(const char* file, const char* section)
         autoHunt.lootSpawnGraceMs = 0;
     if (autoHunt.lootSpawnGraceMs > 5000)
         autoHunt.lootSpawnGraceMs = 5000;
+    autoHunt.monsterSpawnGraceMs = ReadInt(file, section, "monsterSpawnGraceMs", autoHunt.monsterSpawnGraceMs);
+    if (autoHunt.monsterSpawnGraceMs < 0)
+        autoHunt.monsterSpawnGraceMs = 0;
+    if (autoHunt.monsterSpawnGraceMs > 1000)
+        autoHunt.monsterSpawnGraceMs = 1000;
     autoHunt.selfCastIntervalMs = ReadInt(file, section, "selfCastIntervalMs", autoHunt.selfCastIntervalMs);
     if (autoHunt.selfCastIntervalMs < 100)
         autoHunt.selfCastIntervalMs = 100;

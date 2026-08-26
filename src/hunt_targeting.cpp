@@ -12,8 +12,18 @@
 #include <limits>
 #include <random>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace {
+
+// Session 11: first-seen tick per monster ID, for monsterSpawnGraceMs —
+// mirrors HuntLootManager::m_lootSeenTicks' shape, just living at file scope
+// since CollectHuntTargets is a free function shared by both hunt plugins
+// rather than a method on a per-plugin-instance class. Pruned every call
+// against the current scan so it never grows past however many monsters
+// are visible right now.
+std::unordered_map<OBJID, DWORD> g_monsterSeenTicks;
 
 // ---------------------------------------------------------------------------
 // Archer mode helpers
@@ -171,6 +181,14 @@ std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool pr
     std::vector<CRole*> targets;
     targets.reserve((std::min)(roles.size(), size_t(128)));
 
+    // Session 11: newly-spawned-monster attack delay. Tracks first-seen tick
+    // per monster ID (only for monsters that reach the spawn-grace check
+    // below, i.e. already passed every other filter) and prunes anything not
+    // seen in THIS scan, so it never grows past however many monsters are
+    // currently a real candidate.
+    const DWORD now = GetTickCount();
+    std::unordered_set<OBJID> currentCandidateIds;
+
     for (CRole* role : roles) {
         // Session 11 [CRASH FIX]: same hazard class as the loot-scanning
         // functions fixed earlier this session — a raw pointer into the
@@ -202,7 +220,26 @@ std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool pr
             continue;
         if (preferredOnly && !preferFilters.empty() && !NameMatchesFilters(role->GetName(), preferFilters))
             continue;
+
+        const OBJID roleId = role->GetID();
+        currentCandidateIds.insert(roleId);
+        if (settings.monsterSpawnGraceMs > 0) {
+            const auto seenResult = g_monsterSeenTicks.try_emplace(roleId, now);
+            const DWORD seenAge = now - seenResult.first->second;
+            if (seenAge < (DWORD)settings.monsterSpawnGraceMs)
+                continue;  // too freshly spawned, not engageable yet
+        }
+
         targets.push_back(role);
+    }
+
+    if (!g_monsterSeenTicks.empty()) {
+        for (auto it = g_monsterSeenTicks.begin(); it != g_monsterSeenTicks.end();) {
+            if (currentCandidateIds.find(it->first) == currentCandidateIds.end())
+                it = g_monsterSeenTicks.erase(it);
+            else
+                ++it;
+        }
     }
 
     // Session 11 [Paranoia Mode]: bias target choice away from a detected

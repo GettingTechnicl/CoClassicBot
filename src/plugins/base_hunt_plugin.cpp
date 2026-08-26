@@ -2368,6 +2368,8 @@ void BaseHuntPlugin::RenderAdvancedSection()
     ImGui::SliderInt("Revive Delay (ms)", &settings.reviveDelayMs, kMinReviveDelayMs, kMaxReviveDelayMs);
     ImGui::SliderInt("Revive Retry Interval (ms)", &settings.reviveRetryIntervalMs,
         kMinReviveRetryIntervalMs, kMaxReviveRetryIntervalMs);
+    ImGui::SliderInt("Newly Spawned Monster Attack Delay (ms)", &settings.monsterSpawnGraceMs, 0, 1000);
+    HelpMarkerOnSameLine("A monster this freshly spawned isn't picked as a target yet. Helps if the bot gets stuck attacking a monster that's still mid-spawn-animation. 0 = off.");
 
     ImGui::SeparatorText("Background Scanning");
     ImGui::SliderInt("Entity/Item Scan Interval (ms)", &settings.entityScanIntervalMs,
