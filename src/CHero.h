@@ -24,6 +24,26 @@ namespace EquipSlot {
 
 const char* GetEquipSlotName(int slot);
 
+// Session 5 debug-only entry point — see the definition in CHero.cpp for why
+// this is deliberately NOT part of CHero::PickupItem(). Only call this from
+// an explicit, manual test action (e.g. the overlay debug button), never from
+// automated bot logic.
+bool DebugTestNativePickup(const CMapItem& item);
+
+// Session 9: manual test hook for SendJumpPacket(), separate from any hunt/
+// travel logic. `applyLocalPrediction` lets the debug button test both modes
+// — see packets.cpp session-8 comment: ApplyLocalJumpPrediction's struct
+// offsets are not yet re-verified for v1074 and crashed the game once
+// already, so this is deliberately exposed rather than silently defaulted.
+// Only call this from an explicit, manual test action, never from automated
+// bot logic.
+bool DebugTestJump(int destX, int destY, bool applyLocalPrediction);
+
+// Session 10: on-demand test for CHero::Walk()'s SetCommand-based fallback.
+// Only call this from an explicit, manual test action, never from automated
+// bot logic — same rule as DebugTestJump above.
+bool DebugTestWalk(int destX, int destY);
+
 // =====================================================================
 // CHero — the player's controllable character
 //
@@ -50,53 +70,56 @@ public:
     CStatTable* m_pStatTable;      // +0x968 current HP/stat table
 
 private:
-    BYTE _pad970[0xA30 - 0x970];   // +0x970 gap to runtime A30 slot
+    // v1074: a ~0x50-byte field was inserted between +0x968 and the old +0xA30,
+    // shifting every field below by +0x50. Live-verified against character "Kinux"
+    // (silver, equipped GoldCoronet/Lathee, 18 skills). See coclassicbot-live-offsets.
+    BYTE _pad970[0xA80 - 0x970];   // +0x970 gap to silver slot (v1074 +0x50)
 
 public:
-    uint64_t m_qwRuntimeA30;       // +0xA30 movement timestamp / UI runtime value
+    uint64_t m_qwRuntimeA30;       // +0xA80 (v1074) silver in low 32 bits [LIVE-VERIFIED =7681]
 
 private:
-    BYTE _padA38[0xB20 - 0xA38];   // +0xA38 gap to inventory deque
+    BYTE _padA88[0xB70 - 0xA88];   // +0xA88 gap to inventory deque
 
 public:
-    std::deque<PItem> m_deqItem;   // +0xB20  inventory items
+    std::deque<PItem> m_deqItem;   // +0xB70 (v1074) inventory items [inferred from equip offset]
 
 private:
-    BYTE _padDeq[0xB88 - 0xB20 - sizeof(std::deque<PItem>)]; // gap between deque end and equipment
+    BYTE _padDeq[0xBD8 - 0xB70 - sizeof(std::deque<PItem>)]; // gap between deque end and equipment
 
 public:
-    PItem m_equipment[EquipSlot::COUNT]; // +0xB88  equipped items (8 shared_ptr<CItem>)
+    PItem m_equipment[EquipSlot::COUNT]; // +0xBD8 (v1074) equipped items [LIVE-VERIFIED: GoldCoronet/Lathee]
 
 private:
-    BYTE _padC08[0xCA8 - 0xC08];   // +0xC08 gap to max mana cache
+    BYTE _padC58[0xCF8 - 0xC58];   // +0xC58 gap to max mana cache
 
 public:
-    int32_t m_nMaxMana;            // +0xCA8 cached max MP
-    uint8_t m_bMaxManaValid;       // +0xCAC max MP cache-valid byte
+    int32_t m_nMaxMana;            // +0xCF8 (v1074) cached max MP [inferred]
+    uint8_t m_bMaxManaValid;       // +0xCFC max MP cache-valid byte
 
 private:
-    BYTE _padCAD[0x1000 - 0xCAD];  // +0xCAD
+    BYTE _padCFD[0x1050 - 0xCFD];  // +0xCFD
 
 public:
-    BOOL m_bNpcActive;             // +0x1000 active NPC dialog flag
+    BOOL m_bNpcActive;             // +0x1050 (v1074) active NPC dialog flag [inferred]
 
 private:
-    BYTE _pad1004[0x1918 - 0x1004]; // +0x1004 gap to magic vector
+    BYTE _pad1054[0x1968 - 0x1054]; // +0x1054 gap to magic vector
 
 public:
-    std::vector<PMagic> m_vecMagic; // +0x1918  learned skills
+    std::vector<PMagic> m_vecMagic; // +0x1968 (v1074) learned skills [LIVE-VERIFIED: count 18]
 
 private:
-    BYTE _pad1930[0x3724 - 0x1930]; // +0x1930 gap to active NPC UID
+    BYTE _pad1980[0x3774 - 0x1980]; // +0x1980 gap to active NPC UID
 
 public:
-    OBJID m_idActiveNpc;            // +0x3724 NPC entity currently in dialog
+    OBJID m_idActiveNpc;            // +0x3774 (v1074) NPC entity currently in dialog [inferred]
 
 private:
-    BYTE _pad3728[0x3740 - 0x3728]; // +0x3728 gap to VIP flag
+    BYTE _pad3778[0x3790 - 0x3778]; // +0x3778 gap to VIP flag
 
 public:
-    BOOL m_bVip;                    // +0x3740 VIP status flag
+    BOOL m_bVip;                    // +0x3790 (v1074) VIP status flag [inferred]
 
     // ── Helpers ──
     bool IsBagFull() const { return m_deqItem.size() >= MAX_BAG_ITEMS; }
@@ -166,14 +189,14 @@ public:
 #pragma pack(pop)
 
 static_assert(offsetof(CHero, m_pStatTable) == 0x968, "CHero::m_pStatTable");
-static_assert(offsetof(CHero, m_qwRuntimeA30) == 0xA30, "CHero::m_qwRuntimeA30");
-static_assert(offsetof(CHero, m_nMaxMana) == 0xCA8, "CHero::m_nMaxMana");
-static_assert(offsetof(CHero, m_bMaxManaValid) == 0xCAC, "CHero::m_bMaxManaValid");
-static_assert(offsetof(CHero, m_bNpcActive) == 0x1000, "CHero::m_bNpcActive");
-static_assert(offsetof(CHero, m_deqItem) == 0xB20, "CHero::m_deqItem");
-static_assert(offsetof(CHero, m_equipment) == 0xB88, "CHero::m_equipment");
-static_assert(offsetof(CHero, m_vecMagic) == 0x1918, "CHero::m_vecMagic");
-static_assert(offsetof(CHero, m_idActiveNpc) == 0x3724, "CHero::m_idActiveNpc");
-static_assert(offsetof(CHero, m_bVip) == 0x3740, "CHero::m_bVip");
+static_assert(offsetof(CHero, m_qwRuntimeA30) == 0xA80, "CHero::m_qwRuntimeA30");   // v1074 +0x50
+static_assert(offsetof(CHero, m_nMaxMana) == 0xCF8, "CHero::m_nMaxMana");           // v1074 +0x50
+static_assert(offsetof(CHero, m_bMaxManaValid) == 0xCFC, "CHero::m_bMaxManaValid"); // v1074 +0x50
+static_assert(offsetof(CHero, m_bNpcActive) == 0x1050, "CHero::m_bNpcActive");      // v1074 +0x50
+static_assert(offsetof(CHero, m_deqItem) == 0xB70, "CHero::m_deqItem");             // v1074 +0x50
+static_assert(offsetof(CHero, m_equipment) == 0xBD8, "CHero::m_equipment");         // v1074 +0x50
+static_assert(offsetof(CHero, m_vecMagic) == 0x1968, "CHero::m_vecMagic");          // v1074 +0x50
+static_assert(offsetof(CHero, m_idActiveNpc) == 0x3774, "CHero::m_idActiveNpc");    // v1074 +0x50
+static_assert(offsetof(CHero, m_bVip) == 0x3790, "CHero::m_bVip");                  // v1074 +0x50
 
 #define g_objHero (*CHero::GetSingletonPtr())

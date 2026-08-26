@@ -6,14 +6,41 @@
 #include <fstream>
 #include <cstdio>
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <filesystem>
+
 using json = nlohmann::json;
 
 static std::unordered_map<uint32_t, ItemTypeInfo> g_itemTypes;
 static std::vector<const ItemTypeInfo*> g_allItemTypes;
 
+// Resolve ini/itemtype.json relative to the game install instead of hardcoding a
+// drive. This DLL is injected into <gamedir>\bin\64\ImConquer.exe, so the game
+// directory is three levels up from the host executable. Falls back to the legacy
+// default install path if the derived location is missing.
+static std::string ResolveItemTypePath()
+{
+    namespace fs = std::filesystem;
+    char buf[MAX_PATH] = {};
+    if (GetModuleFileNameA(nullptr, buf, MAX_PATH) > 0) {
+        fs::path gameDir = fs::path(buf).parent_path().parent_path().parent_path();
+        fs::path candidate = gameDir / "ini" / "itemtype.json";
+        std::error_code ec;
+        if (fs::exists(candidate, ec))
+            return candidate.string();
+    }
+    return R"(C:\Program Files\Classic Conquer 2.0\ini\itemtype.json)";
+}
+
 void LoadItemTypes()
 {
-    const char* path = R"(C:\Program Files\Classic Conquer 2.0\ini\itemtype.json)";
+    const std::string path = ResolveItemTypePath();
     std::ifstream f(path);
     if (!f.is_open()) {
         spdlog::error("[itemtype] Failed to open {}", path);
@@ -39,6 +66,7 @@ void LoadItemTypes()
         item.mana = obj.value("mana", 0u);
         item.amount = obj.value("amount", 0u);
         item.amountLimit = obj.value("amountLimit", 0u);
+        item.attackRange = obj.value("attackRange", 0u);
         if (item.id && !item.name.empty())
             g_itemTypes[item.id] = std::move(item);
     }

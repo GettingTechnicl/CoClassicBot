@@ -9,6 +9,7 @@
 #include "config.h"
 #include "plugin_mgr.h"
 #include "itemtype.h"
+#include "spawn_memory.h"
 #include "log.h"
 
 ULONG64 g_qwModuleBase = 0;
@@ -39,6 +40,12 @@ static DWORD WINAPI InitThread(LPVOID)
 
     Game::Init();   // benign - just reads the module base address
 
+    // Start the entity scan worker explicitly. Get()/GetStats() also start it
+    // lazily, but doing it here means the first list is ready before anything
+    // asks — and avoids the failure mode where the only caller was GetStats()
+    // (overlay status line) and the thread therefore never started at all.
+    Entities::Start();
+
     // Poll for login completion - hero pointer exists early, but UID
     // is only assigned once the server confirms the login.
     spdlog::info("[init] Waiting for login...");
@@ -60,6 +67,10 @@ static DWORD WINAPI InitThread(LPVOID)
 
     LoadConfig();
     LoadItemTypes();
+    // Spawn memory persists across sessions so the bot does not relearn a
+    // hunting ground it already knows. Decay keeps it current; see
+    // spawn_memory.h for why this cannot grow without bound.
+    SpawnMemory::Load();
     InitHooks();
     SetWhisperCallback([](const std::string& sender, const std::string& message) {
         const MiscSettings& misc = GetMiscSettings();

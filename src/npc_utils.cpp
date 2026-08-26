@@ -5,18 +5,13 @@
 
 CRole* FindNpcByName(const char* name, const Position& expectedPos, int radius)
 {
-    CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
-        return nullptr;
-
+    // Session 9: CRoleMgr::m_deqRole is not a deque on v1074 — see entities.h.
     CRole* best = nullptr;
     float bestDist = (float)(radius + 1);
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-        const auto& roleRef = mgr->m_deqRole[i];
-        if (!roleRef)
+    for (CRole* role : Entities::Get()) {
+        if (!role)
             continue;
 
-        CRole* role = roleRef.get();
         if (role->IsPlayer() || role->IsMonster())
             continue;
         if (name && name[0] && _stricmp(role->GetName(), name) != 0)

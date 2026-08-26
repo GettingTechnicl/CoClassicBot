@@ -55,9 +55,23 @@ struct CMapItem
 
     int  GetQuality() const { return m_idType % 10; }
     // Plus is at MapItemInfo+0x48
+    //
+    // Session 10 [CRASH HARDENING]: this dereferenced m_pInfo unguarded.
+    // m_pInfo (+0x10) is NOT part of the heap-scanner's signature check
+    // (map_items.cpp validates id/idType/position, not this field), so a
+    // false-positive scan hit — or a genuine item whose m_pInfo hasn't been
+    // populated yet, or an item mid-teardown — could read an arbitrary
+    // pointer here with no safety net. Called on every scanned item whenever
+    // minimumLootPlus > 0, so this ran far more often than the pickup path
+    // itself. SEH-guarded now; a bad read returns 0 (never loots by plus)
+    // instead of crashing the process.
     uint8_t GetPlus() const {
         if (!m_pInfo) return 0;
-        return *(uint8_t*)((uintptr_t)m_pInfo + 0x48);
+        __try {
+            return *(volatile uint8_t*)((uintptr_t)m_pInfo + 0x48);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
     }
 };
 

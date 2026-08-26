@@ -225,6 +225,13 @@ void InitHooks()
 {
     Gfx::Init(Game::Base());
 
+    if (!GameRva::VERIFIED_V1074) {
+        spdlog::error("[safety] InitHooks: RenderEntityVisual/MsgUpdate::Process/TradeWindow::HandleMessage/"
+                       "CGameUI::ShowMsg RVAs are unverified on v1074 (see game.h GameRva::VERIFIED_V1074) — "
+                       "Detour-hooking them would patch garbage and crash/corrupt the client. Skipping all hooks.");
+        return;
+    }
+
     OrigRenderVisual = GameCall::CEntity_RenderVisual();
     uintptr_t addr = reinterpret_cast<uintptr_t>(OrigRenderVisual);
     OrigMsgUpdateProcess = GameCall::MsgUpdate_Process();

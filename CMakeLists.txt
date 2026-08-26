@@ -4,6 +4,12 @@ project(coclassic LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# MSVC: bundled fmt in the pinned spdlog requires /utf-8 (static_assert in base.h).
+# The Visual Studio .sln sets this implicitly; the CMake path must set it explicitly.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # ── Vendor sources (compiled directly, warnings suppressed) ───────
 set(DETOURS_SOURCES
     vendor/Detours/src/detours.cpp
@@ -41,6 +47,11 @@ add_library(coclassic SHARED
     src/CEntityInfo.cpp
     src/CEntitySet.cpp
     src/CGameMap.cpp
+    src/entities.cpp
+    src/mapdata.cpp
+    src/map_items.cpp
+    src/spawn_memory.cpp
+    src/map_probe.cpp
     src/config.cpp
     src/hunt_settings.cpp
     src/hunt_stats.cpp
@@ -84,6 +95,7 @@ target_include_directories(coclassic PRIVATE
     vendor/spdlog/include
 )
 target_link_libraries(coclassic PRIVATE
+    psapi          # GetMappedFileNameW — identifies the active map by its file
     d3d11.lib
     dxgi.lib
     d3dcompiler.lib
@@ -104,6 +116,46 @@ target_link_libraries(injector PRIVATE
     ws2_32
 )
 set_target_properties(injector PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── Self-test validator (standalone read-only injected DLL) ─────────
+add_library(selftest SHARED
+    src/selftest.cpp
+)
+set_target_properties(selftest PROPERTIES
+    OUTPUT_NAME "selftest"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── Action tracer (standalone; hardware-breakpoint "find what accesses X") ──
+add_library(tracer SHARED
+    src/tracer.cpp
+)
+set_target_properties(tracer PROPERTIES
+    OUTPUT_NAME "tracer"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── Game-state explorer (standalone read-only: entities, items, stats, map) ──
+add_library(explorer SHARED
+    src/explorer.cpp
+)
+set_target_properties(explorer PROPERTIES
+    OUTPUT_NAME "explorer"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── Net finder (standalone; Detour-hooks Winsock send/WSASend to locate
+#    CNetClient::SendMsg — safe alternative to hardware-breakpoint tracing) ──
+add_library(netfinder SHARED
+    src/netfinder.cpp
+    ${DETOURS_SOURCES}
+)
+target_include_directories(netfinder PRIVATE vendor/Detours/src)
+target_link_libraries(netfinder PRIVATE ws2_32 psapi)
+set_target_properties(netfinder PROPERTIES
+    OUTPUT_NAME "netfinder"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

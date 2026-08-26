@@ -24,6 +24,18 @@ public:
     bool GetForceNativeJump() const { return m_forceNativeJump; }
     void SetForceNativeJump(bool force) { m_forceNativeJump = force; }
     DWORD GetLastJumpTick() const { return m_lastJumpTick; }
+
+    // Session 10: the hunt loop treats "pathfinder active" as "movement is
+    // happening" — StartPathTo() reports success without doing anything when a
+    // path is already running, and the attack is gated on !IsActive(). So a
+    // path that stops making progress silently freezes BOTH movement and
+    // combat while the UI reports it is busy. Exposed so that state is visible
+    // and so callers can watchdog it.
+    DWORD GetLastProgressTick() const { return m_lastProgressTick; }
+    Position GetCurrentWaypoint() const {
+        return (m_index < m_waypoints.size()) ? m_waypoints[m_index] : Position{};
+    }
+
     static Pathfinder& Get();
 
 private:

@@ -6,3 +6,13 @@ riderModule.iml
 build
 .idea
 *.iml
+
+# Session 10: crash dumps (~4.8GB, grows without bound) — never belong in the repo.
+crashdumps/
+*.dmp
+
+# Per-character runtime config and logs — regenerated locally, not source.
+# (tracer_*.txt/tracer_log.json live under C:\Users\Public, outside this repo
+# entirely, so they don't need an entry here.)
+*.ini
+*.log

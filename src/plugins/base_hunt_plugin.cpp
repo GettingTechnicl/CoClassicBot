@@ -1,14 +1,17 @@
 #include "base_hunt_plugin.h"
+#include "jitter.h"
 #include "hunt_buffs.h"
 #include "hunt_loot.h"
 #include "hunt_targeting.h"
 #include "hunt_town.h"
+#include "map_items.h"
 #include "inventory_utils.h"
 #include "npc_utils.h"
 #include "revive_utils.h"
 #include "plugin_mgr.h"
 #include "travel_plugin.h"
 #include "game.h"
+#include "spawn_memory.h"
 #include "hooks.h"
 #include "gateway.h"
 #include "CHero.h"
@@ -49,6 +52,14 @@ constexpr int kMinItemActionIntervalMs = 100;
 constexpr int kMaxItemActionIntervalMs = 5000;
 constexpr int kMinLootSpawnGraceMs = 0;
 constexpr int kMaxLootSpawnGraceMs = 5000;
+constexpr int kMinEntityScanIntervalMs = 100;
+constexpr int kMaxEntityScanIntervalMs = 5000;
+constexpr int kMinItemPickupDelayMs = 0;
+constexpr int kMaxItemPickupDelayMs = 3000;
+constexpr int kMinDecisionThrottleMs = 0;
+constexpr int kMaxDecisionThrottleMs = 1000;
+constexpr int kMinRandomWalkIntervalMs = 0;
+constexpr int kMaxRandomWalkIntervalMs = 10000;
 constexpr int kMinSelfCastIntervalMs = 100;
 constexpr int kMaxSelfCastIntervalMs = 5000;
 constexpr int kMinNpcActionIntervalMs = 100;
@@ -62,6 +73,10 @@ constexpr int kMaxReviveDelayMs = 60000;
 constexpr int kMinReviveRetryIntervalMs = 100;
 constexpr int kMaxReviveRetryIntervalMs = 10000;
 constexpr DWORD kPendingJumpStallMs = 500;
+// Session 10: hard cap on a path that claims to be active while the hero is
+// not actually moving. The pathfinder has its own stall recovery, but it was
+// observed failing to fire for over a minute, freezing movement AND combat.
+constexpr DWORD kPathWatchdogMs = 3000;
 constexpr DWORD kPendingJumpHardTimeoutMs = 6000;
 
 int GetLootRange(const AutoHuntSettings& settings)
@@ -82,7 +97,10 @@ DWORD ClampMs(int value, int minValue, int maxValue)
 
 DWORD GetMovementIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.movementIntervalMs, kMinMovementIntervalMs, kMaxMovementIntervalMs);
+    // Session 10: jittered per user direction — see jitter.h. Movement is an
+    // "action item"; a perfectly periodic movement cadence is a detectable
+    // pattern, so a random 50-250ms is always added on top, never subtracted.
+    return WithActionJitter(ClampMs(settings.movementIntervalMs, kMinMovementIntervalMs, kMaxMovementIntervalMs));
 }
 
 DWORD GetJumpMovementIntervalMs(const AutoHuntSettings& settings, const CHero* /*hero*/)
@@ -92,12 +110,24 @@ DWORD GetJumpMovementIntervalMs(const AutoHuntSettings& settings, const CHero* /
 
 DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs);
+    // Session 10: jittered per user direction — see jitter.h. Pickup is an
+    // "action item" too.
+    return WithActionJitter(ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs));
 }
 
 DWORD GetLootSpawnGraceMs(const AutoHuntSettings& settings)
 {
     return ClampMs(settings.lootSpawnGraceMs, kMinLootSpawnGraceMs, kMaxLootSpawnGraceMs);
+}
+
+DWORD GetEntityScanIntervalMs(const AutoHuntSettings& settings)
+{
+    return ClampMs(settings.entityScanIntervalMs, kMinEntityScanIntervalMs, kMaxEntityScanIntervalMs);
+}
+
+DWORD GetDecisionThrottleMs(const AutoHuntSettings& settings)
+{
+    return ClampMs(settings.decisionThrottleMs, kMinDecisionThrottleMs, kMaxDecisionThrottleMs);
 }
 
 DWORD GetManualControlPauseMs(const AutoHuntSettings& settings)
@@ -112,7 +142,8 @@ DWORD GetReviveDelayMs(const AutoHuntSettings& settings)
 
 DWORD GetReviveRetryIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.reviveRetryIntervalMs, kMinReviveRetryIntervalMs, kMaxReviveRetryIntervalMs);
+    // Session 10: jittered — see jitter.h. Revive retry is a repeated action.
+    return WithActionJitter(ClampMs(settings.reviveRetryIntervalMs, kMinReviveRetryIntervalMs, kMaxReviveRetryIntervalMs));
 }
 
 bool TickIsFuture(DWORD targetTick, DWORD now)
@@ -335,7 +366,7 @@ bool BaseHuntPlugin::UpdatePendingJumpState(CHero* hero, DWORD now)
 void BaseHuntPlugin::RefreshRuntimeState(CHero* hero, CGameMap* map)
 {
     m_lastHeroPos = hero ? hero->m_posMap : Position{};
-    const OBJID currentMapId = map ? map->GetId() : 0;
+    const OBJID currentMapId = Game::GetCurrentMapId();
     if (currentMapId != m_lastMapId)
         m_lootMgr.ResetLootPickupAttempts();
     m_lastMapId = currentMapId;
@@ -407,6 +438,109 @@ bool BaseHuntPlugin::HandleDeath(CHero* hero, TravelPlugin* travel, const AutoHu
     return handled;
 }
 
+bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
+    const AutoHuntSettings& settings, Position& out) const
+{
+    out = {};
+    if (!hero || !map)
+        return false;
+
+    const Position heroPos = hero->m_posMap;
+    static uint32_t s_rng = 0;
+    if (s_rng == 0)
+        s_rng = GetTickCount() | 1u;
+    auto next = [&]() {
+        s_rng ^= s_rng << 13; s_rng ^= s_rng >> 17; s_rng ^= s_rng << 5;
+        return s_rng;
+    };
+
+    // Sample points inside the zone and take the first walkable one that is a
+    // meaningful distance away — near-identical destinations would leave the
+    // bot shuffling in place, which looks the same as being stuck.
+    const int minTravel = (std::max)(4, GetHuntLeash(settings));
+
+    // Spawn memory: once enough has been observed, prefer places monsters have
+    // actually been seen instead of searching the zone uniformly. This is the
+    // ONLY hook the heatmap needs — exploration is where "go look somewhere"
+    // is decided, so weighting it changes behaviour without touching the hunt
+    // loop, targeting or combat.
+    const OBJID mapId = Game::GetCurrentMapId();
+    const bool useHeatmap = SpawnMemory::HasUsefulData(mapId);
+    const float maxScore = useHeatmap ? SpawnMemory::GetMaxScore(mapId) : 0.0f;
+    Position bestScored{};
+    float    bestScore = -1.0f;
+
+    for (int attempt = 0; attempt < 40; ++attempt) {
+        Position candidate{};
+
+        if (settings.zoneMode == AutoHuntZoneMode::Route) {
+            const HuntRoute* r = GetActiveRoute(settings, settings.zoneMapId);
+            if (!r || r->waypoints.empty())
+                return false;
+            // Head for a waypoint further along than the nearest one, so the
+            // bot works the route instead of hovering at one corner.
+            const int nearest = NearestWaypointIndex(*r, heroPos);
+            const int step = 1 + (int)(next() % 3u);
+            candidate = r->waypoints[(nearest + step) % (int)r->waypoints.size()];
+        } else if (settings.zoneMode == AutoHuntZoneMode::Circle) {
+            if (IsZeroPos(settings.zoneCenter) || settings.zoneRadius <= 0)
+                return false;
+            // Uniform-ish over the disc, so the interior gets visited as often
+            // as the rim rather than the bot favouring the boundary.
+            const float ang = (float)(next() % 3600u) * 0.0017453f;
+            const float rad = (float)settings.zoneRadius * sqrtf((float)(next() % 1000u) / 1000.0f);
+            candidate.x = settings.zoneCenter.x + (int)(cosf(ang) * rad);
+            candidate.y = settings.zoneCenter.y + (int)(sinf(ang) * rad);
+        } else {
+            if (settings.zonePolygon.size() < 3)
+                return false;
+            int minX = settings.zonePolygon[0].x, maxX = minX;
+            int minY = settings.zonePolygon[0].y, maxY = minY;
+            for (const Position& v : settings.zonePolygon) {
+                minX = (std::min)(minX, v.x); maxX = (std::max)(maxX, v.x);
+                minY = (std::min)(minY, v.y); maxY = (std::max)(maxY, v.y);
+            }
+            const int spanX = (std::max)(1, maxX - minX);
+            const int spanY = (std::max)(1, maxY - minY);
+            candidate.x = minX + (int)(next() % (uint32_t)spanX);
+            candidate.y = minY + (int)(next() % (uint32_t)spanY);
+        }
+
+        if (candidate.x <= 0 || candidate.y <= 0)
+            continue;
+        if (!IsPointInZone(settings, settings.zoneMapId, candidate))
+            continue;
+        if (!map->IsWalkable(candidate.x, candidate.y))
+            continue;
+        if (CGameMap::TileDist(heroPos.x, heroPos.y, candidate.x, candidate.y) < minTravel)
+            continue;
+
+        if (!useHeatmap) {
+            out = JitterDestination(map, candidate, GetJitterRadius(settings));
+            return true;
+        }
+
+        // Keep the best-scoring valid candidate rather than the first one.
+        // Deliberately still SAMPLED rather than a straight argmax over the
+        // heatmap: always walking to the single hottest bucket would abandon
+        // the rest of the zone and let the memory go stale everywhere else.
+        // Sampling keeps some exploration alive so the map stays current.
+        const float score = SpawnMemory::GetScore(mapId, candidate);
+        if (score > bestScore) {
+            bestScore = score;
+            bestScored = candidate;
+        }
+    }
+
+    if (useHeatmap && bestScore >= 0.0f && !IsZeroPos(bestScored)) {
+        out = JitterDestination(map, bestScored, GetJitterRadius(settings));
+        spdlog::trace("[hunt] Explore -> ({},{}) spawnScore={:.1f}/{:.1f}",
+                      out.x, out.y, bestScore, maxScore);
+        return true;
+    }
+    return false;
+}
+
 bool BaseHuntPlugin::HasValidZone(const AutoHuntSettings& settings) const
 {
     return HasValidHuntZone(settings);
@@ -461,7 +595,7 @@ bool BaseHuntPlugin::CheckPlayerSafety(CHero* hero, CGameMap* map, TravelPlugin*
     }
 
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return false;
 
     const OBJID heroId = hero->GetID();
@@ -470,8 +604,8 @@ bool BaseHuntPlugin::CheckPlayerSafety(CHero* hero, CGameMap* map, TravelPlugin*
     const DWORD threshold = (DWORD)settings.safetyDetectionSec * 1000;
 
     std::unordered_set<OBJID> inRange;
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-        const auto& roleRef = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+        const auto& roleRef = Entities::Roles()[i];
         if (!roleRef) continue;
         CRole* role = roleRef.get();
         if (!role->IsPlayer() || role->GetID() == heroId)
@@ -503,8 +637,8 @@ bool BaseHuntPlugin::CheckPlayerSafety(CHero* hero, CGameMap* map, TravelPlugin*
         if (now - firstTick >= threshold) {
             // Resolve player name for logging/notification
             const char* playerName = "Unknown";
-            for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-                const auto& r = mgr->m_deqRole[i];
+            for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+                const auto& r = Entities::Roles()[i];
                 if (r && r->GetID() == id) { playerName = r->GetName(); break; }
             }
             spdlog::warn("[autohunt] Player '{}' ({}) nearby for {}s, triggering safety escape to Market",
@@ -551,7 +685,7 @@ HuntBuffCallbacks BaseHuntPlugin::MakeBuffCallbacks(CHero* hero, CGameMap* map, 
     cb.isLootPickupIgnoredFn = [this](OBJID id, DWORD now) {
         return m_lootMgr.IsLootPickupIgnored(id, now);
     };
-    cb.tryPickupLootItemFn = [this, &settings](CHero* h, const std::shared_ptr<CMapItem>& item, DWORD now) {
+    cb.tryPickupLootItemFn = [this, &settings](CHero* h, const CMapItem* item, DWORD now) {
         return m_lootMgr.TryPickupLootItem(h, settings, item, now,
             [this, h](DWORD t) { return UpdatePendingJumpState(h, t); });
     };
@@ -647,6 +781,40 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
     Pathfinder::Get().StartPath(waypoints, movementIntervalMs);
     m_lastMoveTick = now;
     return true;
+}
+
+bool BaseHuntPlugin::TryRandomWalk(CHero* hero, CGameMap* map, const AutoHuntSettings& settings, DWORD now)
+{
+    const DWORD baseIntervalMs = (DWORD)std::clamp(settings.randomWalkIntervalMs,
+        kMinRandomWalkIntervalMs, kMaxRandomWalkIntervalMs);
+    if (baseIntervalMs == 0)
+        return false;
+
+    static uint32_t s_rng = 0;
+    if (s_rng == 0) s_rng = (GetTickCount() ^ 0xA5A5A5A5u) | 1u;
+    auto next = [&]() { s_rng ^= s_rng << 13; s_rng ^= s_rng >> 17; s_rng ^= s_rng << 5; return s_rng; };
+
+    // See jitter.h — recomputed fresh each call so the effective interval
+    // varies call to call rather than settling into a fixed cadence.
+    const DWORD intervalMs = WithActionJitter(baseIntervalMs);
+
+    if (m_lastRandomWalkTick != 0 && (now - m_lastRandomWalkTick) < intervalMs)
+        return false;
+    m_lastRandomWalkTick = now;
+
+    // Short random hop, 1-2 tiles in any direction. StartWalkTo() already
+    // handles walkability/occupancy/reachability and won't fire while the
+    // hero is jumping or the pathfinder is mid-route.
+    for (int attempt = 0; attempt < 6; ++attempt) {
+        const int dx = (int)(next() % 5) - 2; // -2..2
+        const int dy = (int)(next() % 5) - 2;
+        if (dx == 0 && dy == 0)
+            continue;
+        const Position candidate{ hero->m_posMap.x + dx, hero->m_posMap.y + dy };
+        if (StartWalkTo(hero, map, candidate, 0))
+            return true;
+    }
+    return false;
 }
 
 bool BaseHuntPlugin::StartWalkTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange)
@@ -779,9 +947,15 @@ void BaseHuntPlugin::BeginTravelToZone(TravelPlugin* travel, const AutoHuntSetti
 
     CHero* zoneHero = Game::GetHero();
     CGameMap* zoneMap = Game::GetMap();
+    // Session 10: tolerate the leash. Targeting now engages monsters slightly
+    // outside the zone, so the hero legitimately stands outside it while
+    // fighting. Testing strict containment here would drag it back mid-fight
+    // and fight the engage logic — only a drift beyond the leash counts as
+    // actually having left.
     const bool sameMapOutsideZone = zoneHero && zoneMap
-        && zoneMap->GetId() == settings.zoneMapId
-        && !IsPointInZone(settings, zoneMap->GetId(), zoneHero->m_posMap);
+        && Game::GetCurrentMapId() == settings.zoneMapId
+        && !IsPointNearHuntZone(settings, Game::GetCurrentMapId(), zoneHero->m_posMap,
+                                GetHuntLeash(settings));
     if (sameMapOutsideZone) {
         if (zoneHero->IsJumping() || Pathfinder::Get().IsActive()) {
             SetState(m_lastMapId == MAP_MARKET ? AutoHuntState::ReturnToZone : AutoHuntState::TravelToZone,
@@ -1017,6 +1191,14 @@ void BaseHuntPlugin::Update()
     AutoHuntSettings& settings = GetAutoHuntSettings();
     TravelPlugin* travel = PluginManager::Get().GetPlugin<TravelPlugin>();
 
+    // Push the live slider value into the background scanners every tick
+    // (cheap atomic store). Runs regardless of m_enabled/hero/map validity
+    // since overlay diagnostics can call Entities::Get()/MapItems::Get()
+    // independently of an active hunt.
+    const DWORD scanIntervalMs = GetEntityScanIntervalMs(settings);
+    Entities::SetRefreshIntervalMs(scanIntervalMs);
+    MapItems::SetRefreshIntervalMs(scanIntervalMs);
+
     CHero* hero = Game::GetHero();
     CGameMap* map = Game::GetMap();
     RefreshRuntimeState(hero, map);
@@ -1057,11 +1239,47 @@ void BaseHuntPlugin::Update()
         return;
     }
 
+    // Session 10: independent of the decision throttle below — paced on its
+    // own timer so it can be dialed down for testing without being tied to
+    // how often the rest of the decision logic runs.
+    TryRandomWalk(hero, map, settings, GetTickCount());
+
     m_lootMgr.PruneLootPickupAttempts(map);
     PruneLootDropRecords();
 
+    // Session 10: the state machine below (zone/death/safety checks, target
+    // and loot scanning, pathfinding requests) was found running once per
+    // rendered frame (~150Hz) with no gate of its own — only the final action
+    // packet (jump/attack/pickup) was interval-throttled. That's the prime
+    // suspect for a confirmed memory leak observed over long sessions (Task
+    // Manager private/working-set memory climbing without plateauing). This
+    // caps how often it runs, independent of the per-action interval sliders.
+    // 0 disables the gate (restores the original unthrottled behavior).
+    const DWORD decisionThrottleMs = GetDecisionThrottleMs(settings);
+    if (decisionThrottleMs > 0) {
+        const DWORD nowTick = GetTickCount();
+        if (m_lastDecisionTick != 0 && (nowTick - m_lastDecisionTick) < decisionThrottleMs)
+            return;
+        m_lastDecisionTick = nowTick;
+    }
+
     if (!HasValidZone(settings)) {
-        SetState(AutoHuntState::Failed, "Configure a valid hunt zone first");
+        // Session 10: say WHAT is missing. The generic message read as "the
+        // feature is broken" when the actual cause was usually one specific
+        // unset field — most often zoneMapId=0, or a polygon with no vertices
+        // clicked yet.
+        const char* why = "Configure a valid hunt zone first";
+        if (settings.zoneMapId == 0)
+            why = "Hunt zone has no map set - click 'Use Hero Position'";
+        else if (settings.zoneMode == AutoHuntZoneMode::Polygon)
+            why = "Polygon zone needs 3+ vertices - use 'Capture Polygon Vertices' and click the map";
+        else if (settings.zoneMode == AutoHuntZoneMode::Route)
+            why = "Route zone has no recorded route for this map - record one first";
+        else if (IsZeroPos(settings.zoneCenter))
+            why = "Circle zone has no center - click 'Use Hero Position'";
+        else if (settings.zoneRadius <= 0)
+            why = "Circle zone radius is 0";
+        SetState(AutoHuntState::Failed, why);
         return;
     }
 
@@ -1073,8 +1291,8 @@ void BaseHuntPlugin::Update()
         if (CheckPlayerSafety(hero, map, travel, settings))
             return;
     } else if (settings.safetyEnabled
-               && map->GetId() == settings.zoneMapId
-               && IsPointInZone(settings, map->GetId(), hero->m_posMap)) {
+               && Game::GetCurrentMapId() == settings.zoneMapId
+               && IsPointInZone(settings, Game::GetCurrentMapId(), hero->m_posMap)) {
         if (CheckPlayerSafety(hero, map, travel, settings))
             return;
     } else {
@@ -1096,6 +1314,36 @@ void BaseHuntPlugin::Update()
     }
 
     UpdatePendingJumpState(hero, GetTickCount());
+
+    // ── Pathfinder watchdog (session 10) ──
+    // A path that stops progressing freezes the whole bot: StartPathTo()
+    // returns "success" without acting while one is active, and the attack is
+    // gated on !IsActive(). Observed live as the archer standing still for
+    // over a minute with monsters adjacent, UI reporting "Jumping to scatter
+    // clump" / "Scouting hunt zone" the entire time.
+    //
+    // The pathfinder has its own stall recovery, but it demonstrably did not
+    // fire here, so this is a belt-and-braces cap: if the hero has not moved
+    // while a path is active, tear the path down and let the loop re-decide.
+    {
+        const DWORD wnow = GetTickCount();
+        if (Pathfinder::Get().IsActive()) {
+            if (hero->m_posMap.x != m_watchdogLastPos.x || hero->m_posMap.y != m_watchdogLastPos.y) {
+                m_watchdogLastPos = hero->m_posMap;
+                m_watchdogLastMoveTick = wnow;
+            } else if (m_watchdogLastMoveTick != 0
+                       && wnow - m_watchdogLastMoveTick > kPathWatchdogMs) {
+                spdlog::warn("[hunt] Pathfinder stuck at ({},{}) for {}ms with no movement - forcing stop",
+                             hero->m_posMap.x, hero->m_posMap.y, wnow - m_watchdogLastMoveTick);
+                Pathfinder::Get().Stop();
+                ClearPendingJumpState();
+                m_watchdogLastMoveTick = wnow;
+            }
+        } else {
+            m_watchdogLastPos = hero->m_posMap;
+            m_watchdogLastMoveTick = wnow;
+        }
+    }
 
     const DWORD now = GetTickCount();
     const bool manualControlPaused = TickIsFuture(m_manualControlPauseUntilTick, now);
@@ -1204,7 +1452,11 @@ void BaseHuntPlugin::Update()
         }
     }
 
-    if (map->GetId() != settings.zoneMapId || !IsPointInZone(settings, map->GetId(), hero->m_posMap)) {
+    // Same leash tolerance as above — do not travel back to the zone just
+    // because the hero stepped out to engage something on the edge.
+    if (Game::GetCurrentMapId() != settings.zoneMapId
+        || !IsPointNearHuntZone(settings, Game::GetCurrentMapId(), hero->m_posMap,
+                                GetHuntLeash(settings))) {
         BeginTravelToZone(travel, settings);
         return;
     }
@@ -1224,9 +1476,22 @@ void BaseHuntPlugin::Update()
     }
 
     // ── Loot phase ──────────────────────────────────────────────────────
-    std::shared_ptr<CMapItem> loot = m_lootMgr.FindBestLoot(hero, map, settings,
+    CMapItem* loot = m_lootMgr.FindBestLoot(hero, map, settings,
         [this](OBJID id, DWORD now) { return m_lootMgr.IsLootPickupIgnored(id, now); },
         [this, &settings](OBJID mapId, const Position& pos) { return IsPointInZone(settings, mapId, pos); });
+
+    // Session 10 [CRASH FIX]: the ground-item scan (map_items.h) only
+    // refreshes every 500ms, but a pickup frees the item's memory
+    // immediately. Every Update() tick in that window used to hand back the
+    // same now-dangling pointer and dereference it unguarded below — a hard
+    // crash, and close to guaranteed rather than occasional, since normal
+    // frame rates mean dozens of unguarded reads happen in that one window.
+    // Re-validate before touching any field.
+    if (loot && !MapItems::IsAlive(loot)) {
+        loot = nullptr;
+        MapItems::Invalidate();   // don't wait out the rest of the interval
+    }
+
     const bool midMovement = hero->IsJumping() || Pathfinder::Get().IsActive();
     if (loot) {
         const int lootDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, loot->m_pos.x, loot->m_pos.y);
@@ -1245,6 +1510,19 @@ void BaseHuntPlugin::Update()
                 return;
             }
             if (IsWithinLootPickupRange(settings, lootDist)) {
+                // Session 10: reaching here means dist != 0 (the pickup
+                // attempt above already handles dist==0) AND the pathfinder
+                // failed to queue a route to close that gap. Previously this
+                // just re-tried every frame (~150Hz) and usually self-corrected
+                // within milliseconds; with the new decisionThrottleMs slider,
+                // retries only happen every throttle interval, so a genuinely
+                // unreachable item's exact tile (corner-blocked, occupied,
+                // etc.) now visibly "sticks" for seconds at a time instead of
+                // resolving invisibly fast. Feed it into the same
+                // attempt-limit/ignore mechanism pickup failures already use,
+                // so it gets deprioritized instead of fixated on regardless
+                // of throttle setting.
+                m_lootMgr.RecordLootPickupAttempt(loot->m_id, now, settings);
                 m_targetId = loot->m_id;
                 SetState(AutoHuntState::LootNearby, "Settling on nearby loot");
                 return;
@@ -1320,6 +1598,8 @@ void BaseHuntPlugin::Update()
         spdlog::trace("[hunt-loot] No combat target, pathing to loot id={} type={} at ({},{})",
             loot->m_id, loot->m_idType, loot->m_pos.x, loot->m_pos.y);
         const bool startedMove = StartPathNearTarget(hero, map, loot->m_pos, kLootPathStopRange);
+        if (!startedMove)
+            m_lootMgr.RecordLootPickupAttempt(loot->m_id, now, settings);
         m_targetId = loot->m_id;
         SetState(AutoHuntState::LootNearby, startedMove ? "Jumping to loot" : "Settling on nearby loot");
         return;
@@ -1329,8 +1609,30 @@ void BaseHuntPlugin::Update()
     if (HandleNoTargetIdle(hero, map, settings))
         return;
 
+    // Session 10 [DEAD END FIX]: with no target, no loot and no idle move, the
+    // loop used to fall through to a bare SetState("Scanning for monsters")
+    // and return — i.e. stand still forever whenever the hero happened to be
+    // within 3 tiles of the anchor. Observed live: the bot parked itself for
+    // 30+ seconds with monsters just outside its search radius, and only
+    // resumed when the player physically dragged it somewhere else.
+    //
+    // Keep moving instead: pick somewhere else inside the zone and go look.
+    // Monsters respawn and wander, so covering ground IS the search.
+    Position explorePos{};
+    if (FindZoneExplorePosition(hero, map, settings, explorePos)
+        && StartPathTo(hero, map, explorePos, 0)) {
+        m_targetId = 0;
+        SetState(AutoHuntState::AcquireTarget, "Exploring zone for monsters");
+        return;
+    }
+
+    // Only head back to the anchor if the anchor is somewhere we can actually
+    // stand. A circle placed partly off the map (or over water/rock) has an
+    // anchor in dead space, and pathing at it repeatedly is what made the bot
+    // loiter against the unwalkable edge instead of hunting the usable part.
     const Position anchor = GetZoneAnchor(settings);
     if (!IsZeroPos(anchor)
+        && map->IsWalkable(anchor.x, anchor.y)
         && CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, anchor.x, anchor.y) > 3) {
         StartPathTo(hero, map, anchor, 3);
         SetState(AutoHuntState::ReturnToZone, "Returning to hunt anchor");
@@ -1338,7 +1640,7 @@ void BaseHuntPlugin::Update()
     }
 
     m_targetId = 0;
-    SetState(AutoHuntState::AcquireTarget, "Scanning for monsters");
+    SetState(AutoHuntState::AcquireTarget, "Scanning for monsters (no reachable move)");
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1363,7 +1665,7 @@ bool BaseHuntPlugin::OnMapClick(const Position& tile)
         return false;
     }
 
-    settings.zoneMapId = map->GetId();
+    settings.zoneMapId = Game::GetCurrentMapId();
 
     switch (m_zoneCaptureMode) {
         case ZoneCaptureMode::CircleCenter:
@@ -1663,7 +1965,7 @@ void BaseHuntPlugin::RenderSkillPriorityUI(AutoHuntSettings& settings)
 
 void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
 {
-    static const char* kZoneModes[] = { "Circle", "Polygon" };
+    static const char* kZoneModes[] = { "Circle", "Polygon", "Route" };
     int zoneMode = static_cast<int>(settings.zoneMode);
     if (ImGui::Combo("Zone Shape", &zoneMode, kZoneModes, IM_ARRAYSIZE(kZoneModes))) {
         settings.zoneMode = static_cast<AutoHuntZoneMode>(zoneMode);
@@ -1677,8 +1979,75 @@ void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
         HelpMarkerOnSameLine("The bot tries to remain inside this circle.");
     }
 
+    // ── Route mode (session 10) ──
+    // Lives here, beside the zone shape selector, because a route IS a zone
+    // shape — putting it in a separate debug tab made it undiscoverable.
+    if (settings.zoneMode == AutoHuntZoneMode::Route) {
+        const OBJID curMap = Game::GetCurrentMapId();
+        static char routeName[64] = "route1";
+        ImGui::Text("Current map: %u", curMap);
+        ImGui::InputText("Route name", routeName, sizeof(routeName));
+
+        if (!RouteRecordIsActive()) {
+            if (ImGui::Button("Start Recording")) {
+                RouteRecordStart();
+                spdlog::info("[route] recording started on map {}", curMap);
+            }
+            HelpMarkerOnSameLine("Walk the patrol you want, then Stop & Save. "
+                                 "The trail is reduced to corner waypoints.");
+        } else {
+            ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1),
+                               "RECORDING - %d tiles walked", RouteRecordSampleCount());
+            if (ImGui::Button("Stop and Save")) {
+                const bool ok = RouteRecordStop(settings, curMap, routeName);
+                if (ok)
+                    settings.zoneMapId = curMap;
+                spdlog::info("[route] recording stopped, saved={}", ok);
+            }
+        }
+
+        ImGui::Text("Saved routes:");
+        for (const HuntRoute& r : settings.routes) {
+            const bool active = (r.name == settings.activeRouteName);
+            ImGui::Text("  %s%s  map=%u  %d waypoints",
+                        active ? "* " : "  ", r.name.c_str(), r.mapId, (int)r.waypoints.size());
+            if (r.mapId == curMap) {
+                ImGui::SameLine();
+                ImGui::PushID(r.name.c_str());
+                if (ImGui::SmallButton("Use")) {
+                    settings.activeRouteName = r.name;
+                    settings.zoneMapId = r.mapId;
+                }
+                ImGui::PopID();
+            }
+        }
+        if (settings.routes.empty())
+            ImGui::TextDisabled("  (none recorded yet)");
+
+        int linger = (int)settings.lingerMode;
+        if (ImGui::Combo("Linger", &linger, "Auto\0Move on\0Stay and clear\0"))
+            settings.lingerMode = (AutoHuntLingerMode)linger;
+        HelpMarkerOnSameLine("Auto derives it from measured time-to-kill: one-shot "
+                             "mobs = move on, slow kills = stay and clear.");
+    }
+
+    // The leash governs every zone shape, so show it regardless of mode.
+    ImGui::TextDisabled("Leash: %d tiles out of zone / engage %d tiles out%s",
+                        GetHuntLeash(settings), GetHuntEngageMargin(settings),
+                        settings.routeCorridorOverride > 0 ? " (override)" : " (from attack range)");
+    ImGui::InputInt("Leash override (0=auto)", &settings.routeCorridorOverride);
+    HelpMarkerOnSameLine("How far the bot's body may leave the zone. It still only "
+                         "attacks what is within striking range from where it stands.");
+
     if (hero && ImGui::Button("Use Hero Position")) {
-        settings.zoneMapId = m_lastMapId;
+        // Session 10 [FIXED]: this used m_lastMapId, which is only refreshed
+        // inside Update() and is therefore 0 while the plugin is disabled — so
+        // setting the zone before enabling the bot produced zoneMapId=0 and
+        // "Configure a valid hunt zone first". It was masked until today
+        // because the old Game::GetMap() returned a garbage pointer whose
+        // GetId() yielded a consistent non-zero junk value that compared equal
+        // to itself. Read the real map id directly instead.
+        settings.zoneMapId = Game::GetCurrentMapId();
         settings.zoneCenter = hero->m_posMap;
     }
 
@@ -1728,8 +2097,8 @@ void BaseHuntPlugin::RenderMonsterFilterUI(AutoHuntSettings& settings, CRoleMgr*
     if (mgr && ImGui::TreeNode("Nearby Monster Names")) {
         std::vector<std::string> names;
         std::unordered_set<std::string> seen;
-        for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-            const auto& roleRef = mgr->m_deqRole[i];
+        for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+            const auto& roleRef = Entities::Roles()[i];
             if (!roleRef || !roleRef->IsMonster())
                 continue;
 
@@ -1791,8 +2160,8 @@ void BaseHuntPlugin::RenderQuickSetupSection(BaseHuntPlugin* /*modePlugin*/)
 
     std::string currentTarget = "None";
     if (mgr && m_targetId != 0) {
-        for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-            const auto& roleRef = mgr->m_deqRole[i];
+        for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+            const auto& roleRef = Entities::Roles()[i];
             if (roleRef && roleRef->GetID() == m_targetId) {
                 currentTarget = std::string(roleRef->GetName()) + " (" + std::to_string(m_targetId) + ")";
                 break;
@@ -1920,6 +2289,27 @@ void BaseHuntPlugin::RenderAdvancedSection()
     ImGui::SliderInt("Revive Delay (ms)", &settings.reviveDelayMs, kMinReviveDelayMs, kMaxReviveDelayMs);
     ImGui::SliderInt("Revive Retry Interval (ms)", &settings.reviveRetryIntervalMs,
         kMinReviveRetryIntervalMs, kMaxReviveRetryIntervalMs);
+
+    ImGui::SeparatorText("Background Scanning");
+    ImGui::SliderInt("Entity/Item Scan Interval (ms)", &settings.entityScanIntervalMs,
+        kMinEntityScanIntervalMs, kMaxEntityScanIntervalMs);
+    ImGui::TextWrapped("How often the ground-item and monster scanners refresh. Lower = "
+        "faster reaction to spawns/pickups but more CPU load; higher = cheaper but staler.");
+    ImGui::SliderInt("Item Pickup Delay (ms)", &settings.itemPickupDelayMs,
+        kMinItemPickupDelayMs, kMaxItemPickupDelayMs);
+    ImGui::TextWrapped("How long to wait after arriving on an item's tile before the first "
+        "pickup attempt. 0 = pick up immediately on arrival.");
+    ImGui::SliderInt("Decision Throttle (ms)", &settings.decisionThrottleMs,
+        kMinDecisionThrottleMs, kMaxDecisionThrottleMs);
+    ImGui::TextWrapped("How often the bot re-evaluates targets/loot/pathing. Was found running "
+        "unthrottled every rendered frame (~150Hz) alongside a confirmed memory leak over long "
+        "sessions - this caps it independently of the action-interval sliders above. 0 = "
+        "unthrottled (original behavior). Higher = less CPU/memory churn, slightly slower reactions.");
+    ImGui::SliderInt("Random Walk Interval (ms)", &settings.randomWalkIntervalMs,
+        kMinRandomWalkIntervalMs, kMaxRandomWalkIntervalMs);
+    ImGui::TextWrapped("Periodically takes a short 1-2 tile walk instead of the usual jump, purely "
+        "to mix real walking into normal play. A random 50-250ms is always ADDED on top of this "
+        "value (never subtracted), so the actual cadence is never perfectly periodic. 0 disables it.");
 }
 
 void BaseHuntPlugin::RenderDebugSection()
@@ -1995,414 +2385,9 @@ void BaseHuntPlugin::RenderDashboardUI()
     }
 }
 
-void BaseHuntPlugin::RenderSharedUI()
-{
-    RenderDashboardUI();
-}
-
 void BaseHuntPlugin::RenderGeneralUI()
 {
     RenderDashboardUI();
-    return;
-
-    AutoHuntSettings& settings = GetAutoHuntSettings();
-    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
-
-    // Session telemetry panel (kills / gold / drops / deaths + Discord toggles)
-    HuntStats::RenderUI();
-
-    if (ImGui::CollapsingHeader("General", kSectionFlags)) {
-        ImGui::Checkbox("Use Potions", &settings.usePotions);
-        ImGui::Checkbox("Auto Repair", &settings.autoRepair);
-        ImGui::SameLine();
-        ImGui::Checkbox("Auto Store", &settings.autoStore);
-        ImGui::Checkbox("Auto Revive In Town", &settings.autoReviveInTown);
-
-        ImGui::SliderInt("HP Potion %", &settings.hpPotionPercent, 1, 99);
-        ImGui::SliderInt("Mana Potion %", &settings.manaPotionPercent, 1, 99);
-        ImGui::SliderInt("Repair %", &settings.repairPercent, 1, 100);
-
-        if (settings.usePotions)
-            ImGui::Checkbox("Pick Up Nearby HP Potion When Low", &settings.pickupNearbyHpPotionWhenLow);
-
-        // ── Skill Priority List ──
-        ImGui::Separator();
-        ImGui::Text("Skill Priority:");
-        bool skillChanged = false;
-        for (int i = 0; i < kHuntSkillCount; i++) {
-            auto& entry = settings.skillPriorities[i];
-            ImGui::PushID(i);
-
-            // Checkbox + rank + name
-            char label[64];
-            snprintf(label, sizeof(label), "%d. %s", i + 1, HuntSkillName(entry.type));
-            if (ImGui::Checkbox(label, &entry.enabled))
-                skillChanged = true;
-
-            // Up button
-            ImGui::SameLine();
-            if (i > 0) {
-                if (ImGui::SmallButton("^")) {
-                    std::swap(settings.skillPriorities[i], settings.skillPriorities[i - 1]);
-                    skillChanged = true;
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::SmallButton("^");
-                ImGui::EndDisabled();
-            }
-
-            // Down button
-            ImGui::SameLine();
-            if (i < kHuntSkillCount - 1) {
-                if (ImGui::SmallButton("v")) {
-                    std::swap(settings.skillPriorities[i], settings.skillPriorities[i + 1]);
-                    skillChanged = true;
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::SmallButton("v");
-                ImGui::EndDisabled();
-            }
-
-            // Sub-options for enabled skills
-            if (entry.enabled) {
-                if (entry.type == HuntSkillType::Fly) {
-                    ImGui::Indent();
-                    if (ImGui::Checkbox("Fly Only With Cyclone", &settings.flyOnlyWithCyclone))
-                        skillChanged = true;
-                    ImGui::Unindent();
-                }
-                if (entry.type == HuntSkillType::Stigma) {
-                    ImGui::Indent();
-                    if (ImGui::Checkbox("Pick Up Nearby Mana Potion For Stigma", &settings.pickupNearbyManaPotionForStigma))
-                        skillChanged = true;
-                    ImGui::Unindent();
-                }
-            }
-
-            ImGui::PopID();
-        }
-        if (skillChanged)
-            settings.SyncSkillBoolsFromPriorities();
-    }
-}
-
-void BaseHuntPlugin::RenderSettingsUI()
-{
-    return;
-
-    AutoHuntSettings& settings = GetAutoHuntSettings();
-    CHero* hero = Game::GetHero();
-    CRoleMgr* mgr = Game::GetRoleMgr();
-    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
-
-    if (ImGui::CollapsingHeader("Hunt Zone", kSectionFlags)) {
-        static const char* kZoneModes[] = { "Circle", "Polygon" };
-        int zoneMode = static_cast<int>(settings.zoneMode);
-        if (ImGui::Combo("Zone Mode", &zoneMode, kZoneModes, IM_ARRAYSIZE(kZoneModes))) {
-            settings.zoneMode = static_cast<AutoHuntZoneMode>(zoneMode);
-            m_zoneCaptureMode = ZoneCaptureMode::None;
-        }
-
-        ImGui::Text("Zone Map: %u", settings.zoneMapId);
-        ImGui::InputInt2("Zone Center", &settings.zoneCenter.x);
-        if (settings.zoneMode == AutoHuntZoneMode::Circle)
-            ImGui::SliderInt("Zone Radius", &settings.zoneRadius, 1, 80);
-
-        if (hero && ImGui::Button("Use Hero Position")) {
-            settings.zoneMapId = m_lastMapId;
-            settings.zoneCenter = hero->m_posMap;
-        }
-
-        if (settings.zoneMode == AutoHuntZoneMode::Circle) {
-            ImGui::SameLine();
-            if (ImGui::Button("Capture Center From Map"))
-                m_zoneCaptureMode = ZoneCaptureMode::CircleCenter;
-            ImGui::SameLine();
-            if (ImGui::Button("Capture Radius From Map"))
-                m_zoneCaptureMode = ZoneCaptureMode::CircleRadius;
-        } else {
-            ImGui::SameLine();
-            if (ImGui::Button(m_zoneCaptureMode == ZoneCaptureMode::PolygonVertex ? "Stop Polygon Capture" : "Add Polygon Vertices")) {
-                m_zoneCaptureMode = (m_zoneCaptureMode == ZoneCaptureMode::PolygonVertex)
-                    ? ZoneCaptureMode::None
-                    : ZoneCaptureMode::PolygonVertex;
-                m_editDragVertex = -1;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Clear Polygon")) {
-                settings.zonePolygon.clear();
-                m_editDragVertex = -1;
-            }
-            ImGui::Text("Polygon Vertices: %d", (int)settings.zonePolygon.size());
-
-            if (!settings.zonePolygon.empty()) {
-                int removeIdx = -1;
-                if (ImGui::BeginTable("##polyvertices", 3,
-                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
-                        ImVec2(0, 120.0f))) {
-                    ImGui::TableSetupScrollFreeze(0, 1);
-                    ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-                    ImGui::TableSetupColumn("Position", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("##del", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-                    ImGui::TableHeadersRow();
-
-                    for (size_t i = 0; i < settings.zonePolygon.size(); i++) {
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::Text("%d", (int)i + 1);
-                        ImGui::TableNextColumn();
-                        char label[32];
-                        snprintf(label, sizeof(label), "##vtx%d", (int)i);
-                        ImGui::SetNextItemWidth(-1);
-                        ImGui::InputInt2(label, &settings.zonePolygon[i].x);
-                        ImGui::TableNextColumn();
-                        if (settings.zonePolygon.size() > 3) {
-                            char btnId[32];
-                            snprintf(btnId, sizeof(btnId), "X##delvtx%d", (int)i);
-                            if (ImGui::SmallButton(btnId))
-                                removeIdx = (int)i;
-                        }
-                    }
-                    ImGui::EndTable();
-                }
-                if (removeIdx >= 0) {
-                    settings.zonePolygon.erase(settings.zonePolygon.begin() + removeIdx);
-                    if (m_editDragVertex == removeIdx)
-                        m_editDragVertex = -1;
-                    else if (m_editDragVertex > removeIdx)
-                        m_editDragVertex--;
-                }
-            }
-        }
-
-        const char* captureText = "None";
-        switch (m_zoneCaptureMode) {
-            case ZoneCaptureMode::CircleCenter: captureText = "Click map for zone center"; break;
-            case ZoneCaptureMode::CircleRadius: captureText = "Click map for zone radius"; break;
-            case ZoneCaptureMode::PolygonVertex: captureText = "Click map to add polygon vertices"; break;
-            case ZoneCaptureMode::None: break;
-        }
-        ImGui::TextDisabled("%s", captureText);
-    }
-
-    if (ImGui::CollapsingHeader("Safety", kSectionFlags)) {
-        ImGui::InputText("Player Whitelist", settings.playerWhitelist, IM_ARRAYSIZE(settings.playerWhitelist));
-        ImGui::TextDisabled("Comma-separated. Whitelisted players are ignored by all player-nearby checks.");
-        ImGui::Checkbox("Player Nearby Safety", &settings.safetyEnabled);
-        if (settings.safetyEnabled) {
-            ImGui::SliderInt("Detection Range", &settings.safetyPlayerRange, 0, 30);
-            if (settings.safetyPlayerRange == 0)
-                ImGui::TextDisabled("0 = any player on the map triggers safety.");
-            ImGui::SliderInt("Detection Time (s)", &settings.safetyDetectionSec, 5, 300);
-            ImGui::SliderInt("Rest Time (s)", &settings.safetyRestSec, 10, 600);
-            ImGui::Checkbox("Discord Notify on Safety Trigger", &settings.safetyNotifyDiscord);
-            if (!m_nearbyPlayerTicks.empty()) {
-                DWORD now = GetTickCount();
-                for (auto& [id, tick] : m_nearbyPlayerTicks) {
-                    int elapsed = (int)((now - tick) / 1000);
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f),
-                        "Player %u nearby for %ds / %ds", id, elapsed, settings.safetyDetectionSec);
-                }
-            }
-            if (m_safetyResting) {
-                DWORD elapsed = GetTickCount() - m_safetyRestStartTick;
-                int remaining = settings.safetyRestSec - (int)(elapsed / 1000);
-                if (remaining < 0) remaining = 0;
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
-                    "Safety resting in Market (%ds remaining)", remaining);
-            }
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Monsters", kSectionFlags)) {
-        ImGui::InputText("Monster Names", settings.monsterNames, IM_ARRAYSIZE(settings.monsterNames));
-        ImGui::InputText("Ignore Monster Names", settings.monsterIgnoreNames, IM_ARRAYSIZE(settings.monsterIgnoreNames));
-        ImGui::InputText("Prefer Monster Names", settings.monsterPreferNames, IM_ARRAYSIZE(settings.monsterPreferNames));
-        ImGui::SliderInt("Mob Search Range", &settings.mobSearchRange, 0, CGameMap::MAX_JUMP_DIST);
-        ImGui::TextDisabled("All lists are comma-separated. Ignore rules win over target rules.");
-        ImGui::TextDisabled("Prefer targets matching monsters first; falls back to others if none found.");
-        ImGui::TextDisabled("Mob Search Range limits target selection to mobs within N tiles (0 = unlimited).");
-
-        if (mgr && ImGui::TreeNode("Nearby Monster Names")) {
-            std::vector<std::string> names;
-            std::unordered_set<std::string> seen;
-            for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-                const auto& roleRef = mgr->m_deqRole[i];
-                if (!roleRef || !roleRef->IsMonster())
-                    continue;
-
-                const std::string name = roleRef->GetName();
-                if (seen.insert(name).second)
-                    names.push_back(name);
-            }
-            std::sort(names.begin(), names.end());
-
-            for (const std::string& name : names) {
-                ImGui::PushID(name.c_str());
-                ImGui::TextUnformatted(name.c_str());
-                ImGui::SameLine(180.0f);
-                if (ImGui::SmallButton("Target"))
-                    AppendFilterToken(settings.monsterNames, sizeof(settings.monsterNames), name.c_str());
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Ignore"))
-                    AppendFilterToken(settings.monsterIgnoreNames, sizeof(settings.monsterIgnoreNames), name.c_str());
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Prefer"))
-                    AppendFilterToken(settings.monsterPreferNames, sizeof(settings.monsterPreferNames), name.c_str());
-                ImGui::PopID();
-            }
-            ImGui::TreePop();
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Timings", kSectionFlags)) {
-        ImGui::SliderInt("Movement Interval (ms)", &settings.movementIntervalMs, kMinMovementIntervalMs, kMaxMovementIntervalMs);
-        ImGui::SliderInt("Attack Interval (ms)", &settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs);
-        ImGui::SliderInt("Cyclone Attack Interval (ms)", &settings.cycloneAttackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs);
-        ImGui::SliderInt("Target Switch Delay (ms)", &settings.targetSwitchAttackIntervalMs,
-            kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs);
-        ImGui::SliderInt("Item Action Interval (ms)", &settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs);
-        ImGui::SliderInt("Loot Spawn Grace (ms)", &settings.lootSpawnGraceMs, kMinLootSpawnGraceMs, kMaxLootSpawnGraceMs);
-        ImGui::SliderInt("Self Cast Interval (ms)", &settings.selfCastIntervalMs, kMinSelfCastIntervalMs, kMaxSelfCastIntervalMs);
-        ImGui::SliderInt("Town/NPC Action Interval (ms)", &settings.npcActionIntervalMs, kMinNpcActionIntervalMs, kMaxNpcActionIntervalMs);
-        ImGui::SliderInt("Loot Retry Ignore (ms)", &settings.lootPickupIgnoreMs, kMinLootPickupIgnoreMs, kMaxLootPickupIgnoreMs);
-        ImGui::SliderInt("Manual Click Pause (ms)", &settings.manualControlPauseMs, kMinManualControlPauseMs, kMaxManualControlPauseMs);
-        ImGui::SliderInt("Revive Delay (ms)", &settings.reviveDelayMs, kMinReviveDelayMs, kMaxReviveDelayMs);
-        ImGui::SliderInt("Revive Retry Interval (ms)", &settings.reviveRetryIntervalMs,
-            kMinReviveRetryIntervalMs, kMaxReviveRetryIntervalMs);
-        ImGui::TextDisabled("Lower intervals act faster but send actions more aggressively.");
-        ImGui::TextDisabled("Loot Spawn Grace waits after a ground item first appears before sending pickup.");
-        ImGui::TextDisabled("Manual Click Pause delays hunt movement/pathing after a map click (0 = disabled).");
-    }
-
-    if (ImGui::CollapsingHeader("Loot Rules", kSectionFlags)) {
-        ImGui::SliderInt("Loot Range", &settings.lootRange, 0, CGameMap::MAX_JUMP_DIST);
-        ImGui::SliderInt("Minimum Loot Plus", &settings.minimumLootPlus, 0, 12);
-        ImGui::Checkbox("Loot Silver/Gold/Money", &settings.lootMoney);
-        ImGui::TextDisabled("Items in the Loot Items list are always looted. Other drops are only looted if confirmed by a system message (our kill).");
-        ImGui::Text("Loot by quality:");
-        ImGui::Checkbox("Refined##basehuntlootqualityrefined", &settings.lootRefined);
-        ImGui::SameLine();
-        ImGui::Checkbox("Unique##basehuntlootqualityunique", &settings.lootUnique);
-        ImGui::SameLine();
-        ImGui::Checkbox("Elite##basehuntlootqualityelite", &settings.lootElite);
-        ImGui::SameLine();
-        ImGui::Checkbox("Super##basehuntlootqualitysuper", &settings.lootSuper);
-        ImGui::TextDisabled("Auto hunt loots items selected in the browser, checked qualities, or items meeting Minimum Loot Plus.");
-        ImGui::TextDisabled("Pickup packets wait until the hero is settled on the loot tile to avoid range errors.");
-
-        // ── Phase 2a: gold-value floor ─────────────────────────────────────
-        ImGui::Separator();
-        ImGui::InputInt("Min Loot Gold Value", &settings.minimumLootGoldValue, 100, 1000);
-        if (settings.minimumLootGoldValue < 0) settings.minimumLootGoldValue = 0;
-        ImGui::TextDisabled("Skip ground items whose sell price is below this value (0 = disabled).");
-        ImGui::TextDisabled("Items in the Loot list bypass this floor.");
-
-        // ── Phase 2a: bag-full trash drop ──────────────────────────────────
-        ImGui::Separator();
-        ImGui::Checkbox("Auto-drop trash when bag is full", &settings.autoDropTrashWhenFull);
-        if (settings.autoDropTrashWhenFull) {
-            ImGui::Indent();
-            ImGui::SliderInt("Drop if quality < ##autoDropQ", &settings.autoDropMinKeepQuality, 0, 9);
-            ImGui::SameLine();
-            ImGui::TextDisabled("(0=off; 3=Normal, 6=Refined)");
-            ImGui::InputInt("Drop if price < ##autoDropP", &settings.autoDropMinKeepPrice, 100, 1000);
-            if (settings.autoDropMinKeepPrice < 0) settings.autoDropMinKeepPrice = 0;
-            ImGui::TextDisabled("Triggers only when bag size >= 'Store When Bag >=' threshold.");
-            ImGui::TextDisabled("Never drops: equipment, plussed items, arrows, or anything in your Loot/Warehouse/Priority lists.");
-
-            // Live count of bag items currently flagged as trash
-            CHero* heroForCount = Game::GetHero();
-            int trashInBag = 0;
-            if (heroForCount) {
-                for (const auto& itemRef : heroForCount->m_deqItem) {
-                    if (itemRef && HuntLootManager::IsBagItemTrash(settings, *itemRef))
-                        ++trashInBag;
-                }
-            }
-            ImGui::Text("Currently flagged as trash: %d / %d in bag",
-                trashInBag,
-                heroForCount ? (int)heroForCount->m_deqItem.size() : 0);
-            ImGui::Unindent();
-        }
-    }
-
-    if (ImGui::CollapsingHeader("Warehouse Rules", kSectionFlags)) {
-        ImGui::SliderInt("Store When Bag >=", &settings.bagStoreThreshold, 1, CHero::MAX_BAG_ITEMS);
-        ImGui::SliderInt("Minimum Warehouse Plus", &settings.minimumStorePlus, 0, 12);
-        ImGui::Checkbox("Immediate Return On Priority Items", &settings.immediateReturnOnPriorityItems);
-        ImGui::Checkbox("Pack Meteors into MeteorScrolls", &settings.packMeteorsIntoScrolls);
-        ImGui::Checkbox("Use TreasureBank for DB/Meteor items", &settings.storeTreasureBank);
-        ImGui::Checkbox("Use ComposeBank for +1/+2 gear", &settings.storeComposeBank);
-        ImGui::Checkbox("Deposit Silver", &settings.autoDepositSilver);
-        if (settings.autoDepositSilver)
-            ImGui::InputInt("Silver to Keep", &settings.silverKeepAmount, 1000, 10000);
-        ImGui::Text("Store Quality:");
-        ImGui::SameLine();
-        ImGui::Checkbox("Refined##storeQuality", &settings.storeRefined);
-        ImGui::SameLine();
-        ImGui::Checkbox("Unique##storeQuality", &settings.storeUnique);
-        ImGui::SameLine();
-        ImGui::Checkbox("Elite##storeQuality", &settings.storeElite);
-        ImGui::SameLine();
-        ImGui::Checkbox("Super##storeQuality", &settings.storeSuper);
-        ImGui::Checkbox("Buy Arrows", &settings.buyArrows);
-        if (settings.buyArrows) {
-            int arrowTypeIdInt = (int)settings.arrowTypeId;
-            if (ImGui::InputInt("Arrow Type ID", &arrowTypeIdInt, 1, 100))
-                settings.arrowTypeId = arrowTypeIdInt > 0 ? (uint32_t)arrowTypeIdInt : 0;
-            if (settings.arrowTypeId != 0) {
-                if (const ItemTypeInfo* info = GetItemTypeInfo(settings.arrowTypeId))
-                    ImGui::TextDisabled("  -> %s", info->name.c_str());
-                else
-                    ImGui::TextDisabled("  -> (unknown type)");
-            }
-            ImGui::SliderInt("Arrow Packs to Maintain", &settings.arrowBuyCount, 1, 10);
-        }
-        ImGui::TextDisabled("Priority return items trigger an immediate Market run and are treated as warehouse-store items.");
-        ImGui::TextDisabled("Meteor packing runs during storage until fewer than 10 Meteors remain.");
-        ImGui::TextDisabled("TreasureBank stores DragonBalls, Meteors, DBScrolls, and MeteorScrolls.");
-        ImGui::TextDisabled("ComposeBank stores bagged wearable gear with +1 or +2.");
-    }
-
-    if (ImGui::CollapsingHeader("Item Lists", kSectionFlags))
-        RenderItemSelector(settings);
-
-    if (ImGui::CollapsingHeader("Runtime", kSectionFlags)) {
-        ImGui::Text("State: %s", GetStateName());
-        ImGui::Text("Status: %s", m_statusText);
-        ImGui::Text("Map: %u", m_lastMapId);
-        ImGui::Text("Hero Pos: (%d, %d)", m_lastHeroPos.x, m_lastHeroPos.y);
-        if (m_targetId != 0)
-            ImGui::Text("Active Target: %u", m_targetId);
-
-        const int hpPercent = m_lastMaxHp > 0 ? (m_lastHp * 100) / m_lastMaxHp : 0;
-        const int manaPercent = m_lastMaxMana > 0 ? (m_lastMana * 100) / m_lastMaxMana : 0;
-        ImGui::Text("HP: %d / %d (%d%%)", m_lastHp, m_lastMaxHp, hpPercent);
-        ImGui::Text("Mana: %d / %d (%d%%)", m_lastMana, m_lastMaxMana, manaPercent);
-        ImGui::Text("Bag Items: %d / %d", (int)m_lastBagCount, CHero::MAX_BAG_ITEMS);
-        ImGui::Text("XP Ready: %s", m_buffMgr.IsXpSkillReady() ? "Yes" : "No");
-        ImGui::Text("Superman Active: %s", m_buffMgr.IsSupermanActive() ? "Yes" : "No");
-        ImGui::Text("Cyclone Active: %s", m_buffMgr.IsCycloneActive() ? "Yes" : "No");
-        ImGui::Text("Fly Active: %s", m_buffMgr.IsFlyActive() ? "Yes" : "No");
-        ImGui::Text("Scatter Range: %d", GetLastScatterRange());
-        ImGui::Text("Tracked Mob Clump: %d", m_lastClumpSize);
-    }
-
-    if (ImGui::CollapsingHeader("Debug Overlays", kSectionFlags)) {
-        ImGui::TextDisabled("Show radius circles on the minimap centered on the hero.");
-        ImGui::Checkbox("Action Radius##debug", &settings.debugShowActionRadius);
-        ImGui::Checkbox("Clump Radius##debug", &settings.debugShowClumpRadius);
-        ImGui::Checkbox("Mob Search Range##debug", &settings.debugShowMobSearchRange);
-        ImGui::Checkbox("Loot Range##debug", &settings.debugShowLootRange);
-        ImGui::Checkbox("Safety Player Range##debug", &settings.debugShowSafetyRange);
-        ImGui::Checkbox("Attack Range##debug", &settings.debugShowAttackRange);
-        ImGui::Checkbox("Archer Safety Distance##debug", &settings.debugShowArcherSafety);
-        ImGui::Checkbox("Scatter Range##debug", &settings.debugShowScatterRange);
-        ImGui::Checkbox("Best Mob Clump##debug", &settings.debugShowBestClump);
-    }
 }
 
 void BaseHuntPlugin::RenderUI()
@@ -2414,25 +2399,5 @@ void BaseHuntPlugin::RenderUI()
         ApplyHuntModeSelection(GetExpectedCombatMode(), enabled);
     ImGui::TextDisabled("Use the Hunting page for the full workflow layout.");
     ImGui::Separator();
-    RenderCombatUI(settings);
-    return;
-
-    // Mutual exclusion: enabling this plugin disables the other hunt plugin
-    bool wasEnabled = m_enabled;
-    ImGui::Checkbox("Enabled", &m_enabled);
-    if (m_enabled && !wasEnabled) {
-        for (auto& p : PluginManager::Get().GetPlugins()) {
-            auto* other = dynamic_cast<BaseHuntPlugin*>(p.get());
-            if (other && other != this && other->m_enabled) {
-                other->m_enabled = false;
-                other->StopAutomation(true);
-            }
-        }
-        // Optional: reset session telemetry on each fresh enable.
-        if (HuntStats::GetSettings().autoResetOnEnable)
-            HuntStats::Reset();
-    }
-    ImGui::Separator();
-
     RenderCombatUI(settings);
 }

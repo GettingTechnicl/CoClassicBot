@@ -1,3 +1,5 @@
+#include "game.h"
+#include "jitter.h"
 #include "hunt_town.h"
 #include "inventory_utils.h"
 #include "npc_utils.h"
@@ -50,10 +52,12 @@ bool IsArcherModeEnabled(const AutoHuntSettings& settings)
     return settings.archerMode || settings.combatMode == AutoHuntCombatMode::Archer;
 }
 
+// Session 10: jittered — see jitter.h. NPC actions are "action items"; a
+// random 50-250ms is always added on top, never subtracted.
 DWORD GetNpcActionIntervalMs(const AutoHuntSettings& settings)
 {
-    return static_cast<DWORD>(std::clamp(settings.npcActionIntervalMs,
-        kMinNpcActionIntervalMs, kMaxNpcActionIntervalMs));
+    return WithActionJitter(static_cast<DWORD>(std::clamp(settings.npcActionIntervalMs,
+        kMinNpcActionIntervalMs, kMaxNpcActionIntervalMs)));
 }
 
 } // namespace
@@ -335,7 +339,7 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
         return;
     }
 
-    if (map->GetId() != MAP_MARKET) {
+    if (Game::GetCurrentMapId() != MAP_MARKET) {
         cb.beginTravelToMarketFn();
         return;
     }
@@ -467,7 +471,7 @@ void HuntTownService::HandleBuyArrowsState(CHero* hero, CGameMap* map,
     // NOTE: We do NOT have travel here — the caller already gates on travel.IsTraveling()
     // before dispatching to us, so we just check the map.
 
-    const BlacksmithEntry* bs = FindBlacksmithForMap(map->GetId());
+    const BlacksmithEntry* bs = FindBlacksmithForMap(Game::GetCurrentMapId());
     if (!bs) {
         // No blacksmith on this map — go to the zone city (which has one).
         // HandleTravelToZone will re-enter BuyArrows on arrival.
@@ -585,7 +589,7 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
         return;
     }
 
-    if (map->GetId() != MAP_MARKET) {
+    if (Game::GetCurrentMapId() != MAP_MARKET) {
         cb.beginTravelToMarketFn();
         return;
     }

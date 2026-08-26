@@ -1,4 +1,5 @@
 #include "melee_hunt_plugin.h"
+#include "jitter.h"
 #include "hunt_targeting.h"
 #include "game.h"
 #include "CHero.h"
@@ -26,20 +27,22 @@ DWORD ClampMs(int value, int minValue, int maxValue)
     return static_cast<DWORD>(std::clamp(value, minValue, maxValue));
 }
 
+// Session 10: jittered — see jitter.h. Attack/cyclone/target-switch are
+// "action items"; a random 50-250ms is always added on top, never subtracted.
 DWORD GetAttackIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs);
+    return WithActionJitter(ClampMs(settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
 }
 
 DWORD GetCycloneAttackIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.cycloneAttackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs);
+    return WithActionJitter(ClampMs(settings.cycloneAttackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
 }
 
 DWORD GetTargetSwitchAttackIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.targetSwitchAttackIntervalMs,
-        kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs);
+    return WithActionJitter(ClampMs(settings.targetSwitchAttackIntervalMs,
+        kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs));
 }
 
 } // anonymous namespace
@@ -87,7 +90,9 @@ bool MeleeHuntPlugin::FindBestClumpApproach(CHero* hero, CGameMap* map, const Au
             const Position candidate = {jumpOrigin.x + dx, jumpOrigin.y + dy};
             if (candidate.x == jumpOrigin.x && candidate.y == jumpOrigin.y)
                 continue;
-            if (!IsPointInZone(settings, settings.zoneMapId, candidate))
+            // Session 10: leash, not cage — clump approach — must be allowed to step outside to reach a clump.
+            if (!IsPointNearHuntZone(settings, settings.zoneMapId, candidate,
+                                    GetHuntLeash(settings)))
                 continue;
             if (!map->IsWalkable(candidate.x, candidate.y))
                 continue;

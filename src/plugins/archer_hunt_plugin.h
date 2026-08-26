@@ -64,6 +64,9 @@ private:
     int m_lastScatterRange = 0;
     int m_lastScatterHitCount = 0;
     mutable DWORD m_lastScatterApproachTick = 0;
+    // Cycles the patrol band so idle movement drifts inward and outward
+    // instead of tracing the zone rim. See FindArcherPatrolPosition.
+    mutable int   m_patrolDriftPhase = 0;
     Position m_lastFailedRetreatDest = {};
     DWORD m_lastFailedRetreatTick = 0;
     DWORD m_retreatCooldownTick = 0;

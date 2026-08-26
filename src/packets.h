@@ -55,6 +55,13 @@ PacketLog& GetPacketLog();
 DWORD GetLastVipTeleportTick();
 bool IsVipTeleportOnCooldown(DWORD cooldownMs = 60000);
 
+// Session 10: (field_number, varint value) pairs decoded from a packet's
+// tag/varint payload (skips the 4-byte size+type header). Works for any
+// packet using this project's outgoing MsgAction-style encoding — see
+// packets.cpp's BuildMsgActionPacket for the tag layout being reversed here.
+struct DecodedField { int fieldNumber; uint32_t value; };
+std::vector<DecodedField> DecodeVarintFields(const uint8_t* data, size_t size);
+
 void InitPacketHook();
 void CleanupPacketHook();
 
@@ -63,5 +70,16 @@ void CleanupPacketHook();
 bool SendPacket(const uint8_t* data, size_t size);
 
 // Build and send a raw MsgAction jump packet with speed hack applied.
-// Updates local position via ApplyLocalJumpPrediction.
-bool SendJumpPacket(OBJID heroId, int destX, int destY, int facing);
+// Updates local position via ApplyLocalJumpPrediction unless
+// applyLocalPrediction is false — see packets.cpp session-8 comment: that
+// path writes to CHero struct fields never actually verified on v1074 (it
+// was dead code until SendPacket() started working this session), and a
+// live test crashed the game the first time it ran for real.
+bool SendJumpPacket(OBJID heroId, int destX, int destY, int facing, bool applyLocalPrediction = true);
+
+// Session 10: build and send a raw MsgAction walk packet. Field layout
+// (mode=84, destX/destY in data1/data2, no data3/data4) reverse-engineered
+// from live capture — see packets.cpp SendWalkPacket for details/caveats.
+// Does NOT touch local client state itself; the caller (CHero::Walk()) calls
+// CRole::SyncClientPosition() on success, mirroring CHero::Jump()'s fallback.
+bool SendWalkPacket(OBJID heroId, int destX, int destY, int facing);

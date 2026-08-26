@@ -45,10 +45,10 @@ DWORD ClampPathMovementIntervalMs(DWORD value)
 bool IsTileOccupied(int tileX, int tileY)
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return false;
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; i++) {
-        auto& ref = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
+        const auto ref = Entities::Roles()[i];
         if (!ref)
             continue;
         CRole* e = ref.get();
@@ -79,10 +79,10 @@ void Pathfinder::LoadTilePath(const std::vector<Position>& tilePath, int hx, int
 static bool IsTileNearMonster(int tileX, int tileY, int radius)
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return false;
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; i++) {
-        auto& ref = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
+        const auto ref = Entities::Roles()[i];
         if (!ref) continue;
         CRole* e = ref.get();
         if (!e->IsMonster()) continue;
@@ -122,9 +122,9 @@ Position Pathfinder::FindSafeAlternative(CHero* hero, CGameMap* map, const Posit
             // Compute min distance to any monster
             int minMobDist = 999;
             CRoleMgr* mgr = Game::GetRoleMgr();
-            if (mgr && !mgr->m_deqRole.empty() && mgr->m_deqRole.size() < 10000) {
-                for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; i++) {
-                    auto& ref = mgr->m_deqRole[i];
+            if (mgr && !Entities::Roles().empty() && Entities::Roles().size() < 10000) {
+                for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
+                    const auto ref = Entities::Roles()[i];
                     if (!ref) continue;
                     CRole* e = ref.get();
                     if (!e->IsMonster()) continue;
@@ -185,7 +185,15 @@ bool Pathfinder::IssueMovementToWaypoint(CHero* hero, CGameMap* map, const Posit
 
     if (dist <= CGameMap::MAX_JUMP_DIST && map->CanJump(hx, hy, effective.x, effective.y, CGameMap::GetHeroAltThreshold())) {
         spdlog::debug("[path] Jump ({},{}) -> ({},{}) dist={}", hx, hy, effective.x, effective.y, dist);
-        if (m_forceNativeJump)
+        // Session 9 [SAFETY FIX]: this used to call the native CHero_Jump RVA
+        // directly, bypassing CHero::Jump()'s own VERIFIED_V1074 gate entirely
+        // — found via an audit prompted by SetCommand's own vtable slot
+        // turning out to be stale. GameRva::CHERO_JUMP has never been
+        // independently verified for v1074, and m_forceNativeJump IS reached
+        // in practice (TravelPlugin sets it for Portal-type gateways), so
+        // this was a real, live crash risk, not dead code. Route through the
+        // safe path instead — CHero::Jump() already respects the gate itself.
+        if (m_forceNativeJump && GameRva::VERIFIED_V1074)
             GameCall::CHero_Jump()(hero, effective.x, effective.y);
         else
             hero->Jump(effective.x, effective.y);

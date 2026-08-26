@@ -1,4 +1,5 @@
 #include "archer_hunt_plugin.h"
+#include "jitter.h"
 #include "hunt_targeting.h"
 #include "game.h"
 #include "CHero.h"
@@ -35,25 +36,28 @@ DWORD ClampMs(int value, int minValue, int maxValue)
     return static_cast<DWORD>(std::clamp(value, minValue, maxValue));
 }
 
+// Session 10: all four jittered — see jitter.h. Attack/cyclone/target-switch/
+// pickup are all "action items"; a random 50-250ms is always added on top,
+// never subtracted.
 DWORD GetAttackIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs);
+    return WithActionJitter(ClampMs(settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
 }
 
 DWORD GetCycloneAttackIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.cycloneAttackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs);
+    return WithActionJitter(ClampMs(settings.cycloneAttackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
 }
 
 DWORD GetTargetSwitchAttackIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.targetSwitchAttackIntervalMs,
-        kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs);
+    return WithActionJitter(ClampMs(settings.targetSwitchAttackIntervalMs,
+        kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs));
 }
 
 DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs);
+    return WithActionJitter(ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs));
 }
 
 bool TickIsFuture(DWORD targetTick, DWORD now)
@@ -78,7 +82,27 @@ bool IsScatterLogicEnabled(const AutoHuntSettings& settings)
 
 int GetRegularArcherAttackRange(const AutoHuntSettings& settings)
 {
-    return (std::max)(0, settings.rangedAttackRange);
+    // Explicit setting wins, so the value stays overridable.
+    if (settings.rangedAttackRange > 0)
+        return settings.rangedAttackRange;
+
+    // Session 10: otherwise read the real reach off the equipped weapon.
+    // itemtype.json carries it (TightBow = 21), and a hand-set value that is
+    // too low does more damage than it looks: it decides attack-vs-approach,
+    // AND the hunt leash, AND the engage margin, since both derive from it.
+    // A user running 7 against a 21-range bow had the bot walking into melee
+    // range of things it could have shot from three times further out.
+    if (CHero* hero = Game::GetHero()) {
+        if (CItem* weapon = hero->GetEquip(EquipSlot::RWEAPON)) {
+            if (const ItemTypeInfo* info = GetItemTypeInfo(weapon->GetTypeID())) {
+                if (info->attackRange > 0) {
+                    // Clamp to what the movement system can actually service.
+                    return (std::min)((int)info->attackRange, (int)CGameMap::MAX_JUMP_DIST);
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 int GetArcherSafetyDistance(const AutoHuntSettings& settings)
@@ -95,6 +119,11 @@ int GetRequiredArcherThreatDistance(int safetyDist)
 {
     return safetyDist > 0 ? (safetyDist + kArcherSafetyBufferTiles) : 0;
 }
+
+// Session 10: hard floor for AoE positioning — never stand on/adjacent to a
+// monster, but everything beyond that is a scoring preference rather than a
+// veto. See FindBestScatterApproach.
+constexpr int kMinimumStandoffTiles = 2;
 
 } // anonymous namespace
 
@@ -258,26 +287,42 @@ bool ArcherHuntPlugin::FindBestScatterApproach(CHero* hero, CGameMap* map, const
             const Position candidate = {jumpOrigin.x + dx, jumpOrigin.y + dy};
             if (candidate.x == jumpOrigin.x && candidate.y == jumpOrigin.y)
                 continue;
-            if (!IsPointInZone(settings, settings.zoneMapId, candidate))
+
+            // Session 10 [BEHAVIOUR FIX]: the zone is a search area, not a
+            // cage. Requiring the CAST TILE to sit inside the circle threw
+            // away the best shots on any clump near the boundary — the bot
+            // would orbit the edge and never fire. What matters is that the
+            // FIGHT stays around the zone, so allow stepping a short way out
+            // (bounded by the AoE range) to line up a shot.
+            if (!IsPointInZone(settings, settings.zoneMapId, candidate)
+                && !IsPointNearHuntZone(settings, settings.zoneMapId, candidate, range))
                 continue;
+
             if (!map->IsWalkable(candidate.x, candidate.y))
                 continue;
             if (IsTileOccupied(candidate.x, candidate.y))
                 continue;
             if (!map->CanJump(jumpOrigin.x, jumpOrigin.y, candidate.x, candidate.y, CGameMap::GetHeroAltThreshold()))
                 continue;
+
+            // Session 10 [BEHAVIOUR FIX]: the archer standoff used to be an
+            // absolute veto — a tile was discarded unless it was N tiles from
+            // EVERY monster. That is backwards for an AoE: the tiles with the
+            // best cone coverage are precisely the ones close to the clump, so
+            // the filter rejected exactly the shots we wanted and often left
+            // no valid tile at all. Standoff is now a PREFERENCE, scored below
+            // (hits first, then distance-from-threats), with only a hard floor
+            // to avoid standing on top of a monster.
             int minThreatDist = (std::numeric_limits<int>::max)();
-            if (requiredThreatDist > 0) {
-                for (CRole* t : localTargets) {
-                    if (!t)
-                        continue;
-                    const int threatDist = CGameMap::TileDist(candidate.x, candidate.y, t->m_posMap.x, t->m_posMap.y);
-                    if (threatDist < minThreatDist)
-                        minThreatDist = threatDist;
-                }
-                if (minThreatDist < requiredThreatDist)
+            for (CRole* t : localTargets) {
+                if (!t)
                     continue;
+                const int threatDist = CGameMap::TileDist(candidate.x, candidate.y, t->m_posMap.x, t->m_posMap.y);
+                if (threatDist < minThreatDist)
+                    minThreatDist = threatDist;
             }
+            if (minThreatDist < kMinimumStandoffTiles)
+                continue;
 
             Position candidateCastPos = {};
             CRole* candidatePrimaryTarget = nullptr;
@@ -349,7 +394,9 @@ bool ArcherHuntPlugin::FindSafeArcherRetreat(CHero* hero, CGameMap* map, const A
             }
             if (CGameMap::TileDist(heroPos.x, heroPos.y, candidate.x, candidate.y) > CGameMap::MAX_JUMP_DIST)
                 continue;
-            if (!IsPointInZone(settings, settings.zoneMapId, candidate))
+            // Session 10: leash, not cage — retreat tiles — a retreat that may not leave the zone is barely a retreat.
+            if (!IsPointNearHuntZone(settings, settings.zoneMapId, candidate,
+                                    GetHuntLeash(settings)))
                 continue;
             if (!map->IsWalkable(candidate.x, candidate.y))
                 continue;
@@ -552,7 +599,20 @@ CRole* ArcherHuntPlugin::FindBestArcherTarget(CHero* hero, CGameMap* map, const 
                     scatterApproachPos, scatterApproachCastPos, scatterApproachTarget, scatterApproachHits);
         }
 
-        if (hasApproachShot && scatterApproachHits > scatterHits) {
+        // Session 10 [ATTACK STARVATION FIX]: only chase a better position when
+        // the shot we already have is weak.
+        //
+        // This used to reposition whenever a move caught even ONE more target.
+        // Surrounded by a big group there is almost always some tile that
+        // hits one more, so the bot jumped from clump to clump and never fired
+        // — observed live with 9 targets, nearest 3 tiles away, five monsters
+        // actively hitting the player, state stuck on "Jumping to scatter clump".
+        //
+        // Matches the intended rule: scatter whatever is in the cone, and only
+        // move first if there is a single target and moving would catch that
+        // one plus others.
+        const bool localShotWorthTaking = hasLocalShot && scatterHits >= 2;
+        if (!localShotWorthTaking && hasApproachShot && scatterApproachHits > scatterHits) {
             if (outApproachPos)
                 *outApproachPos = scatterApproachPos;
             if (outAttackPos)
@@ -587,9 +647,18 @@ CRole* ArcherHuntPlugin::FindBestArcherTarget(CHero* hero, CGameMap* map, const 
         }
     }
 
-    // Scatter logic is on but no valid scatter shot was found — roam the zone
-    if (IsScatterLogicEnabled(settings) && scatterRange > 0)
-        return nullptr;
+    // Session 10 [DEADLOCK FIX]: this used to `return nullptr` whenever scatter
+    // logic was on and no scatter shot was available, making every fallback
+    // below unreachable. The result was a hard loop: a mob beyond scatter range
+    // yields no shot -> no target -> HandleNoTargetIdle -> patrol, and patrol
+    // only ever walks the zone RIM, so the bot could never close the distance.
+    // Observed live as the archer orbiting the circle perfectly while ignoring
+    // a large mob sitting in the middle of it.
+    //
+    // Scatter is a PREFERENCE, not a precondition for engaging. Falling through
+    // means: nothing to scatter right now -> approach the nearest target ->
+    // scatter once the cone catches something. Movement stays bounded by the
+    // leash, so "go to it" never becomes "chase it across the map".
 
     // If there's already a target within attack range, hit it
     const int effectiveAttackRange = regularAttackRange > 0 ? regularAttackRange : kReliableAttackRange;
@@ -635,11 +704,26 @@ bool ArcherHuntPlugin::FindArcherPatrolPosition(CHero* hero, CGameMap* map,
         return false;
 
     const Position heroPos = GetEffectiveHeroPosition(hero);
-    const int patrolRadius = settings.zoneMode == AutoHuntZoneMode::Circle
+
+    // Session 10 [BEHAVIOUR FIX]: patrol used to aim at exactly
+    // (zoneRadius - 1) in eight compass directions, i.e. it walked the RIM and
+    // nothing else. That can only scout the boundary, and for a circle whose
+    // interior is where things spawn it actively carries the bot AWAY from the
+    // monsters. Live symptom: a perfect orbit around a mob sitting in the
+    // middle of the zone.
+    //
+    // Instead drift in and out — vary the radius each time so the sweep covers
+    // the interior as well as the edge. The rim is a reset point, not a track.
+    const int zoneExtent = settings.zoneMode == AutoHuntZoneMode::Circle
         ? (std::max)(1, settings.zoneRadius - 1)
         : (std::max)(6, settings.actionRadius * 2);
-    if (patrolRadius <= 0)
+    if (zoneExtent <= 0)
         return false;
+
+    // Alternate between inner and outer bands on successive patrol picks.
+    m_patrolDriftPhase = (m_patrolDriftPhase + 1) % 4;
+    static const float kBands[4] = { 0.30f, 0.85f, 0.55f, 1.00f };
+    const int patrolRadius = (std::max)(1, (int)(zoneExtent * kBands[m_patrolDriftPhase]));
 
     static const Position kPatrolDirs[] = {
         {1, 0},
@@ -709,7 +793,8 @@ bool ArcherHuntPlugin::FindArcherPatrolPosition(CHero* hero, CGameMap* map,
         }
 
         if (found && bestDesiredDist + 0.1f < currentDesiredDist) {
-            outPatrolPos = bestCandidate;
+            // Never land on the exact computed tile — see JitterDestination.
+            outPatrolPos = JitterDestination(map, bestCandidate, GetJitterRadius(settings));
             return true;
         }
     }
@@ -1060,11 +1145,24 @@ int ArcherHuntPlugin::CountUsableArrowPacks(const CHero* hero) const
 void ArcherHuntPlugin::RenderCombatUI(AutoHuntSettings& settings)
 {
     ImGui::Checkbox("Use Scatter Logic", &settings.useScatterLogic);
-    ImGui::SliderInt("Attack From This Many Tiles Away", &settings.rangedAttackRange, 0, CGameMap::MAX_JUMP_DIST);
-    ImGui::SliderInt("Archer Safety Distance", &settings.archerSafetyDistance, 0, CGameMap::MAX_JUMP_DIST);
+
+    ImGui::SliderInt("Attack Range (0 = auto)", &settings.rangedAttackRange, 0, CGameMap::MAX_JUMP_DIST);
+    if (settings.rangedAttackRange == 0)
+        ImGui::TextDisabled("  auto: %d tiles (from equipped weapon)", GetEffectiveAttackRange(settings));
+    ImGui::TextDisabled("  How far out you shoot from. Also sets the hunt leash:");
+    ImGui::TextDisabled("  the bot may leave the zone by this much, no further.");
+
+    ImGui::SliderInt("Kiting Standoff (0 = off)", &settings.archerSafetyDistance, 0, CGameMap::MAX_JUMP_DIST);
+    ImGui::TextDisabled("  Retreat to keep monsters this far away. Leave at 0 unless");
+    ImGui::TextDisabled("  you are actually taking damage - it makes the bot run");
+    ImGui::TextDisabled("  instead of killing, and costs kills for a strong archer.");
+
     if (settings.useScatterLogic) {
         ImGui::Checkbox("Prioritize Scatter Clumps", &settings.prioritizeScatterClumps);
         ImGui::SliderInt("Minimum Scatter Hits", &settings.minimumScatterHits, 1, 12);
+        ImGui::TextDisabled("  1 = scatter whenever anything is in the cone (recommended).");
+        ImGui::TextDisabled("  It still repositions when a short move would hit more.");
+        ImGui::TextDisabled("  Higher values force single-target shots on small groups.");
         ImGui::SliderInt("Scatter Range Override", &settings.scatterRangeOverride, 0, CGameMap::MAX_JUMP_DIST);
         if (settings.scatterRangeOverride == 0)
             ImGui::TextDisabled("0 = auto-detect from skill (current: %d)", m_lastScatterRange);

@@ -28,7 +28,7 @@ struct HuntBuffCallbacks {
     // Check whether a loot item is currently ignored (item pickup throttle).
     std::function<bool(OBJID, DWORD)> isLootPickupIgnoredFn;
     // Try to pick up a loot item directly (same-tile pickup).
-    std::function<bool(CHero*, const std::shared_ptr<CMapItem>&, DWORD)> tryPickupLootItemFn;
+    std::function<bool(CHero*, const CMapItem*, DWORD)> tryPickupLootItemFn;
     // Find a safe archer retreat position.
     std::function<bool(CHero*, CGameMap*, const AutoHuntSettings&,
         const std::vector<CRole*>&, CRole*, Position&, int)> findSafeArcherRetreatFn;
@@ -65,7 +65,7 @@ public:
 
     int CountPotionInventory(const CHero* hero, bool manaPotion) const;
     CItem* FindPotion(const CHero* hero, bool manaPotion) const;
-    std::shared_ptr<CMapItem> FindNearbyPotionLoot(CHero* hero, CGameMap* map,
+    CMapItem* FindNearbyPotionLoot(CHero* hero, CGameMap* map,
         const AutoHuntSettings& settings, bool manaPotion,
         const HuntBuffCallbacks& cb) const;
 

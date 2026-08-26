@@ -6,6 +6,7 @@
 #include "travel_plugin.h"
 #include "discord.h"
 #include "game.h"
+#include "map_items.h"
 #include "gateway.h"
 #include "CHero.h"
 #include "CEntityInfo.h"
@@ -130,7 +131,7 @@ bool HasGroundItemOnTile(const CGameMap* map, const Position& pos)
     if (!map)
         return false;
 
-    for (const auto& itemRef : map->m_vecItems) {
+    for (CMapItem* itemRef : MapItems::Get()) {
         if (!itemRef)
             continue;
         if (itemRef->m_pos.x == pos.x && itemRef->m_pos.y == pos.y)
@@ -339,7 +340,7 @@ const char* MiningPlugin::GetStateName() const
 void MiningPlugin::RefreshRuntimeState(CHero* hero, CGameMap* map)
 {
     m_lastHeroPos = hero ? hero->m_posMap : Position{};
-    m_lastMapId = map ? map->GetId() : 0;
+    m_lastMapId = Game::GetCurrentMapId();
     m_lastBagCount = hero ? hero->m_deqItem.size() : 0;
 }
 
@@ -907,14 +908,14 @@ bool MiningPlugin::StartPathNearTarget(CHero* hero, CGameMap* map, const Positio
 CRole* MiningPlugin::FindPlayerNearSpot(const Position& expectedPos, int radius, const char* playerName) const
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return nullptr;
 
     CHero* hero = Game::GetHero();
     CRole* best = nullptr;
     float bestDist = (float)(radius + 1);
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-        const auto& roleRef = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+        const auto& roleRef = Entities::Roles()[i];
         if (!roleRef)
             continue;
 
@@ -1249,7 +1250,7 @@ void MiningPlugin::HandleStoreState(CHero* hero, CGameMap* map, TravelPlugin* tr
         return;
     }
 
-    if (map->GetId() != GetStoreTargetMapId(hero, settings)) {
+    if (Game::GetCurrentMapId() != GetStoreTargetMapId(hero, settings)) {
         BeginTravelToMarket(travel, hero, settings);
         return;
     }
@@ -1943,7 +1944,7 @@ void MiningPlugin::Update()
         return;
     }
 
-    if (map->GetId() != settings.mineMapId) {
+    if (Game::GetCurrentMapId() != settings.mineMapId) {
         BeginTravelToMine(travel, settings);
         return;
     }
@@ -2219,7 +2220,7 @@ bool MiningPlugin::OnMapClick(const Position& tile)
 
     MiningSettings& settings = GetMiningSettings();
     if (m_captureMinePos) {
-        settings.mineMapId = map->GetId();
+        settings.mineMapId = Game::GetCurrentMapId();
         settings.minePos = tile;
         m_captureMinePos = false;
         snprintf(m_statusText, sizeof(m_statusText), "Mine spot set to (%d,%d)", tile.x, tile.y);

@@ -26,8 +26,7 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 static constexpr const char* GAME_EXE = "ImConquer.exe";
-static constexpr const char* GAME_DIR = R"(C:\Program Files\Classic Conquer 2.0)";
-static constexpr const char* GAME_PATH = R"(C:\Program Files\Classic Conquer 2.0\bin\64\ImConquer.exe)";
+static constexpr const char* GAME_DIR = R"(C:\Program Files\Classic Conquer 2.0)";  // fallback default
 static constexpr const char* DLL_NAME = "coclassic.dll";
 static constexpr const char* SERVER_CONFIG_NAME = "servers.json";
 static constexpr const char* LOCAL_RELAY_HOST = "127.0.0.1";
@@ -1457,6 +1456,34 @@ static std::optional<Endpoint> SelectTargetEndpoint(const ServerConfigPatch& pat
     return targets.front();
 }
 
+// Resolve the game install directory instead of assuming a fixed drive.
+// Priority: COCLASSIC_GAME_DIR env var -> game_dir.txt next to injector.exe ->
+// legacy default (GAME_DIR). Lets the same injector.exe work on any install path.
+static std::string ResolveGameDir()
+{
+    char envBuf[MAX_PATH] = {};
+    DWORD n = GetEnvironmentVariableA("COCLASSIC_GAME_DIR", envBuf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH)
+        return std::string(envBuf, n);
+
+    char exePath[MAX_PATH] = {};
+    if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) > 0) {
+        fs::path cfg = fs::path(exePath).parent_path() / "game_dir.txt";
+        std::ifstream f(cfg);
+        std::string line;
+        if (f && std::getline(f, line)) {
+            while (!line.empty() &&
+                   (line.back() == '\r' || line.back() == '\n' ||
+                    line.back() == ' ' || line.back() == '\t'))
+                line.pop_back();
+            if (!line.empty())
+                return line;
+        }
+    }
+
+    return GAME_DIR;
+}
+
 int main(int argc, char** argv)
 {
     printf("=== coclassic injector ===\n\n");
@@ -1504,14 +1531,19 @@ int main(int argc, char** argv)
 
     printf("[+] DLL: %s\n", dllPath.string().c_str());
 
-    if (!fs::exists(GAME_PATH)) {
-        printf("[!] Game not found at: %s\n", GAME_PATH);
+    const std::string gameDir = ResolveGameDir();
+    const std::string gamePathStr = (fs::path(gameDir) / "bin" / "64" / GAME_EXE).string();
+
+    if (!fs::exists(gamePathStr)) {
+        printf("[!] Game not found at: %s\n", gamePathStr.c_str());
+        printf("    Set COCLASSIC_GAME_DIR or create game_dir.txt next to injector.exe.\n");
         system("pause");
         return 1;
     }
+    printf("[+] Game dir: %s\n", gameDir.c_str());
 
     WinsockSession winsock;
-    ServerConfigPatch serverPatch(fs::path(GAME_DIR) / SERVER_CONFIG_NAME);
+    ServerConfigPatch serverPatch(fs::path(gameDir) / SERVER_CONFIG_NAME);
     Socks5Relay relay;
     RelayLogger relayLogger;
     RelayLogger* activeLogger = nullptr;
@@ -1600,8 +1632,8 @@ int main(int argc, char** argv)
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
 
-    if (!CreateProcessA(GAME_PATH, nullptr, nullptr, nullptr, FALSE, 0,
-                        nullptr, GAME_DIR, &si, &pi)) {
+    if (!CreateProcessA(gamePathStr.c_str(), nullptr, nullptr, nullptr, FALSE, 0,
+                        nullptr, gameDir.c_str(), &si, &pi)) {
         printf("[!] CreateProcess failed (0x%08lX)\n", GetLastError());
         if (proxyMode) {
             relay.Stop();

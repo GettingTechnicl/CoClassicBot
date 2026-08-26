@@ -18,11 +18,11 @@ CRole* FollowPlugin::FindTarget() const
         return nullptr;
 
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return nullptr;
 
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-        const auto& ref = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+        const auto& ref = Entities::Roles()[i];
         if (!ref) continue;
         CRole* role = ref.get();
         if (!role->IsPlayer()) continue;
@@ -38,12 +38,12 @@ int FollowPlugin::NearestMobDistance() const
     if (!hero) return 999;
 
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return 999;
 
     int best = 999;
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-        const auto& ref = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+        const auto& ref = Entities::Roles()[i];
         if (!ref) continue;
         CRole* e = ref.get();
         if (!e->IsMonster() || e->IsDead()) continue;
@@ -65,8 +65,8 @@ static int CollectMobs(MobPos* out, int maxCount)
     CRoleMgr* mgr = Game::GetRoleMgr();
     if (!mgr) return 0;
     int count = 0;
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-        const auto& ref = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+        const auto& ref = Entities::Roles()[i];
         if (!ref) continue;
         CRole* e = ref.get();
         if (!e->IsMonster() || e->IsDead()) continue;

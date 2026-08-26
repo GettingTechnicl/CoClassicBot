@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include "base.h"
 #include <cstdint>
 #include <vector>
@@ -6,6 +7,34 @@
 enum class AutoHuntZoneMode {
     Circle = 0,
     Polygon = 1,
+    Route = 2,      // recorded patrol path — see HuntRoute
+};
+
+// How long to stay and fight before advancing along a route.
+//
+// Deliberately not a fixed tile/time knob: the right behaviour depends on
+// whether the character one-shots monsters (move on immediately, keep spawns
+// cycling) or is levelling on them (stay and finish). Auto decides from the
+// measured time-to-kill, so it adapts when gear or mob difficulty changes.
+enum class AutoHuntLingerMode {
+    Auto = 0,
+    MoveOn = 1,
+    StayAndClear = 2,
+};
+
+// A recorded patrol path for one map.
+//
+// Routes are a guide, not a cage. The bot follows the waypoints, but may leave
+// the line by up to its attack range to engage, and attacks anything within
+// striking range from wherever it ends up — so the effective kill band is
+// roughly twice the attack range around the path, while the body never strays
+// further than one attack range. That keeps it from wandering off while still
+// clearing monsters that would otherwise be walked past and suppress spawns.
+struct HuntRoute
+{
+    std::string           name;
+    OBJID                 mapId = 0;
+    std::vector<Position> waypoints;
 };
 
 enum class AutoHuntCombatMode {
@@ -108,7 +137,13 @@ struct AutoHuntSettings
     int bagStoreThreshold = 36;
     int clumpRadius = 8;
     int minimumMobClump = 5;
-    int minimumScatterHits = 3;
+    // Session 10: was 3, which meant scatter only fired on a 3+ clump and
+    // everything else fell through to single-target shots. Backwards for an
+    // AoE that costs no more than a normal attack: if anything is in the cone,
+    // scatter is at least as good. At 1, the existing approach search still
+    // repositions when a short move would catch more — so "scatter unless a
+    // reposition would hit that same target plus others" is the behaviour.
+    int minimumScatterHits = 1;
     int scatterRangeOverride = 0;
     int actionRadius = 6;
     int rangedAttackRange = 0;
@@ -120,6 +155,29 @@ struct AutoHuntSettings
     int targetSwitchAttackIntervalMs = 75;
     int itemActionIntervalMs = 700;
     int lootSpawnGraceMs = 1000;
+    // Session 10: how long the background heap scanners (entities.h, map_items.h)
+    // cache their results before rescanning. Exposed as a slider mainly so the
+    // Themida-anti-tamper crash hypothesis can be tested live (slow the scan
+    // way down, see if crash frequency changes) without a rebuild.
+    int entityScanIntervalMs = 500;
+    // How long the hero must stand on an item's tile (dist == 0) before the
+    // FIRST pickup attempt fires. 0 preserves the original behaviour (attempt
+    // immediately). Distinct from itemActionIntervalMs, which only throttles
+    // RETRIES after a first attempt has already been made.
+    int itemPickupDelayMs = 0;
+    // Session 10: caps how often BaseHuntPlugin::Update()'s heavy decision
+    // section (target/loot scanning, pathfinding requests, state machine) runs.
+    // Discovered running unthrottled at the render frame rate (~150Hz) with
+    // sustained memory growth over long sessions — this is the lever to test
+    // whether that hot loop is the leak source. 0 = unthrottled (old behavior).
+    int decisionThrottleMs = 50;
+    // Session 10: periodically walk a short random hop instead of the usual
+    // jump, purely to exercise the walk code path regularly during real
+    // autohunt use (rather than only when a target happens to end up 1-2
+    // tiles away) — both for its own sake and as a controllable-frequency
+    // stress test for the still-open memory leak investigation (down to 50ms
+    // = ~20 real actions/sec). 0 disables it entirely.
+    int randomWalkIntervalMs = 0;
     int selfCastIntervalMs = 1000;
     int npcActionIntervalMs = 400;
     int lootPickupIgnoreMs = 30000;
@@ -150,6 +208,17 @@ struct AutoHuntSettings
     Position zoneCenter = {0, 0};
     int zoneRadius = 12;
     std::vector<Position> zonePolygon;
+
+    // ── Recorded routes (session 10) ──
+    std::vector<HuntRoute> routes;
+    std::string            activeRouteName;
+    AutoHuntLingerMode     lingerMode = AutoHuntLingerMode::Auto;
+    // How close to a waypoint counts as "arrived" before advancing.
+    int                    routeWaypointTolerance = 2;
+    // 0 = derive the corridor from the class's attack range (the intended
+    // behaviour). A positive value pins it, for cases where you want the bot
+    // held tighter or given more room than its range implies.
+    int                    routeCorridorOverride = 0;
     std::vector<uint32_t> lootItemIds;
     std::vector<uint32_t> warehouseItemIds;
     std::vector<uint32_t> priorityReturnItemIds;
@@ -190,4 +259,62 @@ bool PointInPolygon(const Position& point, const std::vector<Position>& polygon)
 // Zone helper free functions
 bool HasValidHuntZone(const AutoHuntSettings& settings);
 bool IsPointInHuntZone(const AutoHuntSettings& settings, OBJID mapId, const Position& pos);
+
+// Is a tile inside the hunt zone, or within `margin` tiles of it?
+//
+// The zone bounds where we HUNT, not where every footstep must land. Treating
+// it as a hard cage means a clump straddling the boundary can never be
+// engaged — the bot orbits the edge instead of fighting. AoE positioning uses
+// this with a margin of the skill's range so it can step just outside to line
+// up a shot. Shared deliberately: this applies to any class with an area
+// attack, not just the archer's scatter.
+bool IsPointNearHuntZone(const AutoHuntSettings& settings, OBJID mapId, const Position& pos, int margin);
+
+// ── Route helpers ────────────────────────────────────────────────────────
+// The active route for the current map, or nullptr.
+const HuntRoute* GetActiveRoute(const AutoHuntSettings& settings, OBJID mapId);
+
+// Distance from a point to the route polyline (perpendicular to segments, not
+// just to the waypoints — a long straight leg must count as "on the path"
+// everywhere along it, not only at its endpoints).
+float DistanceToRoute(const HuntRoute& route, const Position& pos);
+
+// Index of the waypoint nearest `pos`. Used to resume patrol after a fight has
+// dragged the bot off the line, so it rejoins where it left rather than
+// restarting the circuit.
+int NearestWaypointIndex(const HuntRoute& route, const Position& pos);
+
+// Corridor half-width for route mode: the class's attack range unless
+// overridden. This is the leash — the bot's body may leave the line by this
+// much and no more.
+int GetRouteCorridor(const AutoHuntSettings& settings);
+
+// ── The leash (applies to EVERY zone mode, not just routes) ──────────────
+// How far the bot's BODY may leave the zone: one attack range. From wherever
+// it ends up it may strike anything in range, so the effective kill band is
+// about twice the attack range beyond the zone edge, while the bot itself
+// never wanders further than one range out.
+//
+// This is what stops a circle/polygon behaving as a cage: a monster just
+// outside the boundary is still worth killing (and killing it keeps spawns
+// cycling), but the bot won't chase it across the map.
+int GetHuntLeash(const AutoHuntSettings& settings);
+
+// Margin for deciding whether a MONSTER is engageable: leash x2, since the bot
+// may stand one leash outside the zone and strike one range beyond that.
+int GetHuntEngageMargin(const AutoHuntSettings& settings);
+
+// Attack range actually in effect: the explicit setting if non-zero,
+// otherwise the equipped weapon's reach from the game's item table.
+int GetEffectiveAttackRange(const AutoHuntSettings& settings);
+
+// ── Route recording ──────────────────────────────────────────────────────
+// Walk the patrol you want, then stop and name it. The raw tile trail is
+// collapsed to corner waypoints via CGameMap::SimplifyPath, so a route is a
+// handful of turns rather than hundreds of tiles.
+void RouteRecordStart();
+void RouteRecordSample(const Position& pos);   // call once per frame
+bool RouteRecordStop(AutoHuntSettings& settings, OBJID mapId, const char* name);
+bool RouteRecordIsActive();
+int  RouteRecordSampleCount();
 Position GetHuntZoneAnchor(const AutoHuntSettings& settings);

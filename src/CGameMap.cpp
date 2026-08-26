@@ -12,13 +12,25 @@ int CGameMap::GetHeroAltThreshold()
 {
     if (g_qwModuleBase == 0)
         return ALT_THRESHOLD_NORMAL;
-    // CRoleMgr is at base + 0x4DF588; hero pointer is at CRoleMgr + 0x08.
-    auto* mgr = *(void**)(g_qwModuleBase + 0x4DF588);
-    if (!mgr)
-        return ALT_THRESHOLD_NORMAL;
-    auto* hero = *(CRole**)((uintptr_t)mgr + 0x08);
-    if (hero && hero->IsFlyActive())
-        return ALT_THRESHOLD_FLYING;
+
+    // Session 10 [FIXED]: this used the pre-v1074 chain
+    //   mgr = *(base + 0x4DF588); hero = *(mgr + 0x08)
+    // Both parts are wrong on v1074. 0x4DF588 is CODE there, not a pointer
+    // slot, so `mgr` was an arbitrary value read out of the image and the
+    // following read at mgr+0x08 dereferenced it — a live crash path reached
+    // from pathfinding, which calls this on every path request.
+    //
+    // Correct, live-verified chain: mgr = *(base + 0x69C730), hero = *mgr.
+    __try {
+        auto* mgr = *(void**)(g_qwModuleBase + 0x69C730);
+        if (!mgr)
+            return ALT_THRESHOLD_NORMAL;
+        auto* hero = *(CRole**)mgr;
+        if (hero && hero->IsFlyActive())
+            return ALT_THRESHOLD_FLYING;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Fall through to the normal threshold rather than propagate.
+    }
     return ALT_THRESHOLD_NORMAL;
 }
 

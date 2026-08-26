@@ -1,3 +1,6 @@
+#include "game.h"
+#include "jitter.h"
+#include "map_items.h"
 #include "hunt_loot.h"
 #include "hunt_town.h"
 #include "hooks.h"
@@ -20,6 +23,8 @@ static constexpr int kMinItemActionIntervalMs = 100;
 static constexpr int kMaxItemActionIntervalMs = 5000;
 static constexpr int kMinLootSpawnGraceMs = 0;
 static constexpr int kMaxLootSpawnGraceMs = 5000;
+static constexpr int kMinItemPickupDelayMs = 0;
+static constexpr int kMaxItemPickupDelayMs = 3000;
 static constexpr DWORD kDropRecordMatchWindowMs = 30000;  // match items against drop records within 30s
 
 // ── File-local helpers ────────────────────────────────────────────────────────
@@ -32,7 +37,10 @@ DWORD ClampMs(int value, int minVal, int maxVal)
 
 DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs);
+    // Session 10: jittered per user direction — see jitter.h. Pickup is an
+    // "action item"; a perfectly periodic retry cadence is a detectable
+    // pattern, so a random 50-250ms is always added on top, never subtracted.
+    return WithActionJitter(ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs));
 }
 
 DWORD GetLootPickupIgnoreMs(const AutoHuntSettings& settings)
@@ -43,6 +51,11 @@ DWORD GetLootPickupIgnoreMs(const AutoHuntSettings& settings)
 DWORD GetLootSpawnGraceMs(const AutoHuntSettings& settings)
 {
     return ClampMs(settings.lootSpawnGraceMs, kMinLootSpawnGraceMs, kMaxLootSpawnGraceMs);
+}
+
+DWORD GetItemPickupDelayMs(const AutoHuntSettings& settings)
+{
+    return ClampMs(settings.itemPickupDelayMs, kMinItemPickupDelayMs, kMaxItemPickupDelayMs);
 }
 
 bool IsConfirmedDrop(const Position& pos, DWORD now)
@@ -84,7 +97,7 @@ bool IsMovementCommandStillAdvancing(const CHero* hero)
 
 // ── HuntLootManager implementation ───────────────────────────────────────────
 
-std::shared_ptr<CMapItem> HuntLootManager::FindBestLoot(
+CMapItem* HuntLootManager::FindBestLoot(
     CHero* hero, CGameMap* map, const AutoHuntSettings& settings,
     std::function<bool(OBJID, DWORD)> isLootPickupIgnoredFn,
     std::function<bool(OBJID mapId, const Position&)> isPointInZoneFn) const
@@ -97,18 +110,18 @@ std::shared_ptr<CMapItem> HuntLootManager::FindBestLoot(
 
     const DWORD now = GetTickCount();
     const DWORD spawnGraceMs = GetLootSpawnGraceMs(settings);
-    std::shared_ptr<CMapItem> best;
+    CMapItem* best = nullptr;
     float bestDist = (std::numeric_limits<float>::max)();
     int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0;
 
-    for (const auto& itemRef : map->m_vecItems) {
+    for (CMapItem* itemRef : MapItems::Get()) {
         if (!itemRef) continue;
         ++totalItems;
         const auto seenResult = m_lootSeenTicks.try_emplace(itemRef->m_id, now);
         const DWORD seenAge = now - seenResult.first->second;
         if (seenAge < spawnGraceMs) { ++skippedSpawnGrace; continue; }
         if (isLootPickupIgnoredFn && isLootPickupIgnoredFn(itemRef->m_id, now)) { ++skippedIgnored; continue; }
-        if (isPointInZoneFn && !isPointInZoneFn(map->GetId(), itemRef->m_pos)) { ++skippedZone; continue; }
+        if (isPointInZoneFn && !isPointInZoneFn(Game::GetCurrentMapId(), itemRef->m_pos)) { ++skippedZone; continue; }
 
         // Phase 2a: gold-value floor.  Universal pickup filter — applies even
         // to confirmed drops.  Items explicitly listed in lootItemIds bypass
@@ -185,7 +198,7 @@ void HuntLootManager::RecordLootPickupAttempt(OBJID itemId, DWORD now,
 
 void HuntLootManager::PruneLootPickupAttempts(CGameMap* map)
 {
-    if (m_lootPickupAttempts.empty() && m_lootSeenTicks.empty())
+    if (m_lootPickupAttempts.empty() && m_lootSeenTicks.empty() && m_lootArrivedTicks.empty())
         return;
     if (!map) {
         ResetLootPickupAttempts();
@@ -193,8 +206,8 @@ void HuntLootManager::PruneLootPickupAttempts(CGameMap* map)
     }
 
     std::unordered_set<OBJID> activeItemIds;
-    activeItemIds.reserve(map->m_vecItems.size());
-    for (const auto& itemRef : map->m_vecItems) {
+    activeItemIds.reserve(MapItems::Get().size());
+    for (CMapItem* itemRef : MapItems::Get()) {
         if (itemRef)
             activeItemIds.insert(itemRef->m_id);
     }
@@ -214,21 +227,39 @@ void HuntLootManager::PruneLootPickupAttempts(CGameMap* map)
             ++it;
         }
     }
+
+    for (auto it = m_lootArrivedTicks.begin(); it != m_lootArrivedTicks.end();) {
+        if (activeItemIds.find(it->first) == activeItemIds.end()) {
+            it = m_lootArrivedTicks.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 void HuntLootManager::ResetLootPickupAttempts()
 {
     m_lootPickupAttempts.clear();
     m_lootSeenTicks.clear();
+    m_lootArrivedTicks.clear();
     m_lastLootItemId = 0;
 }
 
 bool HuntLootManager::TryPickupLootItem(CHero* hero, const AutoHuntSettings& settings,
-    const std::shared_ptr<CMapItem>& item, DWORD now,
+    const CMapItem* item, DWORD now,
     std::function<bool(DWORD)> updatePendingJumpFn)
 {
     if (!hero || !item)
         return false;
+
+    // Session 10 [CRASH FIX]: `item` can be called across several Update()
+    // ticks while the hero walks/jumps over to it — plenty of time for it to
+    // be picked up (freeing the memory) between when the caller captured the
+    // pointer and this specific call. Re-validate before any field read.
+    if (!MapItems::IsAlive(item)) {
+        MapItems::Invalidate();
+        return false;
+    }
 
     const DWORD spawnGraceMs = GetLootSpawnGraceMs(settings);
     const auto seenResult = m_lootSeenTicks.try_emplace(item->m_id, now);
@@ -241,9 +272,23 @@ bool HuntLootManager::TryPickupLootItem(CHero* hero, const AutoHuntSettings& set
 
     const int actualDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, item->m_pos.x, item->m_pos.y);
     if (actualDist != 0) {
+        // Not on the tile yet, so no arrival has happened — clear any stale
+        // arrival timestamp (e.g. the hero walked off and back).
+        m_lootArrivedTicks.erase(item->m_id);
         spdlog::trace("[hunt-loot] Pickup wait id={} type={} dist={} reason=not_on_tile",
             item->m_id, item->m_idType, actualDist);
         return false;
+    }
+
+    const DWORD pickupDelayMs = GetItemPickupDelayMs(settings);
+    if (pickupDelayMs > 0) {
+        const auto arrivedResult = m_lootArrivedTicks.try_emplace(item->m_id, now);
+        const DWORD arrivedAge = now - arrivedResult.first->second;
+        if (arrivedAge < pickupDelayMs) {
+            spdlog::trace("[hunt-loot] Pickup wait id={} type={} reason=arrival_delay age={}ms delay={}ms",
+                item->m_id, item->m_idType, arrivedAge, pickupDelayMs);
+            return false;
+        }
     }
 
     if (hero->IsJumping() || IsMovementCommandStillAdvancing(hero)) {

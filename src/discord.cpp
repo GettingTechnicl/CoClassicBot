@@ -242,7 +242,7 @@ void UpdateItemNotifications()
                 char msg[512];
                 snprintf(msg, sizeof(msg), "[%s] Acquired %s (%u) on map %u at (%d,%d). Bag %d/%d.",
                          hero->GetName(), itemName.c_str(), typeId,
-                         map ? map->GetId() : 0,
+                         Game::GetCurrentMapId(),
                          hero->m_posMap.x, hero->m_posMap.y,
                          (int)hero->m_deqItem.size(), CHero::MAX_BAG_ITEMS);
                 SendDiscordNotification(msg, mention);

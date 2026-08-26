@@ -82,9 +82,22 @@ const int _CMDSTATUS_ACCOMPLISH = 6;
 // =====================================================================
 // CCommand — action command
 // =====================================================================
+// Session 9 [FIXED]: this used to declare an explicit `CCommand() {}`
+// constructor. In C++, ANY user-provided constructor (even an empty one)
+// makes a class a non-aggregate — which means `CCommand cmd = {};` (used at
+// every call site in this codebase) stops zero-initializing the object and
+// instead just calls the (do-nothing) constructor, leaving every field NOT
+// explicitly assigned afterward as uninitialized stack garbage. The real
+// native SetCommand() bulk-copies the ENTIRE struct (confirmed >=0x80 bytes,
+// covering fields like idTarget/nFrameStart/nFrameEnd/dwIndex that call
+// sites never set) into the target object, and the game's own per-tick
+// command dispatcher reads several of those exact fields — garbage there is
+// what was crashing the game on the first real SetCommand call this
+// session, not the RVA/vtable-slot bug found earlier. Removing the
+// constructor makes CCommand an aggregate again, restoring correct
+// zero-initialization for `= {}`/`{}` everywhere.
 class CCommand {
 public:
-    CCommand() {}
     int iType;
     int iStatus;
 
@@ -149,7 +162,25 @@ public:
     Position m_posScr;               // +0xE8  screen position
 
 private:
-    BYTE _padF0[0x188 - 0xF0];     // +0xF0
+    BYTE _padF0[0x108 - 0xF0];     // +0xF0
+public:
+    // ── Movement interpolation state (v1074, LIVE-VERIFIED session 9) ──
+    // The client interpolates m_posWorld from m_posMoveStart toward
+    // m_posMoveDest while a move is in progress, then SNAPS m_posWorld to
+    // m_posMoveDest on completion. m_posMap is in turn DERIVED from
+    // m_posWorld by isometric conversion (func 0x1A8140).
+    //
+    // Consequence: writing m_posMap or m_posWorld alone does NOT stick --
+    // it is recomputed and reverted within a frame. To reposition the
+    // client all three must be written together; see SyncClientPosition().
+    // Found by write-only hardware breakpoint on m_posWorld, which gave
+    // exactly two writers:
+    //   0x1B0FC4  mov qword [rdi+0xE0], rax   ; rax = qword [rdi+0x108]
+    //   0x1B1228  mov qword [rdi+0xE0], rax   ; rax = qword [rdi+0x110]
+    Position m_posMoveStart;        // +0x108  movement start world position
+    Position m_posMoveDest;         // +0x110  movement destination world position
+private:
+    BYTE _pad118[0x188 - 0x118];   // +0x118
 public:
     CCommand m_cmdAction;           // +0x188  current action command
 private:
@@ -202,6 +233,15 @@ public:
     const CCommand& GetCommand() const { return m_cmdAction; }
 
     void SetCommand(CCommand* cmd);
+
+    // Reposition the CLIENT's view of this role to a map tile, keeping the
+    // game's own movement bookkeeping self-consistent so the write sticks.
+    // Pure data writes -- no native calls, no CCommand, nothing gated.
+    //
+    // This does NOT tell the server anything; send the movement packet
+    // separately (the server accepts packet-only moves -- verified by picking
+    // up an item several blocks away after a packet-only move).
+    void SyncClientPosition(int mapX, int mapY);
 };
 #pragma pack(pop)
 
@@ -211,6 +251,8 @@ static_assert(offsetof(CRole, m_szName)      == 0x94, "CRole::m_szName");
 static_assert(offsetof(CRole, m_posMap)      == 0xD8, "CRole::m_posMap");
 static_assert(offsetof(CRole, m_posWorld)    == 0xE0, "CRole::m_posWorld");
 static_assert(offsetof(CRole, m_posScr)      == 0xE8, "CRole::m_posScr");
+static_assert(offsetof(CRole, m_posMoveStart) == 0x108, "CRole::m_posMoveStart");
+static_assert(offsetof(CRole, m_posMoveDest)  == 0x110, "CRole::m_posMoveDest");
 static_assert(offsetof(CRole, m_cmdAction)   == 0x188, "CRole::m_cmdAction");
 static_assert(offsetof(CRole, m_nMaxHp)      == 0x3D0, "CRole::m_nMaxHp");
 static_assert(offsetof(CRole, m_nStamina)     == 0x6E0, "CRole::m_nStamina");

@@ -128,6 +128,27 @@ public:
     BuyArrowsPhase GetBuyArrowsPhase() const { return m_buyArrowsPhase; }
     StorePhase     GetStorePhase()     const { return m_storePhase; }
 
+    // Session 10: the repair sequence stalled in the field (gear unequipped
+    // and never put back), and two plausible-looking root causes — a broken
+    // equipment array, then a broken inventory — both turned out to be wrong
+    // when actually measured. These expose the sequence's own state so the
+    // stall point is observed rather than guessed at a third time.
+    OBJID       GetRepairItemId() const { return m_repairItemId; }
+    int         GetRepairSlot()   const { return m_repairSlot; }
+    OBJID       GetRepairNpcId()  const { return m_repairNpcId; }
+    static const char* RepairPhaseName(RepairPhase p) {
+        switch (p) {
+            case RepairPhase::MoveToNpc:   return "MoveToNpc";
+            case RepairPhase::Unequip:     return "Unequip";
+            case RepairPhase::WaitUnequip: return "WaitUnequip";
+            case RepairPhase::Repair:      return "Repair";
+            case RepairPhase::WaitRepair:  return "WaitRepair";
+            case RepairPhase::Reequip:     return "Reequip";
+            case RepairPhase::WaitReequip: return "WaitReequip";
+        }
+        return "?";
+    }
+
     // Shared NPC-action throttle tick: parent plugin reads/writes this so the
     // timer is consistent with other NPC actions the plugin performs.
     DWORD m_lastNpcActionTick = 0;

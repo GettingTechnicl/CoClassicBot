@@ -16,7 +16,12 @@ struct CMapItem;
 class HuntLootManager {
 public:
     // Find the best loot item on the current map given the hunt zone and settings.
-    std::shared_ptr<CMapItem> FindBestLoot(CHero* hero, CGameMap* map,
+    //
+    // Session 10: returns a raw CMapItem* now, not shared_ptr. Ground items
+    // come from a heap scan (map_items.h) rather than CGameMap::m_vecItems (see
+    // that header for why) — we don't own these objects, we're just pointing at
+    // them in the game's own memory, same as CRole* from the entity scanner.
+    CMapItem* FindBestLoot(CHero* hero, CGameMap* map,
         const AutoHuntSettings& settings,
         std::function<bool(OBJID, DWORD)> isLootPickupIgnoredFn,
         std::function<bool(OBJID mapId, const Position&)> isPointInZoneFn) const;
@@ -24,7 +29,7 @@ public:
     // Attempt to pick up an item the hero is standing on.
     // updatePendingJumpFn should call plugin's UpdatePendingJumpState and return its result.
     bool TryPickupLootItem(CHero* hero, const AutoHuntSettings& settings,
-        const std::shared_ptr<CMapItem>& item, DWORD now,
+        const CMapItem* item, DWORD now,
         std::function<bool(DWORD)> updatePendingJumpFn);
 
     // ── Pickup-attempt tracking ───────────────────────────────────────────────
@@ -60,6 +65,12 @@ private:
     };
 
     std::unordered_map<OBJID, LootPickupAttemptState> m_lootPickupAttempts;
+
+    // Session 10: tick each item id was first found with the hero standing on
+    // its tile (dist == 0). Backs settings.itemPickupDelayMs — a separate
+    // grace period from itemActionIntervalMs, which only throttles retries
+    // after the first attempt has already fired.
+    std::unordered_map<OBJID, DWORD> m_lootArrivedTicks;
     DWORD m_lastLootTick   = 0;
     OBJID m_lastLootItemId = 0;
 

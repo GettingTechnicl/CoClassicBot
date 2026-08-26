@@ -134,11 +134,11 @@ CRole* MulePlugin::FindNearbyRequester(const Position& spot, OBJID requesterId, 
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
     CHero* hero = Game::GetHero();
-    if (!mgr || !hero || requesterId == 0 || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || !hero || requesterId == 0 || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return nullptr;
 
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-        const auto& roleRef = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+        const auto& roleRef = Entities::Roles()[i];
         if (!roleRef)
             continue;
 
@@ -160,13 +160,13 @@ CRole* MulePlugin::FindNearbyWhitelistedTrader(const MuleSettings& settings, con
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
     CHero* hero = Game::GetHero();
-    if (!mgr || !hero || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || !hero || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return nullptr;
 
     CRole* best = nullptr;
     float bestDist = (float)(radius + 1);
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; ++i) {
-        const auto& roleRef = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; ++i) {
+        const auto& roleRef = Entities::Roles()[i];
         if (!roleRef)
             continue;
 
@@ -214,7 +214,7 @@ void MulePlugin::Update()
     const DWORD now = GetTickCount();
 
     m_lastHeroPos = hero ? hero->m_posMap : Position{};
-    m_lastMapId = map ? map->GetId() : 0;
+    m_lastMapId = Game::GetCurrentMapId();
     if (hero && hero->m_deqItem.size() != m_lastBagCount)
         m_lastBagChangeTick = GetTickCount();
     m_lastBagCount = hero ? hero->m_deqItem.size() : 0;
@@ -234,7 +234,7 @@ void MulePlugin::Update()
         return;
     }
 
-    if (map->GetId() != MAP_MARKET) {
+    if (Game::GetCurrentMapId() != MAP_MARKET) {
         ResetTradeSession();
         if (!travel) {
             SetState(MuleState::WaitingForGame, "Travel plugin not available");

@@ -105,9 +105,6 @@ void PluginManager::RenderAllUI()
                 }
                 ImGui::EndTabBar();
             }
-
-            if (uiHunt)
-                uiHunt->RenderSettingsUI();
         } else if (m_selectedPlugin >= 0 && m_selectedPlugin < (int)m_plugins.size()) {
             m_plugins[m_selectedPlugin]->RenderUI();
         }

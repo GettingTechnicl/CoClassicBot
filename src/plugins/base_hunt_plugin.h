@@ -35,12 +35,8 @@ public:
     void RenderDashboardUI();
     void SetAutomationEnabled(bool enabled);
 
-    // Renders shared hunting settings (zone, monsters, timings, loot, etc.)
-    void RenderSharedUI();
-
-    // Split UI methods — General section only, then everything else
+    // Renders the tabbed hunting dashboard for the active/selected hunt mode.
     void RenderGeneralUI();
-    void RenderSettingsUI();
 
     // ── Debug state accessors (virtual, base provides defaults) ──────────
     virtual int GetLastScatterRange() const { return 0; }
@@ -92,6 +88,28 @@ protected:
         PolygonVertex,
     };
 
+public:
+    // Session 10: the hunt loop makes a decision every frame and records why
+    // in m_statusText, but nothing ever displayed it — so "it isn't attacking"
+    // was undiagnosable from the UI. These expose the state machine so the
+    // overlay can show what it is doing and why.
+    AutoHuntState      GetState() const      { return m_state; }
+    const char*        GetStatusText() const { return m_statusText; }
+    const char*        GetStateNamePublic() const { return GetStateName(); }
+    const HuntTownService& GetTownService() const { return m_townService; }
+
+    // Session 10: GetEffectiveHeroPosition() substitutes a PENDING JUMP
+    // DESTINATION for the hero's real tile. Every range check and — critically
+    // — every scatter DIRECTION vector is computed from it, so if the pending
+    // state ever fails to clear, the bot aims from a tile it is not standing
+    // on. Symptom: firing in the wrong direction and finding no local shot.
+    // Exposed so the overlay can show effective-vs-actual instead of leaving
+    // that to inference.
+    Position GetEffectivePosDebug(const CHero* h) const { return GetEffectiveHeroPosition(h); }
+    DWORD    GetPendingJumpTick() const { return m_pendingJumpTick; }
+    Position GetPendingJumpDest() const { return m_pendingJumpDest; }
+
+protected:
     // ── Shared protected methods ─────────────────────────────────────────
     void SetState(AutoHuntState state, const char* statusText);
     const char* GetStateName() const;
@@ -109,9 +127,26 @@ protected:
     void ArmPendingJump(CHero* hero, const Position& destination, DWORD now, bool isRetreat);
     bool UpdatePendingJumpState(CHero* hero, DWORD now);
 
+    // Pick somewhere inside the zone to go when there is nothing to fight.
+    //
+    // Without this the hunt loop had a genuine dead end: if idle patrol
+    // produced no move and the hero was near the zone anchor, it set the
+    // status text "Scanning for monsters" and returned — every frame, forever.
+    // Scanning is not an action; the bot stood still indefinitely while
+    // monsters sat just outside its search radius.
+    //
+    // Lives on the base plugin so every class gets it, not just the archer.
+    bool FindZoneExplorePosition(CHero* hero, CGameMap* map,
+                                 const AutoHuntSettings& settings, Position& out) const;
+
     bool StartPathTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange);
     bool StartWalkTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange);
     bool StartPathNearTarget(CHero* hero, CGameMap* map, const Position& targetPos, int desiredRange);
+
+    // Session 10: periodic short random hop via StartWalkTo — see
+    // settings.randomWalkIntervalMs. Paced independently of the shared
+    // movement interval so it can be dialed well below it for testing.
+    bool TryRandomWalk(CHero* hero, CGameMap* map, const AutoHuntSettings& settings, DWORD now);
 
     void BeginTravelToZone(TravelPlugin* travel, const AutoHuntSettings& settings);
     void BeginTravelToMarket(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings);
@@ -146,6 +181,22 @@ protected:
     void RenderSkillPriorityUI(AutoHuntSettings& settings);
 
     // ── Shared state members ─────────────────────────────────────────────
+    // Pathfinder watchdog — see the Update() comment. Tracks whether the hero
+    // is actually moving while a path claims to be active.
+    Position m_watchdogLastPos = {};
+    DWORD    m_watchdogLastMoveTick = 0;
+
+    // Session 10: Update() was found running once per rendered frame (~150Hz)
+    // with no gate on the decision work itself — only the final action packet
+    // was interval-throttled. This tracks the last tick the heavy state-machine
+    // section actually ran, so it can be capped independently via
+    // settings.decisionThrottleMs. See RenderAdvancedSection / Update().
+    DWORD m_lastDecisionTick = 0;
+
+    // Session 10: last time TryRandomWalk() fired (or gave up trying), for
+    // settings.randomWalkIntervalMs pacing.
+    DWORD m_lastRandomWalkTick = 0;
+
     AutoHuntState m_state = AutoHuntState::Idle;
     char m_statusText[128] = "Disabled";
     Position m_lastHeroPos = {0, 0};

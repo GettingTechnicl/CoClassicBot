@@ -29,11 +29,11 @@ bool CanUseVipTeleportNow(const CHero* hero)
 bool IsTileOccupiedByRole(int tileX, int tileY)
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return false;
 
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; i++) {
-        auto& ref = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
+        const auto ref = Entities::Roles()[i];
         if (!ref)
             continue;
 
@@ -197,15 +197,15 @@ void TravelPlugin::BeginFinalPathfind(CHero* hero, CGameMap* map)
 CRole* TravelPlugin::FindNpcNear(const char* npcName, const Position& expectedPos, int radius)
 {
     CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || mgr->m_deqRole.empty() || mgr->m_deqRole.size() >= 10000)
+    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
         return nullptr;
 
     if (npcName != nullptr) {
         CRole* best = nullptr;
         float bestDist = (float)(radius + 1);
 
-        for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; i++) {
-            auto& ref = mgr->m_deqRole[i];
+        for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
+            const auto ref = Entities::Roles()[i];
             if (!ref) continue;
             CRole* e = ref.get();
             if (strcmp(e->GetName(), npcName) != 0) continue;
@@ -222,8 +222,8 @@ CRole* TravelPlugin::FindNpcNear(const char* npcName, const Position& expectedPo
     CRole* best = nullptr;
     float bestDist = (float)(radius + 1);
 
-    for (size_t i = 0; i < mgr->m_deqRole.size() && i < 500; i++) {
-        auto& ref = mgr->m_deqRole[i];
+    for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
+        const auto ref = Entities::Roles()[i];
         if (!ref) continue;
         CRole* e = ref.get();
         if (e->IsPlayer() || e->IsMonster()) continue;
@@ -310,7 +310,7 @@ void TravelPlugin::StartTravel(OBJID destMapId, Position destPos)
     Pathfinder::Get().Stop();
     m_pathGeneration = Pathfinder::Get().GetGeneration();
 
-    OBJID currentMap = map->GetId();
+    OBJID currentMap = Game::GetCurrentMapId();
     if (currentMap == destMapId) {
         if (HasDestPos()) {
             Position heroPos = {hero->m_posMap.x, hero->m_posMap.y};
@@ -516,7 +516,7 @@ void TravelPlugin::Update()
         if (gw.type == GatewayType::VipTeleport) {
             if (!CanUseVipTeleportNow(hero)) {
                 Position replanPos = {hero->m_posMap.x, hero->m_posMap.y};
-                m_gatewayPath = BuildGatewayPathForHero(hero, map->GetId(), m_destMapId, replanPos, hero->GetSilver(), false, m_destPos);
+                m_gatewayPath = BuildGatewayPathForHero(hero, Game::GetCurrentMapId(), m_destMapId, replanPos, hero->GetSilver(), false, m_destPos);
                 if (m_gatewayPath.empty()) {
                     snprintf(m_statusText, sizeof(m_statusText), "VIP teleport unavailable and no alternate route");
                     SetState(TravelState::Failed);
@@ -537,7 +537,7 @@ void TravelPlugin::Update()
             CItem* gateItem = FindInventoryItemByType(hero, gw.itemTypeId);
             if (!gateItem) {
                 Position replanPos = {hero->m_posMap.x, hero->m_posMap.y};
-                m_gatewayPath = BuildGatewayPathForHero(hero, map->GetId(), m_destMapId, replanPos, hero->GetSilver(),
+                m_gatewayPath = BuildGatewayPathForHero(hero, Game::GetCurrentMapId(), m_destMapId, replanPos, hero->GetSilver(),
                     CanUseVipTeleportNow(hero), m_destPos);
                 if (m_gatewayPath.empty()) {
                     snprintf(m_statusText, sizeof(m_statusText), "Item gate unavailable and no alternate route");
@@ -671,7 +671,7 @@ void TravelPlugin::Update()
 
     case TravelState::WaitMapChange: {
         const Gateway& gw = m_gatewayPath[m_gatewayIndex];
-        OBJID currentMap = map->GetId();
+        OBJID currentMap = Game::GetCurrentMapId();
 
         if (gw.IsIntraMap()) {
             if (gw.HasDestPos()) {
@@ -716,7 +716,7 @@ void TravelPlugin::Update()
         m_gatewayIndex++;
         m_gatewayApproachPos = {0, 0};
         if (m_gatewayIndex >= m_gatewayPath.size()) {
-            OBJID currentMap = map->GetId();
+            OBJID currentMap = Game::GetCurrentMapId();
             if (currentMap == m_destMapId) {
                 spdlog::info("[travel] Arrived at {}", GetMapName(m_destMapId));
                 if (HasDestPos()) {
@@ -789,7 +789,7 @@ void TravelPlugin::RenderUI()
         return;
     }
 
-    OBJID curMapId = map->GetId();
+    OBJID curMapId = Game::GetCurrentMapId();
     int heroTileX = hero->m_posMap.x;
     int heroTileY = hero->m_posMap.y;
     static int selectedDestIndex = 0;

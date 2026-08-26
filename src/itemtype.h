@@ -16,6 +16,11 @@ struct ItemTypeInfo
     uint32_t mana = 0;
     uint32_t amount = 0;
     uint32_t amountLimit = 0;
+    // Session 10: the client's own item table carries the weapon's reach
+    // (e.g. TightBow = 21). Previously unparsed, which forced the archer's
+    // attack range to be a hand-tuned number — and an under-set one silently
+    // shrinks the hunt leash and engage margin too, since both derive from it.
+    uint32_t attackRange = 0;
 };
 
 // Load itemtype.json from the game's ini directory.

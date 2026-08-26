@@ -198,7 +198,7 @@ void NotifyDeath(CHero* hero)
     snprintf(msg, sizeof(msg),
         "[%s] Died on map %u at (%d,%d). Session kills: %llu",
         hero->GetName(),
-        map ? map->GetId() : 0,
+        Game::GetCurrentMapId(),
         hero->m_posMap.x, hero->m_posMap.y,
         (unsigned long long)g_kills);
     SendDiscordNotification(msg, /*mention=*/true);
@@ -220,7 +220,7 @@ void NotifyNotableDrop(CHero* hero, uint32_t typeId, uint8_t plus)
         "[%s] Notable drop: %s (id=%u, q=%d, +%u) on map %u at (%d,%d)",
         hero ? hero->GetName() : "?",
         itemName.c_str(), typeId, quality, plus,
-        map ? map->GetId() : 0,
+        Game::GetCurrentMapId(),
         hero ? hero->m_posMap.x : 0,
         hero ? hero->m_posMap.y : 0);
     SendDiscordNotification(msg, /*mention=*/true);
@@ -233,11 +233,11 @@ void CollectMonstersInZone(CRoleMgr* mgr, OBJID currentMapId,
                            const AutoHuntSettings& settings,
                            std::unordered_set<OBJID>& outPresent)
 {
-    if (!mgr) return;
+    (void)mgr;  // kept for signature compatibility; entity source is now the heap scan
     if (settings.zoneMapId == 0 || settings.zoneMapId != currentMapId)
         return;
-    for (const auto& ref : mgr->m_deqRole) {
-        CRole* role = ref.get();
+    // Session 9: CRoleMgr::m_deqRole is not a deque on v1074 — see entities.h.
+    for (CRole* role : Entities::Get()) {
         if (!role) continue;
         if (!role->IsMonster()) continue;
         if (role->IsDead()) continue;
@@ -276,7 +276,7 @@ void Update()
         return;  // skip the rest this frame — counters need fresh baselines
     }
 
-    const OBJID mapId = map ? map->GetId() : 0;
+    const OBJID mapId = Game::GetCurrentMapId();
     if (mapId != g_lastMapId) {
         // Map changed → drop the seen-monsters set (no kill attribution
         // across maps), keep inventory & silver baselines.

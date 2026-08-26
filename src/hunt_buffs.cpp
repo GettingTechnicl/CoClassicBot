@@ -1,6 +1,8 @@
 #include "hunt_buffs.h"
+#include "jitter.h"
 #include "hunt_targeting.h"
 #include "game.h"
+#include "map_items.h"
 #include "CHero.h"
 #include "CGameMap.h"
 #include "CRole.h"
@@ -37,14 +39,16 @@ DWORD ClampMs(int value, int minVal, int maxVal)
     return static_cast<DWORD>(std::clamp(value, minVal, maxVal));
 }
 
+// Session 10: jittered — see jitter.h. Self-cast/pickup are "action items";
+// a random 50-250ms is always added on top, never subtracted.
 DWORD GetSelfCastIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.selfCastIntervalMs, kMinSelfCastIntervalMs, kMaxSelfCastIntervalMs);
+    return WithActionJitter(ClampMs(settings.selfCastIntervalMs, kMinSelfCastIntervalMs, kMaxSelfCastIntervalMs));
 }
 
 DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)
 {
-    return ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs);
+    return WithActionJitter(ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs));
 }
 
 DWORD GetLootSpawnGraceMs(const AutoHuntSettings& settings)
@@ -276,7 +280,7 @@ bool HuntBuffManager::TryCastStigma(CHero* hero, const AutoHuntSettings& setting
         if (!map)
             return false;
 
-        std::shared_ptr<CMapItem> manaPotion = FindNearbyPotionLoot(hero, map, settings, true, cb);
+        CMapItem* manaPotion = FindNearbyPotionLoot(hero, map, settings, true, cb);
         if (!manaPotion)
             return false;
 
@@ -348,7 +352,7 @@ CItem* HuntBuffManager::FindPotion(const CHero* hero, bool manaPotion) const
     return best;
 }
 
-std::shared_ptr<CMapItem> HuntBuffManager::FindNearbyPotionLoot(
+CMapItem* HuntBuffManager::FindNearbyPotionLoot(
     CHero* hero, CGameMap* map, const AutoHuntSettings& settings, bool manaPotion,
     const HuntBuffCallbacks& cb) const
 {
@@ -359,9 +363,9 @@ std::shared_ptr<CMapItem> HuntBuffManager::FindNearbyPotionLoot(
 
     const DWORD now = GetTickCount();
     const DWORD spawnGraceMs = GetLootSpawnGraceMs(settings);
-    std::shared_ptr<CMapItem> best;
+    CMapItem* best = nullptr;
     float bestDist = (std::numeric_limits<float>::max)();
-    for (const auto& itemRef : map->m_vecItems) {
+    for (CMapItem* itemRef : MapItems::Get()) {
         if (!itemRef)
             continue;
 
@@ -410,7 +414,7 @@ bool HuntBuffManager::TryUsePotions(CHero* hero, const AutoHuntSettings& setting
         if (settings.pickupNearbyHpPotionWhenLow) {
             CGameMap* map = Game::GetMap();
             if (map) {
-                std::shared_ptr<CMapItem> hpPotionLoot = FindNearbyPotionLoot(hero, map, settings, false, cb);
+                CMapItem* hpPotionLoot = FindNearbyPotionLoot(hero, map, settings, false, cb);
                 if (hpPotionLoot) {
                     const int lootDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
                         hpPotionLoot->m_pos.x, hpPotionLoot->m_pos.y);

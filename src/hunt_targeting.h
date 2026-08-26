@@ -11,6 +11,26 @@ class CGameMap;
 // If preferredOnly is true, only monsters matching monsterPreferNames are returned.
 std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool preferredOnly = false);
 
+// ── Destination jitter ───────────────────────────────────────────────────
+// Return a walkable tile NEAR `target`, never `target` itself.
+//
+// Applied at every destination the bot picks — patrol points, route
+// waypoints, approach tiles. Two reasons this is a single shared helper
+// rather than per-call-site randomness:
+//   1. Landing on exact, repeatable coordinates is a machine signature.
+//      A recorded route replayed tile-for-tile forever is about as obviously
+//      automated as movement gets.
+//   2. It breaks deadlocks. Several "stuck" behaviours come from recomputing
+//      the same rejected tile every frame; jitter guarantees the search space
+//      moves.
+// Radius defaults to a third of the attack range, so a long-range class
+// varies more than a melee one and the offset stays inside the configured
+// zone. Falls back to the original tile if nothing walkable is nearby.
+Position JitterDestination(const CGameMap* map, const Position& target, int radius);
+
+// Jitter radius for the current settings: ~1/3 of the leash (attack range).
+int GetJitterRadius(const AutoHuntSettings& settings);
+
 // Count targets within a Euclidean radius of center.
 int CountTargetsInRadius(const std::vector<CRole*>& targets, const Position& center, float radius);
 
