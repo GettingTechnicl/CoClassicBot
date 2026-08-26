@@ -424,6 +424,7 @@ static std::string BuildCurrentConfigSnapshot()
     AppendBoolSnapshot(snapshot, "lootDropNotifyEnabled", misc.lootDropNotifyEnabled);
     AppendStringSnapshot(snapshot, "notifyItemIds", SerializeU32List(misc.notifyItemIds).c_str());
     AppendStringSnapshot(snapshot, "mentionItemIds", SerializeU32List(misc.mentionItemIds).c_str());
+    AppendIntSnapshot(snapshot, "logLevel", misc.logLevel);
 
     const HuntStats::Settings& stats = HuntStats::GetSettings();
     snapshot += "[HuntStats]\n";
@@ -1021,6 +1022,7 @@ static void SaveSharedSections(const char* file)
     WritePrivateProfileStringA("Misc", "notifyItemIds", miscNotifyIds.c_str(), file);
     const std::string miscMentionIds = SerializeU32List(misc.mentionItemIds);
     WritePrivateProfileStringA("Misc", "mentionItemIds", miscMentionIds.c_str(), file);
+    WriteInt(file, "Misc", "logLevel", misc.logLevel);
 }
 
 static void LoadSharedSections(const char* file)
@@ -1086,6 +1088,8 @@ static void LoadSharedSections(const char* file)
     char miscMentionBuf[4096] = {};
     ReadString(file, "Misc", "mentionItemIds", "", miscMentionBuf, sizeof(miscMentionBuf));
     ParseU32List(miscMentionBuf, misc.mentionItemIds);
+    misc.logLevel = ReadInt(file, "Misc", "logLevel", 0);
+    Log::SetLevel(misc.logLevel);
 }
 
 static std::string SaveCharacterConfigForKey(const std::string& characterKey)

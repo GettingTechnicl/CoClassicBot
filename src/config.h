@@ -22,6 +22,11 @@ struct MiscSettings
     bool lootDropNotifyEnabled = false;
     std::vector<uint32_t> notifyItemIds;
     std::vector<uint32_t> mentionItemIds;  // subset of notifyItemIds that also @mention
+
+    // spdlog::level::level_enum value (trace=0 .. off=6). Defaults to trace to
+    // match the previous hardcoded behavior; most users should turn this down
+    // — trace generates tens of thousands of lines in a few minutes of play.
+    int logLevel = 0;
 };
 
 struct TravelSettings

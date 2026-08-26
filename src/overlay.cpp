@@ -1522,6 +1522,40 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                         ImGui::TextDisabled("Sends a Discord notification when another player whispers you.");
                     }
 
+                    if (ImGui::CollapsingHeader("Logging & Diagnostics", kSectionFlags)) {
+                        MiscSettings& misc = GetMiscSettings();
+                        static const char* kLevelNames[] = {
+                            "Trace (very verbose)", "Debug", "Info", "Warning", "Error", "Critical", "Off"
+                        };
+                        int levelIdx = std::clamp(misc.logLevel, 0, 6);
+                        if (ImGui::Combo("Log Level", &levelIdx, kLevelNames, IM_ARRAYSIZE(kLevelNames))) {
+                            misc.logLevel = levelIdx;
+                            Log::SetLevel(levelIdx);
+                        }
+                        ImGui::TextDisabled("Trace generates tens of thousands of lines in a few minutes of "
+                            "play. Info or Warning is enough for normal use; turn Trace/Debug back on only "
+                            "when actively diagnosing something.");
+
+                        const std::string& logPath = Log::GetLogPath();
+                        ImGui::Text("Log file:");
+                        ImGui::SameLine();
+                        ImGui::TextWrapped("%s", logPath.empty() ? "(file logging unavailable)" : logPath.c_str());
+                        if (!logPath.empty() && ImGui::Button("Copy Log Path"))
+                            ImGui::SetClipboardText(logPath.c_str());
+
+                        ImGui::Separator();
+                        const MemStats mem = GetCurrentMemoryStats();
+                        if (mem.valid) {
+                            ImGui::Text("Working Set: %zu MB", mem.workingSetKb / 1024);
+                            ImGui::SameLine();
+                            ImGui::Text("| Private: %zu MB", mem.privateKb / 1024);
+                            ImGui::SameLine();
+                            ImGui::Text("| Peak: %zu MB", mem.peakWorkingSetKb / 1024);
+                        } else {
+                            ImGui::TextDisabled("Memory stats unavailable.");
+                        }
+                    }
+
                     if (ImGui::CollapsingHeader("Debug: Native Pickup Test", kSectionFlags)) {
                         static int testItemId = 0;
                         static int testX = 0;

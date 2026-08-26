@@ -17,3 +17,16 @@
 // Call every frame; internally throttled. Logs working set / private /
 // pagefile usage (KB) at most once per interval.
 void MaybeLogMemoryStats();
+
+struct MemStats {
+    size_t workingSetKb = 0;
+    size_t privateKb = 0;
+    size_t pagefileKb = 0;
+    size_t peakWorkingSetKb = 0;
+    bool   valid = false;
+};
+
+// Always does a fresh (uncached, unthrottled) query — cheap enough to call
+// every frame from a debug UI. Separate from MaybeLogMemoryStats()'s own
+// 30s throttle, which is about controlling log volume, not query cost.
+MemStats GetCurrentMemoryStats();

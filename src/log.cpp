@@ -3,11 +3,16 @@
 #include <windows.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <algorithm>
 #include <string>
 
 extern HMODULE g_hModule;
 
 namespace Log {
+
+namespace {
+std::string g_logPath;
+}
 
 void Init(const char* logPath, size_t maxSizeMb, size_t maxFiles)
 {
@@ -38,6 +43,7 @@ void Init(const char* logPath, size_t maxSizeMb, size_t maxFiles)
         logger->flush_on(spdlog::level::debug);
 
         spdlog::set_default_logger(logger);
+        g_logPath = path;
         spdlog::info("Logger initialized — file: {}", path);
     } catch (const spdlog::spdlog_ex& ex) {
         // Fallback: if file logging fails, just use console
@@ -55,6 +61,18 @@ void Shutdown()
     spdlog::info("Logger shutting down");
     spdlog::default_logger()->flush();
     spdlog::shutdown();
+}
+
+void SetLevel(int level)
+{
+    const int clamped = std::clamp(level, (int)spdlog::level::trace, (int)spdlog::level::off);
+    if (auto logger = spdlog::default_logger())
+        logger->set_level((spdlog::level::level_enum)clamped);
+}
+
+const std::string& GetLogPath()
+{
+    return g_logPath;
 }
 
 }  // namespace Log
