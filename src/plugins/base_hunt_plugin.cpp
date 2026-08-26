@@ -570,7 +570,12 @@ bool BaseHuntPlugin::IsPlayerWhitelisted(const AutoHuntSettings& settings, const
 bool BaseHuntPlugin::CheckPlayerSafety(CHero* hero, CGameMap* map, TravelPlugin* travel,
     const AutoHuntSettings& settings)
 {
-    if (!settings.safetyEnabled || !hero || !map)
+    // Session 10: travel wasn't checked here, unlike every sibling function
+    // in this file (BeginTravelToZone, BeginTravelToMarket, etc.) that takes
+    // the same parameter. GetPlugin<T>() genuinely can return null on a
+    // dynamic_cast miss, and this function unconditionally dereferences
+    // travel below (IsTraveling()/StartTravel()) with no other guard.
+    if (!settings.safetyEnabled || !hero || !map || !travel)
         return false;
 
     if (m_safetyResting) {
