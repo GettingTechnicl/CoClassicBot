@@ -237,6 +237,16 @@ struct AutoHuntSettings
     int safetyDetectionSec = 30;
     int safetyRestSec = 120;
 
+    // Session 11: distance-based evasion, distinct from Safety Rest above —
+    // Safety Rest fully retreats to Market and idles once a player has been
+    // nearby too long; Paranoia Mode instead biases NORMAL hunting decisions
+    // (target choice, idle-explore destination, how tightly the zone leash
+    // pulls back) away from a detected player's position while the bot keeps
+    // hunting, rather than stopping. Reuses safetyPlayerRange/playerWhitelist
+    // for detection rather than adding redundant fields — see
+    // GetParanoiaThreat() in hunt_intervals.h.
+    bool paranoiaEnabled = false;
+
     // Debug map overlays
     bool debugShowActionRadius = false;
     bool debugShowClumpRadius = false;

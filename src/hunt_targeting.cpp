@@ -1,4 +1,5 @@
 #include "hunt_targeting.h"
+#include "hunt_intervals.h"
 #include "jitter.h"
 #include "game.h"
 #include "CHero.h"
@@ -196,6 +197,29 @@ std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool pr
         if (preferredOnly && !preferFilters.empty() && !NameMatchesFilters(role->GetName(), preferFilters))
             continue;
         targets.push_back(role);
+    }
+
+    // Session 11 [Paranoia Mode]: bias target choice away from a detected
+    // player rather than stopping hunting entirely (that's what Safety Rest
+    // already does). Drop targets that would pull the hero MEANINGFULLY
+    // closer to the threat than it already is — normal target-selection
+    // (closest/clump-based) then naturally drifts toward whatever's left,
+    // producing a gradual "hunt away from the player" without any dedicated
+    // avoidance pathing. Never lets the filter empty the list outright
+    // (falls back to every target) so the bot keeps fighting even when
+    // every visible monster happens to be threat-side.
+    Position threatPos{};
+    if (hero && GetParanoiaThreat(settings, &threatPos)) {
+        const float heroToThreat = hero->m_posMap.DistanceTo(threatPos);
+        constexpr float kParanoiaMargin = 3.0f;  // tiles; avoids filtering on noise
+        std::vector<CRole*> awayFromThreat;
+        awayFromThreat.reserve(targets.size());
+        for (CRole* target : targets) {
+            if (target->m_posMap.DistanceTo(threatPos) >= heroToThreat - kParanoiaMargin)
+                awayFromThreat.push_back(target);
+        }
+        if (!awayFromThreat.empty())
+            targets = std::move(awayFromThreat);
     }
 
     return targets;

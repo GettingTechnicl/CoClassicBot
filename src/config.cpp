@@ -360,6 +360,7 @@ static std::string BuildCurrentConfigSnapshot()
     AppendStringSnapshot(snapshot, "playerWhitelist", autoHunt.playerWhitelist);
     AppendBoolSnapshot(snapshot, "usePacketJump", autoHunt.usePacketJump);
     AppendBoolSnapshot(snapshot, "safetyEnabled", autoHunt.safetyEnabled);
+    AppendBoolSnapshot(snapshot, "paranoiaEnabled", autoHunt.paranoiaEnabled);
     AppendBoolSnapshot(snapshot, "safetyNotifyDiscord", autoHunt.safetyNotifyDiscord);
     AppendIntSnapshot(snapshot, "safetyPlayerRange", autoHunt.safetyPlayerRange);
     AppendIntSnapshot(snapshot, "safetyDetectionSec", autoHunt.safetyDetectionSec);
@@ -559,6 +560,7 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WritePrivateProfileStringA(section, "playerWhitelist", autoHunt.playerWhitelist, file);
     WriteInt(file, section, "usePacketJump", autoHunt.usePacketJump ? 1 : 0);
     WriteInt(file, section, "safetyEnabled", autoHunt.safetyEnabled ? 1 : 0);
+    WriteInt(file, section, "paranoiaEnabled", autoHunt.paranoiaEnabled ? 1 : 0);
     WriteInt(file, section, "safetyNotifyDiscord", autoHunt.safetyNotifyDiscord ? 1 : 0);
     WriteInt(file, section, "safetyPlayerRange", autoHunt.safetyPlayerRange);
     WriteInt(file, section, "safetyDetectionSec", autoHunt.safetyDetectionSec);
@@ -806,6 +808,7 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     autoHunt.usePacketJump = ReadInt(file, section, "usePacketJump",
         ReadInt(file, "Misc", "usePacketJump", 0)) != 0;
     autoHunt.safetyEnabled = ReadInt(file, section, "safetyEnabled", 0) != 0;
+    autoHunt.paranoiaEnabled = ReadInt(file, section, "paranoiaEnabled", 0) != 0;
     autoHunt.safetyNotifyDiscord = ReadInt(file, section, "safetyNotifyDiscord", 0) != 0;
     autoHunt.safetyPlayerRange = ReadInt(file, section, "safetyPlayerRange", 15);
     autoHunt.safetyDetectionSec = ReadInt(file, section, "safetyDetectionSec", 30);

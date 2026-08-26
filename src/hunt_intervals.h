@@ -11,6 +11,7 @@
 #include "CGameMap.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <limits>
 
 // =====================================================================
 // hunt_intervals.h — shared action-pacing interval getters.
@@ -70,6 +71,49 @@ inline bool IsAnyPlayerNearby(const AutoHuntSettings& settings)
         return true;
     }
     return false;
+}
+
+// Session 11: Paranoia Mode's detection step — same scan/whitelist/range
+// logic as IsAnyPlayerNearby above, but returns the actual nearest threat
+// position rather than just a bool, since biasing target choice/explore
+// destinations/the zone leash away from a player needs somewhere to bias
+// AWAY FROM. Kept separate from IsAnyPlayerNearby (rather than having that
+// function grow an out-param) since most of that function's callers only
+// ever wanted the bool and don't need this extra scan-and-track work.
+inline bool GetParanoiaThreat(const AutoHuntSettings& settings, Position* outThreatPos)
+{
+    if (!settings.paranoiaEnabled)
+        return false;
+
+    CHero* hero = Game::GetHero();
+    if (!hero)
+        return false;
+
+    const OBJID heroId = hero->GetID();
+    const int range = settings.safetyPlayerRange;
+    const std::vector<std::string> whitelist = ParseTokens(settings.playerWhitelist);
+
+    CRole* nearest = nullptr;
+    int nearestDist = (std::numeric_limits<int>::max)();
+    for (CRole* role : Entities::Get()) {
+        if (!role || !role->IsPlayer() || role->GetID() == heroId)
+            continue;
+        if (!whitelist.empty() && NameMatchesFilters(role->GetName(), whitelist))
+            continue;
+        const int dist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, role->m_posMap.x, role->m_posMap.y);
+        if (range > 0 && dist > range)
+            continue;
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = role;
+        }
+    }
+
+    if (!nearest)
+        return false;
+    if (outThreatPos)
+        *outThreatPos = nearest->m_posMap;
+    return true;
 }
 
 inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)

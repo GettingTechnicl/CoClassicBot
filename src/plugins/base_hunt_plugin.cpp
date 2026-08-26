@@ -360,6 +360,15 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     Position bestScored{};
     float    bestScore = -1.0f;
 
+    // Session 11 [Paranoia Mode]: while a threat is detected, evasion takes
+    // priority over normal exploration (heatmap-guided or first-valid) —
+    // sample every candidate and keep the one farthest from the threat
+    // instead of stopping at the first walkable tile.
+    Position threatPos{};
+    const bool paranoiaEvading = GetParanoiaThreat(settings, &threatPos);
+    Position bestAwayFromThreat{};
+    float    bestThreatDist = -1.0f;
+
     for (int attempt = 0; attempt < 40; ++attempt) {
         Position candidate{};
 
@@ -405,6 +414,15 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
         if (CGameMap::TileDist(heroPos.x, heroPos.y, candidate.x, candidate.y) < minTravel)
             continue;
 
+        if (paranoiaEvading) {
+            const float threatDist = candidate.DistanceTo(threatPos);
+            if (threatDist > bestThreatDist) {
+                bestThreatDist = threatDist;
+                bestAwayFromThreat = candidate;
+            }
+            continue;
+        }
+
         if (!useHeatmap) {
             out = JitterDestination(map, candidate, GetJitterRadius(settings));
             return true;
@@ -420,6 +438,12 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
             bestScore = score;
             bestScored = candidate;
         }
+    }
+
+    if (paranoiaEvading && bestThreatDist >= 0.0f && !IsZeroPos(bestAwayFromThreat)) {
+        out = JitterDestination(map, bestAwayFromThreat, GetJitterRadius(settings));
+        spdlog::trace("[hunt] Explore (paranoia) -> ({},{}) threatDist={:.1f}", out.x, out.y, bestThreatDist);
+        return true;
     }
 
     if (useHeatmap && bestScore >= 0.0f && !IsZeroPos(bestScored)) {
@@ -1402,9 +1426,18 @@ void BaseHuntPlugin::Update()
 
     // Same leash tolerance as above — do not travel back to the zone just
     // because the hero stepped out to engage something on the edge.
+    // Session 11 [Paranoia Mode]: widen the leash while a threat is
+    // currently detected, so normal zone-return logic doesn't yank the hero
+    // back toward (or past) the player mid-evasion. Reverts to the normal
+    // leash the instant no threat is detected — the bot then settles back
+    // toward the zone on its own via normal target/explore selection,
+    // rather than needing an explicit "return to zone" step.
+    Position paranoiaThreatPos{};
+    const bool paranoiaEvading = GetParanoiaThreat(settings, &paranoiaThreatPos);
+    const int leashMargin = paranoiaEvading ? GetHuntLeash(settings) * 3 : GetHuntLeash(settings);
     if (Game::GetCurrentMapId() != settings.zoneMapId
         || !IsPointNearHuntZone(settings, Game::GetCurrentMapId(), hero->m_posMap,
-                                GetHuntLeash(settings))) {
+                                leashMargin)) {
         // Session 11 [LOCKUP FIX]: give up after repeated failures instead of
         // retrying forever — see m_zoneTravelFailCount's comment in the
         // header. A genuinely-unreachable zone (bad gateway data, wrong
@@ -2298,13 +2331,26 @@ void BaseHuntPlugin::RenderSafetySection()
 
     ImGui::SeparatorText("Player Safety");
     ImGui::InputText("Whitelist", settings.playerWhitelist, IM_ARRAYSIZE(settings.playerWhitelist));
-    ImGui::Checkbox("Player Safety", &settings.safetyEnabled);
-    if (settings.safetyEnabled) {
+    HelpMarkerOnSameLine("Shared by Player Safety and Paranoia Mode below - whitelisted names never count as a threat for either.");
+    if (settings.safetyEnabled || settings.paranoiaEnabled)
         ImGui::SliderInt("Detection Range", &settings.safetyPlayerRange, 0, 30);
+
+    ImGui::Checkbox("Player Safety", &settings.safetyEnabled);
+    HelpMarkerOnSameLine("Full retreat: once a player has been nearby too long, travels to Market and idles until they've been gone a while.");
+    if (settings.safetyEnabled) {
         ImGui::SliderInt("Detection Time (s)", &settings.safetyDetectionSec, 5, 300);
         ImGui::SliderInt("Rest Time (s)", &settings.safetyRestSec, 10, 600);
         ImGui::Checkbox("Discord Notify", &settings.safetyNotifyDiscord);
     }
+
+    ImGui::Checkbox("Paranoia Mode", &settings.paranoiaEnabled);
+    HelpMarkerOnSameLine(
+        "Distance-based evasion, distinct from Player Safety above - keeps hunting instead of retreating. "
+        "While a non-whitelisted player is within Detection Range: prefers monster targets that don't pull "
+        "the hero closer to them, idle-exploration heads away from them instead of toward the zone/heatmap, "
+        "and the zone leash loosens so normal zone-return logic doesn't pull the hero back toward the player. "
+        "Does not apply to town runs or mining. There's no way to know what's actually on another player's "
+        "screen (no facing/camera data is readable) - this is positioning-based avoidance, not true stealth.");
 }
 
 void BaseHuntPlugin::RenderAdvancedSection()
