@@ -1,0 +1,3 @@
+// Icon extracted from ImBootstrapper.exe (the game's own launcher target,
+// per the "Classic Conquer 2.0" desktop shortcut) so this tool matches it.
+100 ICON "launcher.ico"

@@ -271,7 +271,7 @@ static Socks5PromptResult ShowSocks5ConfigDialog(LaunchOptions* options)
     data.packetLog = (packetLog == IDYES);
 
     int killSwitch = MessageBoxA(nullptr,
-        "Enable kill-switch?\n\nIf the proxied game connection closes while the game is still running, the injector will terminate the game process.",
+        "Enable kill-switch?\n\nIf the proxied game connection closes while the game is still running, the launcher will terminate the game process.",
         "SOCKS5 Kill-Switch",
         MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
     data.killSwitch = (killSwitch == IDYES);
@@ -332,15 +332,15 @@ static std::string EndpointToString(const Endpoint& endpoint)
 static void PrintUsage()
 {
     printf("Usage:\n");
-    printf("  injector.exe\n");
-    printf("  injector.exe --proxy <host:port> [--proxy-user <user>] [--proxy-pass <pass>]\n");
+    printf("  launcher.exe\n");
+    printf("  launcher.exe --proxy <host:port> [--proxy-user <user>] [--proxy-pass <pass>]\n");
     printf("              [--relay-port <port>] [--target <host:port>] [--packet-log] [--no-kill-switch]\n");
-    printf("  injector.exe --no-prompt\n\n");
+    printf("  launcher.exe --no-prompt\n\n");
     printf("Examples:\n");
-    printf("  injector.exe                                    (shows SOCKS5 setup dialog)\n");
-    printf("  injector.exe --proxy 127.0.0.1:1080\n");
-    printf("  injector.exe --proxy my-socks.example:1080 --proxy-user alice --proxy-pass secret\n");
-    printf("  injector.exe --no-prompt                          (skip dialog, no proxy)\n\n");
+    printf("  launcher.exe                                    (shows SOCKS5 setup dialog)\n");
+    printf("  launcher.exe --proxy 127.0.0.1:1080\n");
+    printf("  launcher.exe --proxy my-socks.example:1080 --proxy-user alice --proxy-pass secret\n");
+    printf("  launcher.exe --no-prompt                          (skip dialog, no proxy)\n\n");
     printf("Options:\n");
     printf("  --proxy <host:port>     SOCKS5 proxy server (e.g., 127.0.0.1:1080)\n");
     printf("  --proxy-user <user>     SOCKS5 username (optional)\n");
@@ -355,10 +355,10 @@ static void PrintUsage()
     printf("  - Proxy host, port, and username are saved to socks5_config.txt; password is not saved.\n");
     printf("  - Proxy mode temporarily rewrites %s to %s:<relay-port> while the launched game is running.\n",
            SERVER_CONFIG_NAME, LOCAL_RELAY_HOST);
-    printf("  - The injector stays open in proxy mode to keep the local relay alive and restores %s on exit.\n",
+    printf("  - The launcher stays open in proxy mode to keep the local relay alive and restores %s on exit.\n",
            SERVER_CONFIG_NAME);
     printf("  - Packet logging is off by default and only enabled with --packet-log or the prompt.\n");
-    printf("  - Without --proxy, the injector will show a setup dialog or connect directly.\n");
+    printf("  - Without --proxy, the launcher will show a setup dialog or connect directly.\n");
 }
 
 static bool ParseUInt16(const std::string& text, uint16_t* value)
@@ -1457,8 +1457,8 @@ static std::optional<Endpoint> SelectTargetEndpoint(const ServerConfigPatch& pat
 }
 
 // Resolve the game install directory instead of assuming a fixed drive.
-// Priority: COCLASSIC_GAME_DIR env var -> game_dir.txt next to injector.exe ->
-// legacy default (GAME_DIR). Lets the same injector.exe work on any install path.
+// Priority: COCLASSIC_GAME_DIR env var -> game_dir.txt next to launcher.exe ->
+// legacy default (GAME_DIR). Lets the same launcher.exe work on any install path.
 static std::string ResolveGameDir()
 {
     char envBuf[MAX_PATH] = {};
@@ -1486,7 +1486,7 @@ static std::string ResolveGameDir()
 
 int main(int argc, char** argv)
 {
-    printf("=== coclassic injector ===\n\n");
+    printf("=== coclassic launcher ===\n\n");
 
     LaunchOptions options;
     if (!ParseArgs(argc, argv, &options)) {
@@ -1536,7 +1536,7 @@ int main(int argc, char** argv)
 
     if (!fs::exists(gamePathStr)) {
         printf("[!] Game not found at: %s\n", gamePathStr.c_str());
-        printf("    Set COCLASSIC_GAME_DIR or create game_dir.txt next to injector.exe.\n");
+        printf("    Set COCLASSIC_GAME_DIR or create game_dir.txt next to launcher.exe.\n");
         system("pause");
         return 1;
     }

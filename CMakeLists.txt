@@ -107,16 +107,18 @@ set_target_properties(coclassic PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-add_executable(injector
+add_executable(launcher
     injector/main.cpp
+    injector/launcher.rc
 )
-target_include_directories(injector PRIVATE
+target_include_directories(launcher PRIVATE
     vendor/json/include
 )
-target_link_libraries(injector PRIVATE
+target_link_libraries(launcher PRIVATE
     ws2_32
 )
-set_target_properties(injector PROPERTIES
+set_target_properties(launcher PROPERTIES
+    OUTPUT_NAME "launcher"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
