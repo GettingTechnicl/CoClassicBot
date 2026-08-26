@@ -5,9 +5,26 @@
 
 // =====================================================================
 // auto_login.h — drives ImConquer.exe's own native login window from
-// OUTSIDE the process, purely via standard Win32 window messages
-// (WM_SETTEXT / BM_CLICK), the same mechanism any accessibility tool or
-// UI-automation script uses.
+// OUTSIDE the process, the same category of thing any accessibility tool
+// or UI-automation script does.
+//
+// The login form is custom-rendered (confirmed live: EnumChildWindows
+// finds zero child controls), so there are no real Edit/Button HWNDs to
+// target with WM_SETTEXT/BM_CLICK. Two input methods are layered:
+//
+//   1. Synthetic WM_LBUTTONDOWN/UP + WM_CHAR posted directly to the
+//      top-level window at measured client-area coordinates. This is a
+//      message-queue post, not a hardware-level input event, so it does
+//      NOT require attachment to the active input desktop — it should
+//      work even while the session is locked, PROVIDED the game's UI
+//      framework actually reads window messages for its own hit-testing
+//      (unverified — this is the reason for method 2 as a safety net).
+//   2. Real SendInput mouse clicks + KEYEVENTF_UNICODE keystrokes at the
+//      same coordinates (the original, live-proven method). This DOES
+//      require the active input desktop, so it cannot work on a locked
+//      session, but stays as the fallback so the normal unlocked case
+//      never regresses if method 1 turns out not to be recognized by
+//      the game's custom UI.
 //
 // Deliberately NOT done from inside coclassic.dll: dllmain.cpp's
 // InitThread() stays completely idle until login has already completed,

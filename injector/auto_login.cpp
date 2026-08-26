@@ -4,6 +4,7 @@
 #include <Windows.h>
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -72,6 +73,68 @@ HWND FindLoginWindow(uint32_t timeoutMs)
     return nullptr;
 }
 
+// OpenInputDesktop fails outright when the session is on a secure desktop
+// (Winlogon lock screen, UAC prompt, Ctrl+Alt+Del screen) rather than the
+// normal interactive one — and even when it succeeds, the returned desktop's
+// name is "Winlogon" (or similar) instead of "Default" in that state. Either
+// outcome means SendInput/SetForegroundWindow — which only operate against
+// whatever desktop is currently attached to input — cannot reach the game
+// window, since the game's own desktop object still exists but is no longer
+// the one receiving real input. This is the standard, well-known technique
+// for detecting that condition from outside the locked session.
+bool IsInputDesktopLocked()
+{
+    HDESK hDesk = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
+    if (!hDesk)
+        return true;
+
+    char name[256] = {};
+    DWORD needed = 0;
+    const bool gotName = GetUserObjectInformationA(hDesk, UOI_NAME, name, sizeof(name), &needed) != 0;
+    CloseDesktop(hDesk);
+
+    if (!gotName)
+        return true;
+
+    return _stricmp(name, "Default") != 0;
+}
+
+POINT ResolveClientPoint(HWND wnd, FieldOffset offset)
+{
+    RECT clientRect{};
+    GetClientRect(wnd, &clientRect);  // always (0,0,width,height) — origin is client-relative
+    return POINT{
+        (clientRect.right - clientRect.left) / 2 + offset.dx,
+        (clientRect.bottom - clientRect.top) / 2 + offset.dy
+    };
+}
+
+// Posts synthetic mouse/keyboard messages straight to the window's message
+// queue instead of generating real hardware-level input via SendInput. This
+// does NOT require attachment to the active input desktop — it works purely
+// through the target thread's own message pump, which keeps running whether
+// or not the session is locked. Whether the game's custom UI framework
+// actually consults window messages for its own hit-testing/typing (as
+// opposed to polling raw input) is unverified; this is a best-effort path
+// for the locked case where SendInput is guaranteed not to work at all.
+void PostClick(HWND wnd, POINT clientPt)
+{
+    const LPARAM lParam = MAKELPARAM(clientPt.x, clientPt.y);
+    SendMessageTimeoutA(wnd, WM_MOUSEMOVE, 0, lParam, SMTO_NORMAL, 500, nullptr);
+    SendMessageTimeoutA(wnd, WM_LBUTTONDOWN, MK_LBUTTON, lParam, SMTO_NORMAL, 500, nullptr);
+    Sleep(30);
+    SendMessageTimeoutA(wnd, WM_LBUTTONUP, 0, lParam, SMTO_NORMAL, 500, nullptr);
+}
+
+void PostText(HWND wnd, const std::string& text)
+{
+    for (char c : text) {
+        SendMessageTimeoutA(wnd, WM_CHAR, static_cast<WPARAM>(static_cast<unsigned char>(c)), 1,
+            SMTO_NORMAL, 500, nullptr);
+        Sleep(20);
+    }
+}
+
 POINT ResolveScreenPoint(HWND wnd, FieldOffset offset)
 {
     RECT clientRect{};
@@ -136,22 +199,53 @@ void SendText(const std::string& text)
     }
 }
 
-}  // namespace
-
-namespace AutoLogin {
-
-bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
+// Locked-session path: no real input desktop attachment exists to force
+// foreground onto, so this skips ForceForegroundWindow entirely and posts
+// straight to the window handle — see PostClick/PostText above for why that
+// doesn't need it. Uses the same measured field offsets as the SendInput
+// path, just resolved to client-relative coordinates instead of screen ones.
+bool PerformLoginViaMessages(HWND loginWnd, const AutoLoginRequest& request, uint32_t timeoutMs)
 {
-    printf("[auto-login] Waiting for login window (\"%s\")...\n", kLoginWindowTitle);
-    HWND loginWnd = FindLoginWindow(timeoutMs);
-    if (!loginWnd) {
-        printf("[auto-login] Login window did not appear within %ums.\n", timeoutMs);
+    printf("[auto-login] Session is locked — driving login via posted window messages "
+        "(SendInput cannot reach the input desktop in this state).\n");
+
+    const POINT usernamePt = ResolveClientPoint(loginWnd, kUsernameField);
+    printf("[auto-login] Posting click to username field at client (%ld,%ld)\n", usernamePt.x, usernamePt.y);
+    PostClick(loginWnd, usernamePt);
+    Sleep(600);
+    PostText(loginWnd, request.username);
+    printf("[auto-login] Username posted.\n");
+
+    const POINT passwordPt = ResolveClientPoint(loginWnd, kPasswordField);
+    printf("[auto-login] Posting click to password field at client (%ld,%ld)\n", passwordPt.x, passwordPt.y);
+    PostClick(loginWnd, passwordPt);
+    Sleep(150);
+    PostText(loginWnd, request.password);
+    printf("[auto-login] Password posted.\n");
+
+    Sleep(200);
+    const POINT loginBtnPt = ResolveClientPoint(loginWnd, kLoginButton);
+    printf("[auto-login] Posting click to Login button at client (%ld,%ld)\n", loginBtnPt.x, loginBtnPt.y);
+    PostClick(loginWnd, loginBtnPt);
+    printf("[auto-login] Login posted.\n");
+
+    const DWORD waitStart = GetTickCount();
+    while (IsWindow(loginWnd) && GetTickCount() - waitStart < timeoutMs)
+        Sleep(250);
+
+    if (IsWindow(loginWnd)) {
+        printf("[auto-login] Login window still open after %ums — message-based login did not "
+            "complete. The custom UI may not consult posted window messages for input; this path "
+            "needs a live-locked test to confirm either way.\n", timeoutMs);
         return false;
     }
-    printf("[auto-login] Login window found.\n");
 
-    Sleep(1500);  // let it finish laying out/rendering after first appearing
+    printf("[auto-login] Login window closed — proceeding.\n");
+    return true;
+}
 
+bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, uint32_t timeoutMs)
+{
     if (ForceForegroundWindow(loginWnd))
         printf("[auto-login] Login window confirmed foreground.\n");
     else
@@ -218,6 +312,34 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
 
     printf("[auto-login] Login window closed — proceeding.\n");
     return true;
+}
+
+}  // namespace
+
+namespace AutoLogin {
+
+bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
+{
+    printf("[auto-login] Waiting for login window (\"%s\")...\n", kLoginWindowTitle);
+    HWND loginWnd = FindLoginWindow(timeoutMs);
+    if (!loginWnd) {
+        printf("[auto-login] Login window did not appear within %ums.\n", timeoutMs);
+        return false;
+    }
+    printf("[auto-login] Login window found.\n");
+
+    Sleep(1500);  // let it finish laying out/rendering after first appearing
+
+    // Session 12: live RDP test showed SendInput-driven clicks/keystrokes DO
+    // reach the game over RDP (unlike the true-lock case) — they just landed
+    // on the wrong coordinates, because the field offsets are fixed pixel
+    // constants measured at one specific window size and don't hold at a
+    // different size/DPI. That's a coordinate bug, not a delivery bug, so
+    // remote-session is not treated as a reason to route away from the
+    // proven SendInput path — only a genuinely locked desktop is.
+    if (IsInputDesktopLocked())
+        return PerformLoginViaMessages(loginWnd, request, timeoutMs);
+    return PerformLoginViaSendInput(loginWnd, request, timeoutMs);
 }
 
 }  // namespace AutoLogin
