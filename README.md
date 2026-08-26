@@ -33,7 +33,7 @@ cmake --build build --config Release
 | Artifact | Path |
 |----------|------|
 | Main DLL | `build/bin/Release/coclassic.dll` |
-| Injector | `build/bin/Release/injector.exe` |
+| Launcher | `build/bin/Release/launcher.exe` |
 | Tests | `build/bin/Release/map_tests.exe` |
 
 > **Note:** If the linker fails with LNK1104 ("file in use"), the DLL is still injected in a running game process. Uninject or close the game before rebuilding.
@@ -41,16 +41,16 @@ cmake --build build --config Release
 ## Usage
 
 1. Build the solution (see above)
-2. Launch `injector.exe` — it will start a fresh game process and inject the DLL, OR use a DLL injector and inject after logging in.
+2. Launch `launcher.exe` — it will start a fresh game process and inject the DLL, OR use a DLL injector and inject after logging in.
 3. Press **Insert** to toggle the overlay
 
-### Injector Networking
+### Launcher Networking
 
-The injector can launch directly, route the game login connection through a SOCKS5 relay, or be used while a system VPN is already connected.
+The launcher can launch directly, route the game login connection through a SOCKS5 relay, or be used while a system VPN is already connected.
 
 #### Interactive SOCKS5 Prompt
 
-Running `injector.exe` with no proxy arguments shows a pre-launch SOCKS5 prompt:
+Running `launcher.exe` with no proxy arguments shows a pre-launch SOCKS5 prompt:
 
 1. Choose whether to use SOCKS5.
 2. Enter proxy `host:port`.
@@ -59,15 +59,15 @@ Running `injector.exe` with no proxy arguments shows a pre-launch SOCKS5 prompt:
 5. Choose whether to enable packet logging.
 6. Choose whether to enable the kill-switch.
 
-If SOCKS5 is selected and setup is cancelled, invalid, or fails the pre-launch connection test, the injector aborts before launching the game.
+If SOCKS5 is selected and setup is cancelled, invalid, or fails the pre-launch connection test, the launcher aborts before launching the game.
 
-Saved SOCKS5 settings are stored next to `injector.exe` in `socks5_config.txt`. The saved fields are proxy host, port, auth flag, username, packet logging preference, and kill-switch preference. The SOCKS5 password is never saved.
+Saved SOCKS5 settings are stored next to `launcher.exe` in `socks5_config.txt`. The saved fields are proxy host, port, auth flag, username, packet logging preference, and kill-switch preference. The SOCKS5 password is never saved.
 
 #### SOCKS5 Command Line
 
 ```powershell
-injector.exe --proxy <host:port> [--proxy-user <user>] [--proxy-pass <pass>] [--relay-port <port>] [--target <host:port>] [--packet-log] [--no-kill-switch]
-injector.exe --no-prompt
+launcher.exe --proxy <host:port> [--proxy-user <user>] [--proxy-pass <pass>] [--relay-port <port>] [--target <host:port>] [--packet-log] [--no-kill-switch]
+launcher.exe --no-prompt
 ```
 
 | Option | Description |
@@ -81,30 +81,30 @@ injector.exe --no-prompt
 | `--no-kill-switch` | Disables process termination when a proxied connection fails |
 | `--no-prompt` | Skips the SOCKS5 prompt and launches without proxy unless `--proxy` is provided |
 
-SOCKS5 mode temporarily rewrites the game `servers.json` login target to `127.0.0.1:<relay-port>` while the launched game is running. The injector restores `servers.json` after launch and keeps the relay alive until the game exits.
+SOCKS5 mode temporarily rewrites the game `servers.json` login target to `127.0.0.1:<relay-port>` while the launched game is running. The launcher restores `servers.json` after launch and keeps the relay alive until the game exits.
 
 Before launching the game, SOCKS5 mode tests:
 
 ```text
-local injector -> SOCKS5 proxy -> game login server
+local launcher -> SOCKS5 proxy -> game login server
 ```
 
 If the test fails, the game is not launched. For example, PIA SOCKS5 may authenticate successfully but return `host unreachable` for `login.conqueronline.net:9959`; that means PIA accepted the credentials but its SOCKS5 endpoint could not reach the game server/port.
 
 Packet logging is off by default because `relay_packets.log` can contain sensitive traffic. Enable it only while debugging.
 
-The kill-switch is on by default. If a SOCKS5 tunnel was established and then the proxied connection closes while the game process is still running, the injector terminates the game process instead of allowing continued play after a proxy failure.
+The kill-switch is on by default. If a SOCKS5 tunnel was established and then the proxied connection closes while the game process is still running, the launcher terminates the game process instead of allowing continued play after a proxy failure.
 
 #### Using a VPN Instead of SOCKS5
 
-A full VPN such as PIA VPN is managed by Windows and the VPN client, not by the injector relay. To use a VPN:
+A full VPN such as PIA VPN is managed by Windows and the VPN client, not by the launcher relay. To use a VPN:
 
 1. Connect the VPN first.
 2. Verify your public IP changed.
-3. Run `injector.exe`.
-4. Choose **No** in the SOCKS5 prompt, or run `injector.exe --no-prompt`.
+3. Run `launcher.exe`.
+4. Choose **No** in the SOCKS5 prompt, or run `launcher.exe --no-prompt`.
 
-In VPN mode the game connects normally through the system network stack. The injector does not currently verify VPN state or force traffic through a specific VPN adapter.
+In VPN mode the game connects normally through the system network stack. The launcher does not currently verify VPN state or force traffic through a specific VPN adapter.
 
 ### Overlay Tabs
 
@@ -123,7 +123,7 @@ Plugins are C++ classes implementing the `IPlugin` interface. They are compiled 
 
 | Plugin                       | Description |
 |------------------------------|-------------|
-| **Auto Hunt** (not included) | Hunting automation with zone selection, combat, loot, and storage |
+| **Melee Hunt** / **Archer Hunt** | Hunting automation with zone selection, combat, loot, and town runs |
 | **Mining**                   | Mine-travel automation with warehouse storage and mule trading |
 | **Mule**                     | Market trade helper that accepts trades from whitelisted players |
 | **Travel**                   | Cross-map travel via portals, NPCs, and VIP teleport gateways |
@@ -161,7 +161,7 @@ coclassic/
 │       ├── plugin.h         # IPlugin interface
 │       ├── plugin_mgr.cpp/h # Plugin manager singleton
 │       └── *_plugin.cpp/h   # Individual plugins
-├── injector/               # Standalone injector executable
+├── injector/               # Standalone launcher executable
 │   └── main.cpp
 ├── tests/                  # Unit tests
 │   └── map_tests.cpp
@@ -226,6 +226,4 @@ This project works with a Themida-packed binary analyzed through a Scylla-dumped
 System libraries: `d3d11.lib`, `dxgi.lib`, `d3dcompiler.lib`, `winhttp.lib`, `ws2_32.lib`
 
 ## Limitations
-The following functionalities were removed from the source code:
-- HWID Spoofing (Login packet AntiCheat) removed
-- Auto-Hunt plugin removed, but can be easily built using the existing APIs
+Nothing is currently omitted from the source — the plugin list above and `PluginManager::Init()` reflect what actually builds and runs.
