@@ -61,7 +61,7 @@ inline bool IsAnyPlayerNearby(const AutoHuntSettings& settings)
     const std::vector<std::string> whitelist = ParseTokens(settings.playerWhitelist);
 
     for (CRole* role : Entities::Get()) {
-        if (!role || !role->IsPlayer() || role->GetID() == heroId)
+        if (!role || !Entities::IsAlive(role) || !role->IsPlayer() || role->GetID() == heroId)
             continue;
         if (!whitelist.empty() && NameMatchesFilters(role->GetName(), whitelist))
             continue;
@@ -96,7 +96,7 @@ inline bool GetParanoiaThreat(const AutoHuntSettings& settings, Position* outThr
     CRole* nearest = nullptr;
     int nearestDist = (std::numeric_limits<int>::max)();
     for (CRole* role : Entities::Get()) {
-        if (!role || !role->IsPlayer() || role->GetID() == heroId)
+        if (!role || !Entities::IsAlive(role) || !role->IsPlayer() || role->GetID() == heroId)
             continue;
         if (!whitelist.empty() && NameMatchesFilters(role->GetName(), whitelist))
             continue;
@@ -114,6 +114,44 @@ inline bool GetParanoiaThreat(const AutoHuntSettings& settings, Position* outThr
     if (outThreatPos)
         *outThreatPos = nearest->m_posMap;
     return true;
+}
+
+// Session 12: this exact scan shape — Entities::Get() with the empty/10000
+// size guard, an i<500 cap, an IsAlive() check, then "nearest role matching
+// some predicate within an optional radius" — was independently duplicated
+// across MiningPlugin::FindPlayerNearSpot, MulePlugin::FindNearbyRequester,
+// MulePlugin::FindNearbyWhitelistedTrader, and FollowPlugin::FindTarget (each
+// also carried a vestigial Game::GetRoleMgr() null-check left over from
+// before this codebase switched to heap-scan-based Entities::Get() —
+// hunt_targeting.cpp's CollectHuntTargets, the canonical scanner, checks no
+// such thing, so it's dropped here too). Consolidated so a new predicate/use
+// case doesn't need its own copy of the boilerplate. maxRange <= 0 means "no
+// range limit" — still returns the single nearest match, useful when a
+// predicate like an exact name match is expected to match at most one role.
+template <typename Predicate>
+inline CRole* FindNearestRole(const Position& from, int maxRange, Predicate pred)
+{
+    const std::vector<CRole*> roles = Entities::Get();
+    if (roles.empty() || roles.size() >= 10000)
+        return nullptr;
+
+    CRole* best = nullptr;
+    float bestDist = (std::numeric_limits<float>::max)();
+    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
+        CRole* role = roles[i];
+        if (!role || !Entities::IsAlive(role))
+            continue;
+        if (!pred(role))
+            continue;
+        const float dist = from.DistanceTo(role->m_posMap);
+        if (maxRange > 0 && dist > (float)maxRange)
+            continue;
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = role;
+        }
+    }
+    return best;
 }
 
 inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)

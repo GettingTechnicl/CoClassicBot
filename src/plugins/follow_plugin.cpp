@@ -1,5 +1,6 @@
 #include "follow_plugin.h"
 #include "game.h"
+#include "hunt_intervals.h"
 #include "hunt_settings.h"
 #include "log.h"
 #include "imgui.h"
@@ -17,21 +18,11 @@ CRole* FollowPlugin::FindTarget() const
     if (!s.targetName[0])
         return nullptr;
 
-    CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr)
-        return nullptr;
-    const std::vector<CRole*> roles = Entities::Get();
-    if (roles.empty() || roles.size() >= 10000)
-        return nullptr;
-
-    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
-        CRole* role = roles[i];
-        if (!role || !Entities::IsAlive(role)) continue;
-        if (!role->IsPlayer()) continue;
-        if (_stricmp(role->GetName(), s.targetName) == 0)
-            return role;
-    }
-    return nullptr;
+    CHero* hero = Game::GetHero();
+    const Position anchor = hero ? hero->m_posMap : Position{};
+    return FindNearestRole(anchor, 0, [&](CRole* role) {
+        return role->IsPlayer() && _stricmp(role->GetName(), s.targetName) == 0;
+    });
 }
 
 int FollowPlugin::NearestMobDistance() const

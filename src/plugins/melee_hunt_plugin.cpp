@@ -1,5 +1,4 @@
 #include "melee_hunt_plugin.h"
-#include "jitter.h"
 #include "hunt_intervals.h"
 #include "hunt_targeting.h"
 #include "game.h"

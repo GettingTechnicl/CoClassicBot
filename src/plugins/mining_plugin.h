@@ -140,6 +140,8 @@ private:
     bool m_captureMinePos = false;
     Position m_lastHeroPos = {0, 0};
     OBJID m_lastMapId = 0;
+    // Session 12 [LOCKUP FIX]: see kMaxMineTravelFailures in mining_plugin.cpp.
+    int m_mineTravelFailCount = 0;
     size_t m_lastBagCount = 0;
     DWORD m_lastMineTick = 0;
     DWORD m_lastNpcActionTick = 0;

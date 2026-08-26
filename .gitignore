@@ -26,3 +26,6 @@ accounts.dat
 # Session 10: one-shot crash-recovery-relaunch marker (see dllmain.cpp's
 # ConsumeResumeHuntMarker()) — transient, written and deleted at runtime.
 resume_hunt.flag
+
+# Session 12: Python bytecode cache from running tools/*.py locally.
+__pycache__/

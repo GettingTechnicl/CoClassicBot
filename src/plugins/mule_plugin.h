@@ -46,6 +46,8 @@ private:
     char m_statusText[128] = "Disabled";
     Position m_lastHeroPos = {0, 0};
     OBJID m_lastMapId = 0;
+    // Session 12 [LOCKUP FIX]: see kMaxMarketTravelFailures in mule_plugin.cpp.
+    int m_marketTravelFailCount = 0;
     size_t m_lastBagCount = 0;
     OBJID m_tradePartnerId = 0;
     DWORD m_tradeSessionTick = 0;

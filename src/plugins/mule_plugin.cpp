@@ -1,4 +1,5 @@
 #include "mule_plugin.h"
+#include "hunt_intervals.h"
 #include "hunt_targeting.h"
 #include "hooks.h"
 #include "plugin_mgr.h"
@@ -22,6 +23,11 @@ const Position kMarketWarehousePos = {182, 180};
 constexpr DWORD kTradeStartIntervalMs = 1200;
 constexpr DWORD kTradeAcceptIntervalMs = 1200;
 constexpr DWORD kTradeSessionTimeoutMs = 8000;
+// Session 12 [LOCKUP FIX]: mirrors BaseHuntPlugin::m_zoneTravelFailCount —
+// neither of the two TravelState::Failed detections below used to bound how
+// many times Update() would call BeginTravelToMarket again, so an
+// unreachable Market/Warehouseman looped Travel -> Failed -> Travel forever.
+constexpr int kMaxMarketTravelFailures = 3;
 
 
 bool IsMovementCommandStillAdvancing(const CHero* hero)
@@ -85,60 +91,28 @@ bool MulePlugin::IsWhitelisted(const MuleSettings& settings, const char* playerN
 
 CRole* MulePlugin::FindNearbyRequester(const Position& spot, OBJID requesterId, int radius) const
 {
-    CRoleMgr* mgr = Game::GetRoleMgr();
     CHero* hero = Game::GetHero();
-    if (!mgr || !hero || requesterId == 0)
-        return nullptr;
-    const std::vector<CRole*> roles = Entities::Get();
-    if (roles.empty() || roles.size() >= 10000)
+    if (!hero || requesterId == 0)
         return nullptr;
 
-    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
-        CRole* role = roles[i];
-        if (!role || !Entities::IsAlive(role))
-            continue;
+    return FindNearestRole(spot, radius, [&](CRole* role) {
         if (!role->IsPlayer() || role->GetID() == hero->GetID())
-            continue;
-        if (role->GetID() != requesterId)
-            continue;
-
-        const float dist = spot.DistanceTo(role->m_posMap);
-        if (dist <= (float)radius)
-            return role;
-    }
-
-    return nullptr;
+            return false;
+        return role->GetID() == requesterId;
+    });
 }
 
 CRole* MulePlugin::FindNearbyWhitelistedTrader(const MuleSettings& settings, const Position& spot, int radius) const
 {
-    CRoleMgr* mgr = Game::GetRoleMgr();
     CHero* hero = Game::GetHero();
-    if (!mgr || !hero)
-        return nullptr;
-    const std::vector<CRole*> roles = Entities::Get();
-    if (roles.empty() || roles.size() >= 10000)
+    if (!hero)
         return nullptr;
 
-    CRole* best = nullptr;
-    float bestDist = (float)(radius + 1);
-    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
-        CRole* role = roles[i];
-        if (!role || !Entities::IsAlive(role))
-            continue;
+    return FindNearestRole(spot, radius, [&](CRole* role) {
         if (!role->IsPlayer() || role->GetID() == hero->GetID())
-            continue;
-        if (!IsWhitelisted(settings, role->GetName()))
-            continue;
-
-        const float dist = spot.DistanceTo(role->m_posMap);
-        if (dist <= (float)radius && dist < bestDist) {
-            best = role;
-            bestDist = dist;
-        }
-    }
-
-    return best;
+            return false;
+        return IsWhitelisted(settings, role->GetName());
+    });
 }
 
 void MulePlugin::BeginTravelToMarket(TravelPlugin* travel)
@@ -180,6 +154,7 @@ void MulePlugin::Update()
             if (travel && travel->IsTraveling())
                 travel->CancelTravel();
         }
+        m_marketTravelFailCount = 0;
         SetState(MuleState::Idle, "Disabled");
         return;
     }
@@ -196,18 +171,31 @@ void MulePlugin::Update()
             return;
         }
         if (travel->GetState() == TravelState::Failed) {
+            ++m_marketTravelFailCount;
             SetState(MuleState::WaitingForGame, "Failed to reach Market");
             return;
         }
-        if (!travel->IsTraveling() || travel->GetDestination() != MAP_MARKET)
+        if (!travel->IsTraveling() || travel->GetDestination() != MAP_MARKET) {
+            // Session 12 [LOCKUP FIX]: give up after repeated failures instead
+            // of retrying forever — see kMaxMarketTravelFailures.
+            if (m_marketTravelFailCount >= kMaxMarketTravelFailures) {
+                spdlog::error("[mule] Giving up reaching Market after {} failed attempts — disabling Mule.",
+                    m_marketTravelFailCount);
+                m_marketTravelFailCount = 0;
+                settings.enabled = false;
+                SetState(MuleState::Idle, "Could not reach Market after repeated attempts — Mule disabled");
+                return;
+            }
             BeginTravelToMarket(travel);
-        else
+        } else {
             SetState(MuleState::TravelToMarket, "Traveling to Market");
+        }
         return;
     }
 
     if (travel && travel->IsTraveling()) {
         if (travel->GetState() == TravelState::Failed) {
+            ++m_marketTravelFailCount;
             SetState(MuleState::WaitingForGame, "Failed to reach Warehouseman");
             return;
         }
@@ -223,10 +211,23 @@ void MulePlugin::Update()
             SetState(MuleState::WaitingForGame, "Travel plugin not available");
             return;
         }
+        // Session 12 [LOCKUP FIX]: same give-up as above — this path also
+        // calls BeginTravelToMarket and can fail repeatedly (e.g. the
+        // Warehouseman spot itself became unreachable within the map).
+        if (m_marketTravelFailCount >= kMaxMarketTravelFailures) {
+            spdlog::error("[mule] Giving up reaching the Warehouseman after {} failed attempts — disabling Mule.",
+                m_marketTravelFailCount);
+            m_marketTravelFailCount = 0;
+            settings.enabled = false;
+            SetState(MuleState::Idle, "Could not reach Warehouseman after repeated attempts — Mule disabled");
+            return;
+        }
         BeginTravelToMarket(travel);
         SetState(MuleState::MoveToWarehouseman, "Moving near Warehouseman");
         return;
     }
+
+    m_marketTravelFailCount = 0;
 
     if (hero->IsJumping() || IsMovementCommandStillAdvancing(hero)) {
         ResetTradeSession();

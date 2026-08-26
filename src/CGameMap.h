@@ -99,7 +99,14 @@ public:
 private:
     BYTE _pad60[0x178 - 0x60];  // +0x60  gap to ground items vector
 public:
-    std::vector<std::shared_ptr<CMapItem>> m_vecItems; // +0x178 ground items on map
+    // +0x178 ground items on map. Offset-verified against the real game
+    // struct, but the game itself NEVER POPULATES this field on v1074 — see
+    // map_items.h's header comment. Ground items are tracked separately via
+    // a heap-scanner (MapItems::Get()/IsAlive()), which is what every
+    // consumer in this codebase actually uses. Do not read this field
+    // expecting live data; it exists here only to keep the struct's offset
+    // layout below (m_idMap etc.) correct.
+    std::vector<std::shared_ptr<CMapItem>> m_vecItems;
 private:
     BYTE _pad198[0x200 - 0x178 - sizeof(std::vector<std::shared_ptr<CMapItem>>)]; // gap to map ID
 public:

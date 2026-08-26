@@ -517,7 +517,7 @@ inline bool AreOtherPlayersNearby(OBJID heroId, const char* whitelist = nullptr)
     // Session 9: was iterating CRoleMgr::m_deqRole, which is not a deque on
     // v1074 (see entities.h). Uses the heap-scan entity list instead.
     for (const CRole* role : Entities::Get()) {
-        if (!role)
+        if (!role || !Entities::IsAlive(role))
             continue;
         if (!role->IsPlayer() || role->GetID() == heroId)
             continue;

@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <cstdio>
+#include <ctime>
 #include <mutex>
 #include <spdlog/spdlog.h>
 
@@ -17,13 +18,23 @@ namespace
     constexpr float kPruneBelow      = 0.05f;
     constexpr int   kMinObservations = 40;      // before scores are trusted
 
+    // Session 12: this is the second documented safety rail (header comment,
+    // "dropping maps not seen for a long time on load") — it was written
+    // (lastTouched updated every Observe()) but never actually read anywhere,
+    // so a map you stopped hunting months ago stayed in the save file
+    // forever. lastTouched now stores a WALL-CLOCK epoch-seconds value
+    // (time(nullptr)), not GetTickCount() — GetTickCount() is boot-relative
+    // and meaningless once compared across a process/system restart, which
+    // is exactly the comparison Load() needs to make.
+    constexpr int64_t kStaleMapMaxAgeSeconds = 30LL * 24 * 60 * 60;  // 30 days
+
     struct MapMemory
     {
         std::unordered_map<uint32_t, float> buckets;   // packed bucket -> score
-        int    observations = 0;
-        float  maxScore = 0.0f;
-        DWORD  lastTouched = 0;
-        bool   dirty = false;
+        int     observations = 0;
+        float   maxScore = 0.0f;
+        int64_t lastTouched = 0;   // time(nullptr) — see kStaleMapMaxAgeSeconds above
+        bool    dirty = false;
     };
 
     std::unordered_map<uint32_t, MapMemory> g_maps;
@@ -54,7 +65,7 @@ void Observe(OBJID mapId, const std::vector<Position>& monsterTiles)
 
     std::lock_guard<std::mutex> lk(g_mutex);
     MapMemory& mm = g_maps[(uint32_t)mapId];
-    mm.lastTouched = GetTickCount();
+    mm.lastTouched = static_cast<int64_t>(time(nullptr));
     ++mm.observations;
     mm.dirty = true;
 
@@ -146,7 +157,7 @@ void Save()
     for (const auto& [mapId, mm] : g_maps) {
         if (mm.buckets.empty())
             continue;
-        fprintf(f, "map %u %d\n", mapId, mm.observations);
+        fprintf(f, "map %u %d %lld\n", mapId, mm.observations, (long long)mm.lastTouched);
         for (const auto& [key, score] : mm.buckets) {
             fprintf(f, "%d %d %.2f\n", BucketX(key), BucketY(key), score);
             ++written;
@@ -166,14 +177,26 @@ void Load()
     char line[256];
     uint32_t curMap = 0;
     int loaded = 0;
+    int skippedStaleMaps = 0;
+    const int64_t nowEpoch = static_cast<int64_t>(time(nullptr));
     while (fgets(line, sizeof(line), f)) {
         if (line[0] == '#')
             continue;
-        unsigned m = 0; int obs = 0;
-        if (sscanf_s(line, "map %u %d", &m, &obs) == 2) {
+        unsigned m = 0; int obs = 0; long long touchedEpoch = 0;
+        const int mapFields = sscanf_s(line, "map %u %d %lld", &m, &obs, &touchedEpoch);
+        if (mapFields >= 2) {
+            // Save files written before this field existed have no epoch —
+            // treat those as freshly touched rather than stale, so an
+            // upgrade doesn't silently wipe existing spawn memory.
+            const int64_t effectiveTouched = (mapFields >= 3) ? (int64_t)touchedEpoch : nowEpoch;
+            if (nowEpoch - effectiveTouched > kStaleMapMaxAgeSeconds) {
+                curMap = 0;  // sentinel: bucket lines below get skipped until the next "map" line
+                ++skippedStaleMaps;
+                continue;
+            }
             curMap = m;
             g_maps[curMap].observations = obs;
-            g_maps[curMap].lastTouched = GetTickCount();
+            g_maps[curMap].lastTouched = effectiveTouched;
             continue;
         }
         int bx = 0, by = 0; float score = 0.0f;
@@ -187,7 +210,8 @@ void Load()
         }
     }
     fclose(f);
-    spdlog::info("[spawnmem] loaded {} buckets across {} maps", loaded, (int)g_maps.size());
+    spdlog::info("[spawnmem] loaded {} buckets across {} maps ({} stale map(s) dropped, unseen for 30+ days)",
+        loaded, (int)g_maps.size(), skippedStaleMaps);
 }
 
 } // namespace SpawnMemory

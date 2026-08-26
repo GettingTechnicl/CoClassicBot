@@ -43,6 +43,12 @@ constexpr DWORD kTradeStartIntervalMs = 1000;
 constexpr DWORD kTradeOfferIntervalMs = 400;
 constexpr DWORD kTradeConfirmIntervalMs = 1200;
 constexpr DWORD kTradeBatchTimeoutMs = 8000;
+// Session 12 [LOCKUP FIX]: mirrors BaseHuntPlugin::m_zoneTravelFailCount —
+// HandleTravelToMine set MiningState::Failed on a failed travel attempt, but
+// nothing bounded how many times Update()'s "not on mine map" fallback
+// (below) would call BeginTravelToMine again, so a genuinely-unreachable
+// mine spot looped Idle-equivalent -> Travel -> Failed -> Travel forever.
+constexpr int kMaxMineTravelFailures = 3;
 constexpr DWORD kReviveDelayMs = 20000;
 constexpr DWORD kReviveRetryIntervalMs = 1000;
 constexpr DWORD kReturnShortcutTimeoutMs = 8000;
@@ -391,6 +397,7 @@ void MiningPlugin::StopAutomation(bool cancelTravel)
     m_dropCleanupActive = false;
     m_dropItemId = 0;
     m_storageUseMuleTrade = false;
+    m_mineTravelFailCount = 0;
     ResetManualWarehouseMuleRun();
     ResetMiningSession();
     ResetReturnShortcut();
@@ -895,35 +902,16 @@ bool MiningPlugin::StartPathNearTarget(CHero* hero, CGameMap* map, const Positio
 
 CRole* MiningPlugin::FindPlayerNearSpot(const Position& expectedPos, int radius, const char* playerName) const
 {
-    CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr)
-        return nullptr;
-    const std::vector<CRole*> roles = Entities::Get();
-    if (roles.empty() || roles.size() >= 10000)
-        return nullptr;
-
     CHero* hero = Game::GetHero();
-    CRole* best = nullptr;
-    float bestDist = (float)(radius + 1);
-    for (size_t i = 0; i < roles.size() && i < 500; ++i) {
-        CRole* role = roles[i];
-        if (!role || !Entities::IsAlive(role))
-            continue;
+    return FindNearestRole(expectedPos, radius, [&](CRole* role) {
         if (!role->IsPlayer())
-            continue;
+            return false;
         if (hero && role->GetID() == hero->GetID())
-            continue;
+            return false;
         if (playerName && playerName[0] && _stricmp(role->GetName(), playerName) != 0)
-            continue;
-
-        const float dist = expectedPos.DistanceTo(role->m_posMap);
-        if (dist < bestDist) {
-            bestDist = dist;
-            best = role;
-        }
-    }
-
-    return best;
+            return false;
+        return true;
+    });
 }
 
 void MiningPlugin::BeginTravelToMine(TravelPlugin* travel, const MiningSettings& settings)
@@ -1015,6 +1003,7 @@ void MiningPlugin::HandleTravelToMine(TravelPlugin* travel, const MiningSettings
     }
 
     if (travel->GetState() == TravelState::Failed) {
+        ++m_mineTravelFailCount;
         SetState(MiningState::Failed, "Failed to reach mine");
         return;
     }
@@ -1129,6 +1118,7 @@ void MiningPlugin::HandleTravelToMine(TravelPlugin* travel, const MiningSettings
         return;
     }
 
+    m_mineTravelFailCount = 0;
     SetState(MiningState::MoveToSpot, "Moving to mine spot");
 }
 
@@ -1934,6 +1924,16 @@ void MiningPlugin::Update()
     }
 
     if (Game::GetCurrentMapId() != settings.mineMapId) {
+        // Session 12 [LOCKUP FIX]: give up after repeated failures instead of
+        // retrying forever — see kMaxMineTravelFailures.
+        if (m_mineTravelFailCount >= kMaxMineTravelFailures) {
+            spdlog::error("[mining] Giving up reaching the mine spot after {} failed attempts — disabling mining. Check the configured mine coordinate.",
+                m_mineTravelFailCount);
+            m_mineTravelFailCount = 0;
+            settings.enabled = false;
+            SetState(MiningState::Failed, "Could not reach mine after repeated attempts — mining disabled");
+            return;
+        }
         BeginTravelToMine(travel, settings);
         return;
     }

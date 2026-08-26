@@ -1187,14 +1187,9 @@ void BaseHuntPlugin::Update()
     // Sync combat mode so IsArcherModeEnabled() matches the active plugin
     settings.combatMode = GetExpectedCombatMode();
 
-    // Mutual exclusion: if another BaseHuntPlugin subclass is already enabled, skip
-    for (auto* p = &PluginManager::Get();;) {
-        // Check via GetPlugin iteration — we only need to ensure one BaseHuntPlugin runs.
-        // Since GetPlugin returns the first match by dynamic_cast, and we ARE a BaseHuntPlugin,
-        // just check if another one exists and is enabled.
-        (void)p;
-        break;
-    }
+    // Mutual exclusion between BaseHuntPlugin subclasses is enforced by
+    // ApplyHuntModeSelection(), not here — see its dynamic_cast<BaseHuntPlugin*>
+    // scan over all plugins.
 
     if (!hero || !map) {
         SetState(AutoHuntState::WaitingForGame, "Waiting for hero and map");

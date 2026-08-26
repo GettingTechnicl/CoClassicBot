@@ -219,13 +219,18 @@ public:
         return m_cmdAction.iType == _COMMAND_JUMP
             && (m_cmdAction.posTarget.x != m_posMap.x || m_cmdAction.posTarget.y != m_posMap.y);
     }
+    // Session 12: strncmp rather than strstr(...) == m_szName — this only
+    // ever needs a PREFIX check, and strncmp is bounded by the literal's own
+    // length (5/6 bytes here), so it can never read past m_szName's declared
+    // 16-byte buffer even if the game ever left it non-null-terminated.
+    // strstr would keep scanning for a null terminator with no such bound.
     BOOL IsGuard() const {
         return m_id >= 400000 && m_id < 500000
-            && strstr(m_szName, "Guard") == m_szName;
+            && strncmp(m_szName, "Guard", 5) == 0;
     }
     BOOL IsPatrol() const {
         return m_id >= 400000 && m_id < 500000
-            && strstr(m_szName, "Patrol") == m_szName;
+            && strncmp(m_szName, "Patrol", 6) == 0;
     }
     BOOL HasSyndicate() const { return m_idSyndicate != 0; }
 
