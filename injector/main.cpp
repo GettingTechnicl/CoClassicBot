@@ -22,6 +22,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include "credentials.h"
+#include "auto_login.h"
+
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
@@ -178,6 +181,161 @@ static bool InputBox(HWND parent, const char* title, const char* prompt, char* b
     if (inputConfirmed) {
         strncpy_s(buffer, bufferSize, inputBuffer, bufferSize - 1);
         buffer[bufferSize - 1] = 0;
+        return true;
+    }
+    return false;
+}
+
+namespace {
+constexpr int kAccountListId = 3001;
+constexpr int kAccountAddId = 3002;
+constexpr int kAccountRemoveId = 3003;
+}  // namespace
+
+// Character-select screen: lists saved accounts (DPAPI-encrypted locally,
+// see credentials.h), lets the user pick one to auto-login with, add a new
+// one, or remove one. Returns false if the user cancels/skips — the caller
+// falls back to the old single-shot manual-login flow in that case, so
+// nothing about existing usage breaks for someone who never saves an account.
+static bool ShowAccountPickerDialog(AccountProfile* outProfile)
+{
+    static std::vector<AccountProfile> s_profiles;
+    static HWND s_listBox = nullptr;
+    static bool s_confirmed = false;
+    static int s_selectedIndex = -1;
+
+    s_profiles = Credentials::LoadAll();
+    s_confirmed = false;
+    s_selectedIndex = -1;
+
+    // static: referenced from the non-capturing WndProc lambda below, which
+    // (like InputBox's WndProc above it) can only see static-storage-duration
+    // locals, never ordinary captured ones — a WNDPROC must stay a plain
+    // function pointer.
+    static auto refreshList = [](HWND listBox) {
+        SendMessageA(listBox, LB_RESETCONTENT, 0, 0);
+        for (const auto& profile : s_profiles) {
+            char line[512];
+            snprintf(line, sizeof(line), "%s  (%s)", profile.label.c_str(), profile.username.c_str());
+            SendMessageA(listBox, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(line));
+        }
+    };
+
+    static bool classRegistered = false;
+    if (!classRegistered) {
+        WNDCLASSA wc = {};
+        wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) -> LRESULT {
+            switch (msg) {
+            case WM_COMMAND:
+                switch (LOWORD(wParam)) {
+                case IDOK: {
+                    const LRESULT sel = SendMessageA(s_listBox, LB_GETCURSEL, 0, 0);
+                    if (sel == LB_ERR) {
+                        MessageBoxA(hwnd, "Select an account first, or click Add New.", "coclassic", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+                        return 0;
+                    }
+                    s_selectedIndex = static_cast<int>(sel);
+                    s_confirmed = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                case IDCANCEL:
+                    s_confirmed = false;
+                    DestroyWindow(hwnd);
+                    return 0;
+                case kAccountAddId: {
+                    char label[128] = "", username[128] = "", password[128] = "", server[128] = "Classic (US)";
+                    if (!InputBox(hwnd, "Add Account - Label", "Label (e.g. \"Main\"):", label, sizeof(label)))
+                        return 0;
+                    if (!InputBox(hwnd, "Add Account - Username", "Username:", username, sizeof(username)))
+                        return 0;
+                    if (!InputBox(hwnd, "Add Account - Password", "Password:", password, sizeof(password), "", true))
+                        return 0;
+                    if (!InputBox(hwnd, "Add Account - Server", "Server (as shown in the login screen's dropdown):", server, sizeof(server), server))
+                        return 0;
+                    AccountProfile profile;
+                    profile.label = label;
+                    profile.username = username;
+                    profile.password = password;
+                    profile.server = server;
+                    s_profiles.push_back(std::move(profile));
+                    Credentials::SaveAll(s_profiles);
+                    refreshList(s_listBox);
+                    return 0;
+                }
+                case kAccountRemoveId: {
+                    const LRESULT sel = SendMessageA(s_listBox, LB_GETCURSEL, 0, 0);
+                    if (sel == LB_ERR)
+                        return 0;
+                    if (MessageBoxA(hwnd, "Remove the selected account?", "coclassic",
+                            MB_YESNO | MB_ICONQUESTION | MB_TOPMOST) != IDYES)
+                        return 0;
+                    s_profiles.erase(s_profiles.begin() + sel);
+                    Credentials::SaveAll(s_profiles);
+                    refreshList(s_listBox);
+                    return 0;
+                }
+                }
+                return 0;
+            case WM_CLOSE:
+                s_confirmed = false;
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            return DefWindowProcA(hwnd, msg, wParam, lParam);
+        };
+        wc.hInstance = GetModuleHandleA(nullptr);
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.lpszClassName = "AccountPickerDlg";
+        RegisterClassA(&wc);
+        classRegistered = true;
+    }
+
+    const int screenW = GetSystemMetrics(SM_CXSCREEN);
+    const int screenH = GetSystemMetrics(SM_CYSCREEN);
+    const int w = 420, h = 320;
+    const int x = (screenW - w) / 2, y = (screenH - h) / 2;
+
+    HWND dlg = CreateWindowExA(
+        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+        "AccountPickerDlg",
+        "coclassic - Select Account",
+        WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE,
+        x, y, w, h,
+        nullptr, nullptr, GetModuleHandleA(nullptr), nullptr);
+    if (!dlg)
+        return false;
+
+    CreateWindowA("STATIC", "Saved accounts (auto-login fills these in on the game's own login screen):",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, 10, 10, 390, 20, dlg, nullptr, GetModuleHandleA(nullptr), nullptr);
+
+    s_listBox = CreateWindowA("LISTBOX", "",
+        WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
+        10, 35, 390, 180, dlg, reinterpret_cast<HMENU>(kAccountListId), GetModuleHandleA(nullptr), nullptr);
+    refreshList(s_listBox);
+
+    CreateWindowA("BUTTON", "Add New", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        10, 225, 120, 30, dlg, reinterpret_cast<HMENU>(kAccountAddId), GetModuleHandleA(nullptr), nullptr);
+    CreateWindowA("BUTTON", "Remove Selected", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        140, 225, 120, 30, dlg, reinterpret_cast<HMENU>(kAccountRemoveId), GetModuleHandleA(nullptr), nullptr);
+
+    CreateWindowA("BUTTON", "Login", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+        90, 270, 110, 30, dlg, reinterpret_cast<HMENU>(IDOK), GetModuleHandleA(nullptr), nullptr);
+    CreateWindowA("BUTTON", "Skip (manual login)", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        210, 270, 150, 30, dlg, reinterpret_cast<HMENU>(IDCANCEL), GetModuleHandleA(nullptr), nullptr);
+
+    MSG msg;
+    while (IsWindow(dlg)) {
+        if (GetMessageA(&msg, nullptr, 0, 0)) {
+            if (!IsDialogMessage(dlg, &msg)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+        }
+    }
+
+    if (s_confirmed && s_selectedIndex >= 0 && s_selectedIndex < static_cast<int>(s_profiles.size())) {
+        *outProfile = s_profiles[s_selectedIndex];
         return true;
     }
     return false;
@@ -1368,11 +1526,25 @@ struct RuntimeContext
 
 static RuntimeContext* g_runtimeContext = nullptr;
 
+// Signaled by Ctrl+C/Ctrl+Break so the supervision loop (see main()) can
+// stop relaunching cleanly without killing the game itself — distinct from
+// the game process exiting on its own, which IS a relaunch trigger.
+static HANDLE g_stopSupervisingEvent = nullptr;
+
 static BOOL WINAPI ConsoleCtrlHandler(DWORD ctrlType)
 {
     switch (ctrlType) {
     case CTRL_C_EVENT:
     case CTRL_BREAK_EVENT:
+        // CTRL_CLOSE/LOGOFF/SHUTDOWN give the process only a few seconds
+        // before Windows force-terminates it regardless of return value, so
+        // there's no reliable window to let the supervision loop notice and
+        // exit cleanly — only Ctrl+C/Break (which impose no such deadline)
+        // get the "handled, keep running long enough to stop gracefully"
+        // treatment.
+        if (g_stopSupervisingEvent)
+            SetEvent(g_stopSupervisingEvent);
+        return TRUE;
     case CTRL_CLOSE_EVENT:
     case CTRL_LOGOFF_EVENT:
     case CTRL_SHUTDOWN_EVENT:
@@ -1500,6 +1672,23 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    // Character-select screen — the primary launch flow. Skipped with
+    // --no-prompt (same flag that also skips the SOCKS5 dialog below,
+    // consistent "don't show interactive dialogs" semantics). Declining/
+    // cancelling it (no saved accounts yet, or "Skip") falls back to the
+    // original manual-login flow below entirely unchanged, and the
+    // supervise-and-auto-relaunch loop only activates when a profile WAS
+    // selected — existing proxy-only / no-account usage keeps working
+    // exactly as before.
+    AccountProfile selectedProfile;
+    bool haveProfile = false;
+    if (!options.m_noPrompt)
+        haveProfile = ShowAccountPickerDialog(&selectedProfile);
+    if (haveProfile)
+        printf("[+] Account selected: %s (%s)\n", selectedProfile.label.c_str(), selectedProfile.username.c_str());
+    else
+        printf("[*] No account selected — you'll need to log in manually this session.\n");
+
     // Show SOCKS5 configuration dialog if:
     // 1. --proxy was not provided via command line
     // 2. --no-prompt was not specified
@@ -1551,6 +1740,8 @@ int main(int argc, char** argv)
 
     if (!SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE))
         printf("[!] Failed to install console control handler (0x%08lX)\n", GetLastError());
+
+    g_stopSupervisingEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
 
     if (proxyMode) {
         if (!winsock.Start()) {
@@ -1626,81 +1817,134 @@ int main(int argc, char** argv)
             printf("[proxy] Logging outbound client TCP chunks to %s\n", relayLogger.Path().string().c_str());
     }
 
-    printf("[*] Launching fresh %s process...\n", GAME_EXE);
-
-    STARTUPINFOA si{};
-    si.cb = sizeof(si);
-    PROCESS_INFORMATION pi{};
-
-    if (!CreateProcessA(gamePathStr.c_str(), nullptr, nullptr, nullptr, FALSE, 0,
-                        nullptr, gameDir.c_str(), &si, &pi)) {
-        printf("[!] CreateProcess failed (0x%08lX)\n", GetLastError());
-        if (proxyMode) {
-            relay.Stop();
-            serverPatch.Restore();
-            if (activeLogger)
-                relayLogger.Stop();
-        }
-        system("pause");
-        return 1;
-    }
-
-    const DWORD pid = pi.dwProcessId;
-    printf("[+] Started %s (PID %lu)\n", GAME_EXE, pid);
-
     std::string dllStr = dllPath.string();
-    DWORD waitResult = WaitForInputIdle(pi.hProcess, 10000);
-    if (waitResult == WAIT_TIMEOUT) {
-        printf("[*] WaitForInputIdle timed out, continuing with injection.\n");
-    } else if (waitResult == WAIT_FAILED) {
-        printf("[*] WaitForInputIdle failed (0x%08lX), continuing with injection.\n", GetLastError());
-    }
+    bool injectionSucceeded = false;
 
-    Sleep(1000);
-    printf("[*] Injecting...\n");
-    bool injectionSucceeded = Inject(pid, dllStr.c_str());
-    if (injectionSucceeded) {
-        printf("[+] Injection successful!\n");
-    } else {
-        printf("[!] Injection failed.\n");
-        if (!proxyMode) {
-            CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
+    // Session 10: wraps the original single-shot launch+inject sequence in a
+    // supervise-and-relaunch loop. Only actually loops when an account was
+    // selected above (haveProfile) — with no saved account this behaves
+    // exactly like the original one-shot flow, so existing proxy-only /
+    // no-account usage is unaffected.
+    for (;;) {
+        printf("[*] Launching fresh %s process...\n", GAME_EXE);
+
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+
+        if (!CreateProcessA(gamePathStr.c_str(), nullptr, nullptr, nullptr, FALSE, 0,
+                            nullptr, gameDir.c_str(), &si, &pi)) {
+            printf("[!] CreateProcess failed (0x%08lX)\n", GetLastError());
+            if (proxyMode) {
+                relay.Stop();
+                serverPatch.Restore();
+                if (activeLogger)
+                    relayLogger.Stop();
+            }
             system("pause");
             return 1;
         }
 
-        printf("[*] Proxy mode is active, keeping the relay alive until the game exits.\n");
+        const DWORD pid = pi.dwProcessId;
+        printf("[+] Started %s (PID %lu)\n", GAME_EXE, pid);
+
+        DWORD waitIdle = WaitForInputIdle(pi.hProcess, 10000);
+        if (waitIdle == WAIT_TIMEOUT) {
+            printf("[*] WaitForInputIdle timed out, continuing with injection.\n");
+        } else if (waitIdle == WAIT_FAILED) {
+            printf("[*] WaitForInputIdle failed (0x%08lX), continuing with injection.\n", GetLastError());
+        }
+
+        Sleep(1000);
+        printf("[*] Injecting...\n");
+        injectionSucceeded = Inject(pid, dllStr.c_str());
+        if (injectionSucceeded) {
+            printf("[+] Injection successful!\n");
+        } else {
+            printf("[!] Injection failed.\n");
+            if (!proxyMode && !haveProfile) {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+                system("pause");
+                return 1;
+            }
+            printf("[*] Keeping the game running despite the injection failure.\n");
+        }
+
+        // Auto-login drives ImConquer.exe's OWN login window from here, in
+        // launcher.exe's own process — NOT from inside coclassic.dll, which
+        // deliberately stays idle until login completes (see dllmain.cpp's
+        // InitThread comment on the server's "virtual machine detected"
+        // integrity check). A failed auto-login doesn't abort the run — the
+        // game keeps running and the user can finish logging in by hand.
+        if (haveProfile) {
+            AutoLoginRequest loginReq{selectedProfile.username, selectedProfile.password, selectedProfile.server};
+            if (!AutoLogin::PerformLogin(loginReq))
+                printf("[!] Auto-login did not complete cleanly — you may need to finish logging in manually this time.\n");
+        }
+
+        // Original single-shot proxy flow (no saved account): restore
+        // servers.json immediately so another instance can be launched right
+        // away, exactly as before. While actively supervising with a saved
+        // account, the patch stays in place across relaunches instead —
+        // we're the ones managing this session, so there's no "launch
+        // another instance in the meantime" case to leave room for.
+        if (proxyMode && !haveProfile) {
+            serverPatch.Restore();
+            printf("[+] %s restored. You can launch another instance now.\n", SERVER_CONFIG_NAME);
+        }
+
+        printf("[*] Supervising game process (PID %lu)...\n", pid);
+        HANDLE waitHandles[3] = { pi.hProcess, g_stopSupervisingEvent, nullptr };
+        DWORD handleCount = 2;
+        const bool killSwitchArmed = proxyMode && options.m_killSwitch && relay.GetFailClosedEvent();
+        if (killSwitchArmed) {
+            waitHandles[2] = relay.GetFailClosedEvent();
+            handleCount = 3;
+        }
+        const DWORD wait = WaitForMultipleObjects(handleCount, waitHandles, FALSE, INFINITE);
+        const bool killSwitchFired = killSwitchArmed && wait == WAIT_OBJECT_0 + 2;
+        const bool stoppedByUser = wait == WAIT_OBJECT_0 + 1;
+
+        if (killSwitchFired) {
+            printf("[proxy] KILL-SWITCH: terminating game process to avoid continuing after proxy failure.\n");
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 10000);
+        }
+
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+
+        if (stoppedByUser) {
+            printf("[*] Stop requested — leaving the current game session running and ending supervision.\n");
+            break;
+        }
+        if (killSwitchFired) {
+            // Never auto-relaunch past a kill-switch trip: it exists
+            // specifically to stop playing when the proxy connection is
+            // broken, so relaunching through it would defeat the point.
+            // (Its underlying event is also manual-reset and never cleared,
+            // so looping back to wait on it again would fire immediately.)
+            printf("[proxy] Kill-switch fired — ending supervision instead of relaunching.\n");
+            break;
+        }
+        if (!haveProfile) {
+            if (!proxyMode)
+                Sleep(1000);
+            break;
+        }
+
+        printf("[*] Game process exited unexpectedly — relaunching and logging back in automatically...\n");
+        Sleep(2000);
     }
 
     if (proxyMode) {
-        serverPatch.Restore();
-        printf("[+] %s restored. You can launch another instance now.\n", SERVER_CONFIG_NAME);
-
-        printf("[*] Waiting for the game process to exit...\n");
-        if (options.m_killSwitch && relay.GetFailClosedEvent()) {
-            HANDLE waitHandles[2] = { pi.hProcess, relay.GetFailClosedEvent() };
-            DWORD wait = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
-            if (wait == WAIT_OBJECT_0 + 1) {
-                printf("[proxy] KILL-SWITCH: terminating game process to avoid continuing after proxy failure.\n");
-                TerminateProcess(pi.hProcess, 1);
-                WaitForSingleObject(pi.hProcess, 10000);
-            }
-        } else {
-            WaitForSingleObject(pi.hProcess, INFINITE);
-        }
-
         relay.Stop();
         if (activeLogger)
             relayLogger.Stop();
+        serverPatch.Restore();  // no-op if the !haveProfile path above already restored it
         g_runtimeContext = nullptr;
     }
-
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-
-    if (!proxyMode)
-        Sleep(1000);
 
     return injectionSucceeded ? 0 : 1;
 }

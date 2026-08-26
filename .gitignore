@@ -16,3 +16,9 @@ crashdumps/
 # entirely, so they don't need an entry here.)
 *.ini
 *.log
+
+# Session 10: DPAPI-encrypted saved login credentials (launcher.exe's
+# character-select screen). Already covered transitively by `build` above
+# since it's written next to launcher.exe, but called out explicitly —
+# never belongs in the repo regardless of where it ends up.
+accounts.dat

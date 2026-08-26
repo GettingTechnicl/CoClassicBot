@@ -109,6 +109,8 @@ set_target_properties(coclassic PROPERTIES
 
 add_executable(launcher
     injector/main.cpp
+    injector/credentials.cpp
+    injector/auto_login.cpp
     injector/launcher.rc
 )
 target_include_directories(launcher PRIVATE
@@ -116,6 +118,7 @@ target_include_directories(launcher PRIVATE
 )
 target_link_libraries(launcher PRIVATE
     ws2_32
+    crypt32
 )
 set_target_properties(launcher PROPERTIES
     OUTPUT_NAME "launcher"
