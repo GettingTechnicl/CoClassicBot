@@ -121,6 +121,14 @@ set_target_properties(launcher PROPERTIES
     OUTPUT_NAME "launcher"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+if(MSVC)
+    # ImConquer.exe's own manifest requires admin (requireAdministrator);
+    # CreateProcess can't silently elevate a child, so without this the
+    # launcher fails with ERROR_ELEVATION_REQUIRED (0x2E4) unless the user
+    # manually runs it as administrator. Requesting elevation here makes
+    # Windows prompt UAC automatically and the game process inherits it.
+    target_link_options(launcher PRIVATE "/MANIFESTUAC:level='requireAdministrator' uiAccess='false'")
+endif()
 
 # ── Self-test validator (standalone read-only injected DLL) ─────────
 add_library(selftest SHARED
