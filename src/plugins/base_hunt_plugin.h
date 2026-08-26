@@ -34,6 +34,7 @@ public:
     const char* GetName() const override = 0;  // subclass provides name
     void RenderDashboardUI();
     void SetAutomationEnabled(bool enabled);
+    void ResumeEnabledStateFromSettings() override;
 
     // Renders the tabbed hunting dashboard for the active/selected hunt mode.
     void RenderGeneralUI();

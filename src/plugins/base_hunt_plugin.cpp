@@ -1826,6 +1826,15 @@ void BaseHuntPlugin::ApplyHuntModeSelection(AutoHuntCombatMode mode, bool enable
         HuntStats::Reset();
 }
 
+void BaseHuntPlugin::ResumeEnabledStateFromSettings()
+{
+    // Called once per plugin instance (melee AND archer both get it — see
+    // dllmain.cpp), so this may run twice; ApplyHuntModeSelection() just
+    // re-resolves to the same result both times, which is harmless.
+    const AutoHuntSettings& settings = GetAutoHuntSettings();
+    ApplyHuntModeSelection(settings.combatMode, settings.enabled);
+}
+
 void BaseHuntPlugin::RenderSkillPriorityUI(AutoHuntSettings& settings)
 {
     bool skillChanged = false;

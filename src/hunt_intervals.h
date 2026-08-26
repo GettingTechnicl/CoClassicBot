@@ -9,6 +9,7 @@
 #include "CHero.h"
 #include "CRole.h"
 #include "CGameMap.h"
+#include <spdlog/spdlog.h>
 #include <algorithm>
 
 // =====================================================================
@@ -73,7 +74,18 @@ inline bool IsAnyPlayerNearby(const AutoHuntSettings& settings)
 
 inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)
 {
-    return GetTravelSettings().usePacketJump && !IsAnyPlayerNearby(settings);
+    const bool toggleOn = GetTravelSettings().usePacketJump;
+    const bool playerNearby = toggleOn && IsAnyPlayerNearby(settings);
+    const bool result = toggleOn && !playerNearby;
+
+    static DWORD s_lastLogTick = 0;
+    const DWORD now = GetTickCount();
+    if (now - s_lastLogTick >= 2000) {
+        s_lastLogTick = now;
+        spdlog::trace("[speedhack] toggleOn={} playerNearby={} -> aggressive={}", toggleOn, playerNearby, result);
+    }
+
+    return result;
 }
 
 constexpr int kMinMovementIntervalMs = 100;

@@ -1994,6 +1994,16 @@ int main(int argc, char** argv)
         }
 
         printf("[*] Game process exited unexpectedly — relaunching and logging back in automatically...\n");
+
+        // Tells coclassic.dll's next init that this specific relaunch is a
+        // crash-recovery resume, not an intentional fresh session — the only
+        // case where previously-enabled plugins (autohunt, mining, etc.)
+        // should come back on automatically without the user re-checking
+        // anything. See dllmain.cpp's ConsumeResumeHuntMarker().
+        {
+            std::ofstream marker(fs::path(exePath).parent_path() / "resume_hunt.flag");
+        }
+
         Sleep(2000);
     }
 

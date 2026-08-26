@@ -11,9 +11,44 @@
 #include "itemtype.h"
 #include "spawn_memory.h"
 #include "log.h"
+#include <string>
 
 ULONG64 g_qwModuleBase = 0;
 HMODULE g_hModule = nullptr;
+
+namespace {
+
+// launcher.exe writes this file (see injector/main.cpp's supervision loop)
+// immediately before relaunching after an UNEXPECTED game exit — never on
+// a normal fresh launch. Its mere presence, checked once right here, is the
+// only signal distinguishing "this is a crash-recovery resume" from
+// "this is an intentional new session" — see IPlugin::ResumeEnabledStateFromSettings.
+std::string ResumeHuntMarkerPath()
+{
+    char buf[MAX_PATH];
+    GetModuleFileNameA(g_hModule, buf, MAX_PATH);
+    std::string path = buf;
+    const auto pos = path.find_last_of("\\/");
+    if (pos != std::string::npos)
+        path = path.substr(0, pos + 1);
+    path += "resume_hunt.flag";
+    return path;
+}
+
+// One-shot: deletes the marker so a subsequent NORMAL close+reopen doesn't
+// also resume automatically. Returns whether it was present.
+bool ConsumeResumeHuntMarker()
+{
+    const std::string path = ResumeHuntMarkerPath();
+    FILE* f = nullptr;
+    if (fopen_s(&f, path.c_str(), "r") != 0 || !f)
+        return false;
+    fclose(f);
+    remove(path.c_str());
+    return true;
+}
+
+}  // namespace
 
 static DWORD WINAPI InitThread(LPVOID)
 {
@@ -88,6 +123,13 @@ static DWORD WINAPI InitThread(LPVOID)
     Sleep(1000);
     InitOverlay();
     PluginManager::Get().Init();
+
+    if (ConsumeResumeHuntMarker()) {
+        spdlog::info("[init] Crash-recovery relaunch detected — resuming previously-enabled plugins");
+        for (const auto& plugin : PluginManager::Get().GetPlugins())
+            plugin->ResumeEnabledStateFromSettings();
+    }
+
     spdlog::info("[init] All systems initialized");
     return 0;
 }
