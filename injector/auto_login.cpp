@@ -11,36 +11,22 @@ namespace {
 
 constexpr const char* kLoginWindowTitle = "[ClassicConquer]";
 
-struct ChildControl
-{
-    HWND hwnd;
-    std::string className;
-    std::string text;
-};
-
-std::vector<ChildControl> EnumerateChildren(HWND parent)
-{
-    std::vector<ChildControl> out;
-    EnumChildWindows(parent, [](HWND hwnd, LPARAM lParam) -> BOOL {
-        auto* out = reinterpret_cast<std::vector<ChildControl>*>(lParam);
-        char cls[128] = {};
-        GetClassNameA(hwnd, cls, sizeof(cls));
-        char text[256] = {};
-        GetWindowTextA(hwnd, text, sizeof(text));
-        out->push_back({hwnd, cls, text});
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&out));
-    return out;
-}
-
-bool ContainsCaseInsensitive(const std::string& haystack, const char* needle)
-{
-    std::string lowerHay = haystack;
-    std::string lowerNeedle = needle;
-    for (char& c : lowerHay) c = static_cast<char>(tolower((unsigned char)c));
-    for (char& c : lowerNeedle) c = static_cast<char>(tolower((unsigned char)c));
-    return lowerHay.find(lowerNeedle) != std::string::npos;
-}
+// Session 10: EnumChildWindows found ZERO child controls on this window —
+// confirmed live. The login form is custom-rendered (like the modern-
+// styled launcher window), not built from real Win32 Edit/Button/ComboBox
+// controls, so WM_SETTEXT/BM_CLICK have nothing to target. Falls back to
+// coordinate-based synthetic input instead: real mouse clicks + keystrokes
+// at positions computed as fractions of the window's own current size, so
+// it adapts to the window's actual size/position at runtime rather than
+// using fixed pixel values from one specific capture.
+//
+// These fractions are a first estimate from a single screenshot of the
+// login screen, NOT live-verified against real clicks yet — expect to
+// tune them after an actual test run.
+struct FieldFraction { double x; double y; };
+constexpr FieldFraction kUsernameField{0.499, 0.603};
+constexpr FieldFraction kPasswordField{0.499, 0.638};
+constexpr FieldFraction kLoginButton{0.499, 0.711};
 
 HWND FindLoginWindow(uint32_t timeoutMs)
 {
@@ -51,6 +37,68 @@ HWND FindLoginWindow(uint32_t timeoutMs)
         Sleep(250);
     }
     return nullptr;
+}
+
+POINT ResolveScreenPoint(const RECT& windowRect, FieldFraction fraction)
+{
+    const long width = windowRect.right - windowRect.left;
+    const long height = windowRect.bottom - windowRect.top;
+    POINT pt;
+    pt.x = windowRect.left + static_cast<long>(fraction.x * width);
+    pt.y = windowRect.top + static_cast<long>(fraction.y * height);
+    return pt;
+}
+
+void SendClick(POINT screenPt)
+{
+    // MOUSEEVENTF_ABSOLUTE coordinates are normalized 0-65535 across
+    // whichever area MOUSEEVENTF_VIRTUALDESK selects. This machine has two
+    // monitors — normalizing against SM_CXSCREEN/SM_CYSCREEN (primary
+    // monitor only) would misplace clicks if the game window is on the
+    // second one, so use the full virtual desktop's origin/size instead.
+    const int vLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int vTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int vWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    const int vHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+    // Move the cursor there first (some UI frameworks need a real mouse-move
+    // event before a click registers, not just a click at a location the
+    // cursor never visited) then click.
+    INPUT inputs[3] = {};
+
+    inputs[0].type = INPUT_MOUSE;
+    inputs[0].mi.dx = static_cast<LONG>((screenPt.x - vLeft) * (65535.0 / vWidth));
+    inputs[0].mi.dy = static_cast<LONG>((screenPt.y - vTop) * (65535.0 / vHeight));
+    inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+
+    inputs[1].type = INPUT_MOUSE;
+    inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+
+    inputs[2].type = INPUT_MOUSE;
+    inputs[2].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+
+    SendInput(3, inputs, sizeof(INPUT));
+}
+
+// Types via KEYEVENTF_UNICODE (one synthetic keypress per character) rather
+// than mapping to virtual-key codes — robust regardless of keyboard layout
+// and handles any character the password/username could contain.
+void SendText(const std::string& text)
+{
+    for (char c : text) {
+        INPUT down = {};
+        down.type = INPUT_KEYBOARD;
+        down.ki.wScan = static_cast<WORD>(static_cast<unsigned char>(c));
+        down.ki.dwFlags = KEYEVENTF_UNICODE;
+
+        INPUT up = down;
+        up.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+
+        INPUT batch[2] = {down, up};
+        SendInput(2, batch, sizeof(INPUT));
+        Sleep(20);  // a small per-character delay; some UI frameworks drop
+                    // keystrokes sent faster than they poll input
+    }
 }
 
 }  // namespace
@@ -67,67 +115,60 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
     }
     printf("[auto-login] Login window found.\n");
 
-    // The window can take a moment to finish laying out its child controls
-    // right after it first appears.
-    Sleep(500);
+    Sleep(500);  // let it finish laying out/rendering after first appearing
 
-    const std::vector<ChildControl> children = EnumerateChildren(loginWnd);
-    printf("[auto-login] Enumerated %zu child control(s).\n", children.size());
+    SetForegroundWindow(loginWnd);
+    Sleep(200);
 
-    HWND usernameEdit = nullptr;
-    HWND passwordEdit = nullptr;
-    HWND serverCombo = nullptr;
-    HWND loginButton = nullptr;
-
-    for (const auto& child : children) {
-        if (child.className == "Edit") {
-            // First Edit found = Username, second = Password — matches the
-            // form's visual top-to-bottom order, which for a standard Win32
-            // dialog matches child enumeration/creation order.
-            if (!usernameEdit) usernameEdit = child.hwnd;
-            else if (!passwordEdit) passwordEdit = child.hwnd;
-        } else if (child.className == "ComboBox") {
-            serverCombo = child.hwnd;
-        } else if (child.className == "Button" && ContainsCaseInsensitive(child.text, "login")) {
-            loginButton = child.hwnd;
-        }
-    }
-
-    if (!usernameEdit || !passwordEdit || !loginButton) {
-        printf("[auto-login] Could not identify all required controls "
-            "(username=%p password=%p server=%p login=%p). Control layout may "
-            "have changed — see auto_login.cpp's classification heuristic.\n",
-            (void*)usernameEdit, (void*)passwordEdit, (void*)serverCombo, (void*)loginButton);
+    RECT windowRect{};
+    if (!GetWindowRect(loginWnd, &windowRect)) {
+        printf("[auto-login] GetWindowRect failed (0x%08lX).\n", GetLastError());
         return false;
     }
+    printf("[auto-login] Login window rect: (%ld,%ld)-(%ld,%ld)\n",
+        windowRect.left, windowRect.top, windowRect.right, windowRect.bottom);
 
-    SendMessageA(usernameEdit, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(request.username.c_str()));
-    SendMessageA(passwordEdit, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(request.password.c_str()));
-    printf("[auto-login] Username/password fields filled.\n");
-
-    if (serverCombo && !request.server.empty()) {
-        const LRESULT result = SendMessageA(serverCombo, CB_SELECTSTRING,
-            static_cast<WPARAM>(-1), reinterpret_cast<LPARAM>(request.server.c_str()));
-        if (result == CB_ERR)
-            printf("[auto-login] Server \"%s\" not found in dropdown, leaving default selection.\n", request.server.c_str());
-        else
-            printf("[auto-login] Server set to \"%s\".\n", request.server.c_str());
+    const POINT usernamePt = ResolveScreenPoint(windowRect, kUsernameField);
+    SendClick(usernamePt);
+    Sleep(150);
+    // Select-all first in case the field has leftover text from a previous
+    // session (e.g. the game's own "Remember Login?" username autofill)
+    // before typing the real value.
+    {
+        INPUT ctrlA[4] = {};
+        ctrlA[0].type = INPUT_KEYBOARD; ctrlA[0].ki.wVk = VK_CONTROL;
+        ctrlA[1].type = INPUT_KEYBOARD; ctrlA[1].ki.wVk = 'A';
+        ctrlA[2].type = INPUT_KEYBOARD; ctrlA[2].ki.wVk = 'A'; ctrlA[2].ki.dwFlags = KEYEVENTF_KEYUP;
+        ctrlA[3].type = INPUT_KEYBOARD; ctrlA[3].ki.wVk = VK_CONTROL; ctrlA[3].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(4, ctrlA, sizeof(INPUT));
     }
+    SendText(request.username);
+    printf("[auto-login] Username typed.\n");
+
+    const POINT passwordPt = ResolveScreenPoint(windowRect, kPasswordField);
+    SendClick(passwordPt);
+    Sleep(150);
+    SendText(request.password);
+    printf("[auto-login] Password typed.\n");
+
+    // Server dropdown intentionally left untouched: this game currently
+    // only exposes one real option ("Classic (US)") and it's not a real
+    // Win32 combo box to drive programmatically anyway. Revisit if/when
+    // multi-server support is actually needed.
 
     Sleep(200);
-    SendMessageA(loginButton, BM_CLICK, 0, 0);
+    const POINT loginBtnPt = ResolveScreenPoint(windowRect, kLoginButton);
+    SendClick(loginBtnPt);
     printf("[auto-login] Login clicked.\n");
 
-    // Wait for the login window to close (submitted) rather than returning
-    // immediately, so the caller's next step (waiting on the game process /
-    // proceeding to injection) doesn't race the login handshake.
     const DWORD waitStart = GetTickCount();
     while (IsWindow(loginWnd) && GetTickCount() - waitStart < timeoutMs)
         Sleep(250);
 
     if (IsWindow(loginWnd)) {
         printf("[auto-login] Login window still open after %ums — login may have failed "
-            "(wrong password, banned account, etc.) or is taking unusually long.\n", timeoutMs);
+            "(wrong password, banned account, misaligned click coordinates, etc.) or is "
+            "taking unusually long.\n", timeoutMs);
         return false;
     }
 
