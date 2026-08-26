@@ -1,5 +1,6 @@
 #include "mining_plugin.h"
 #include "hunt_settings.h"
+#include "hunt_targeting.h"
 #include "inventory_utils.h"
 #include "npc_utils.h"
 #include "revive_utils.h"
@@ -91,14 +92,6 @@ CItem* FindTwinCityGate(const CHero* hero)
             return itemRef.get();
     }
     return nullptr;
-}
-
-std::string ToLowerCopy(const std::string& value)
-{
-    std::string lower = value;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-        [](unsigned char c) { return (char)std::tolower(c); });
-    return lower;
 }
 
 bool IsMovementCommand(const CCommand& cmd)

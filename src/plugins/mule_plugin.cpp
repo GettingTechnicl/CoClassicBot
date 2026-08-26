@@ -1,4 +1,5 @@
 #include "mule_plugin.h"
+#include "hunt_targeting.h"
 #include "hooks.h"
 #include "plugin_mgr.h"
 #include "travel_plugin.h"
@@ -22,54 +23,6 @@ constexpr DWORD kTradeStartIntervalMs = 1200;
 constexpr DWORD kTradeAcceptIntervalMs = 1200;
 constexpr DWORD kTradeSessionTimeoutMs = 8000;
 
-std::string ToLowerCopy(const std::string& value)
-{
-    std::string lower = value;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-        [](unsigned char c) { return (char)std::tolower(c); });
-    return lower;
-}
-
-std::vector<std::string> ParseTokens(const char* text)
-{
-    std::vector<std::string> tokens;
-    if (!text || !text[0])
-        return tokens;
-
-    std::string current;
-    while (*text) {
-        const char ch = *text++;
-        if (ch == ',' || ch == ';' || ch == '\n' || ch == '\r' || ch == '\t') {
-            if (!current.empty()) {
-                size_t start = 0;
-                while (start < current.size() && std::isspace((unsigned char)current[start]))
-                    ++start;
-                size_t end = current.size();
-                while (end > start && std::isspace((unsigned char)current[end - 1]))
-                    --end;
-                if (end > start)
-                    tokens.push_back(ToLowerCopy(current.substr(start, end - start)));
-                current.clear();
-            }
-            continue;
-        }
-
-        current.push_back(ch);
-    }
-
-    if (!current.empty()) {
-        size_t start = 0;
-        while (start < current.size() && std::isspace((unsigned char)current[start]))
-            ++start;
-        size_t end = current.size();
-        while (end > start && std::isspace((unsigned char)current[end - 1]))
-            --end;
-        if (end > start)
-            tokens.push_back(ToLowerCopy(current.substr(start, end - start)));
-    }
-
-    return tokens;
-}
 
 bool IsMovementCommandStillAdvancing(const CHero* hero)
 {

@@ -1,11 +1,33 @@
 #pragma once
 #include "hunt_settings.h"
 #include "base.h"
+#include <string>
 #include <vector>
 
 class CRole;
 class CHero;
 class CGameMap;
+
+// ── Name filter helpers ───────────────────────────────────────────────────
+// Session 10: this module was independently copy-pasted across 4 files
+// (hunt_targeting.cpp, base_hunt_plugin.cpp, mining_plugin.cpp,
+// mule_plugin.cpp) — consolidated here since this header was already widely
+// included by all of them.
+
+// Lowercase copy, for case-insensitive name/filter comparisons.
+std::string ToLowerCopy(const std::string& value);
+
+// Split a comma/semicolon/newline-separated filter list into trimmed,
+// lowercased tokens.
+std::vector<std::string> ParseTokens(const char* text);
+
+// True if `filters` is empty (no filter configured — everything matches) or
+// `name` (case-insensitively) contains any filter as a substring.
+bool NameMatchesFilters(const char* name, const std::vector<std::string>& filters);
+
+// Append `token` to a comma-separated filter list buffer (used by the
+// overlay's "add to filter" buttons), truncating rather than overflowing.
+void AppendFilterToken(char* buffer, size_t bufferSize, const char* token);
 
 // Collect all live monster targets that satisfy zone/name filters.
 // If preferredOnly is true, only monsters matching monsterPreferNames are returned.

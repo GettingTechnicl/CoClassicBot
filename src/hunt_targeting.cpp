@@ -7,6 +7,7 @@
 #include "pathfinder.h"
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <limits>
 #include <random>
 #include <string>
@@ -40,8 +41,11 @@ int GetRequiredArcherThreatDistance(int safetyDist)
     return safetyDist > 0 ? (safetyDist + kArcherSafetyBufferTiles) : 0;
 }
 
+} // namespace
+
 // ---------------------------------------------------------------------------
-// Name filter helpers
+// Name filter helpers — shared across hunt_targeting/base_hunt_plugin/
+// mining_plugin/mule_plugin (see hunt_targeting.h)
 // ---------------------------------------------------------------------------
 
 std::string ToLowerCopy(const std::string& value)
@@ -107,7 +111,15 @@ bool NameMatchesFilters(const char* name, const std::vector<std::string>& filter
     return false;
 }
 
-} // namespace
+void AppendFilterToken(char* buffer, size_t bufferSize, const char* token)
+{
+    if (!buffer || bufferSize == 0 || !token || !token[0])
+        return;
+
+    if (buffer[0] != '\0')
+        strncat_s(buffer, bufferSize, ", ", _TRUNCATE);
+    strncat_s(buffer, bufferSize, token, _TRUNCATE);
+}
 
 // ---------------------------------------------------------------------------
 // Public free functions
