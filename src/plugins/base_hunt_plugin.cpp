@@ -1569,6 +1569,18 @@ void BaseHuntPlugin::Update()
     bool useScatter = false;
     CRole* target = FindBestTarget(hero, map, settings, &approachPos, &attackPos, &clumpSize, &useScatter);
 
+    // Session 10: same use-after-free shape already fixed for loot above
+    // (MapItems::IsAlive()) but never applied to combat targets — target
+    // comes from the same kind of periodically-refreshed background scan
+    // (Entities::Get()) and gets dereferenced below (HandleCombatRetreat/
+    // Approach/Attack all read target->m_posMap etc.) across several more
+    // Update() ticks while approaching, plenty of time for the monster to
+    // die and free its memory in between.
+    if (target && !Entities::IsAlive(target)) {
+        target = nullptr;
+        Entities::Invalidate();
+    }
+
     // Skip blacklisted unreachable target
     if (target && target->GetID() == m_unreachableTargetId)
         target = nullptr;
