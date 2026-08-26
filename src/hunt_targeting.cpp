@@ -1,4 +1,5 @@
 #include "hunt_targeting.h"
+#include "jitter.h"
 #include "game.h"
 #include "CHero.h"
 #include "CRole.h"
@@ -124,26 +125,14 @@ Position JitterDestination(const CGameMap* map, const Position& target, int radi
     if (radius <= 0)
         return target;
 
-    static uint32_t s_rng = 0;
-    if (s_rng == 0)
-        s_rng = GetTickCount() | 1u;
-
-    auto next = [&]() {
-        // xorshift32 — cheap, and we only need spread, not statistical rigour.
-        s_rng ^= s_rng << 13;
-        s_rng ^= s_rng >> 17;
-        s_rng ^= s_rng << 5;
-        return s_rng;
-    };
-
     // Try a handful of offsets and take the first walkable one. Deliberately
     // excludes (0,0): the point is to never land on the exact tile.
     for (int attempt = 0; attempt < 12; ++attempt) {
         const int span = radius * 2 + 1;
-        int dx = (int)(next() % (uint32_t)span) - radius;
-        int dy = (int)(next() % (uint32_t)span) - radius;
+        int dx = (int)(NextRandom32() % (uint32_t)span) - radius;
+        int dy = (int)(NextRandom32() % (uint32_t)span) - radius;
         if (dx == 0 && dy == 0)
-            dx = (next() & 1) ? 1 : -1;
+            dx = (NextRandom32() & 1) ? 1 : -1;
 
         const Position candidate = { target.x + dx, target.y + dy };
         if (candidate.x <= 0 || candidate.y <= 0)

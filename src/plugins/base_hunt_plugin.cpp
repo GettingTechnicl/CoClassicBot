@@ -446,13 +446,6 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
         return false;
 
     const Position heroPos = hero->m_posMap;
-    static uint32_t s_rng = 0;
-    if (s_rng == 0)
-        s_rng = GetTickCount() | 1u;
-    auto next = [&]() {
-        s_rng ^= s_rng << 13; s_rng ^= s_rng >> 17; s_rng ^= s_rng << 5;
-        return s_rng;
-    };
 
     // Sample points inside the zone and take the first walkable one that is a
     // meaningful distance away — near-identical destinations would leave the
@@ -480,15 +473,15 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
             // Head for a waypoint further along than the nearest one, so the
             // bot works the route instead of hovering at one corner.
             const int nearest = NearestWaypointIndex(*r, heroPos);
-            const int step = 1 + (int)(next() % 3u);
+            const int step = 1 + (int)(NextRandom32() % 3u);
             candidate = r->waypoints[(nearest + step) % (int)r->waypoints.size()];
         } else if (settings.zoneMode == AutoHuntZoneMode::Circle) {
             if (IsZeroPos(settings.zoneCenter) || settings.zoneRadius <= 0)
                 return false;
             // Uniform-ish over the disc, so the interior gets visited as often
             // as the rim rather than the bot favouring the boundary.
-            const float ang = (float)(next() % 3600u) * 0.0017453f;
-            const float rad = (float)settings.zoneRadius * sqrtf((float)(next() % 1000u) / 1000.0f);
+            const float ang = (float)(NextRandom32() % 3600u) * 0.0017453f;
+            const float rad = (float)settings.zoneRadius * sqrtf((float)(NextRandom32() % 1000u) / 1000.0f);
             candidate.x = settings.zoneCenter.x + (int)(cosf(ang) * rad);
             candidate.y = settings.zoneCenter.y + (int)(sinf(ang) * rad);
         } else {
@@ -502,8 +495,8 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
             }
             const int spanX = (std::max)(1, maxX - minX);
             const int spanY = (std::max)(1, maxY - minY);
-            candidate.x = minX + (int)(next() % (uint32_t)spanX);
-            candidate.y = minY + (int)(next() % (uint32_t)spanY);
+            candidate.x = minX + (int)(NextRandom32() % (uint32_t)spanX);
+            candidate.y = minY + (int)(NextRandom32() % (uint32_t)spanY);
         }
 
         if (candidate.x <= 0 || candidate.y <= 0)
@@ -795,10 +788,6 @@ bool BaseHuntPlugin::TryRandomWalk(CHero* hero, CGameMap* map, const AutoHuntSet
     if (baseIntervalMs == 0)
         return false;
 
-    static uint32_t s_rng = 0;
-    if (s_rng == 0) s_rng = (GetTickCount() ^ 0xA5A5A5A5u) | 1u;
-    auto next = [&]() { s_rng ^= s_rng << 13; s_rng ^= s_rng >> 17; s_rng ^= s_rng << 5; return s_rng; };
-
     // See jitter.h — recomputed fresh each call so the effective interval
     // varies call to call rather than settling into a fixed cadence.
     const DWORD intervalMs = WithActionJitter(baseIntervalMs);
@@ -811,8 +800,8 @@ bool BaseHuntPlugin::TryRandomWalk(CHero* hero, CGameMap* map, const AutoHuntSet
     // handles walkability/occupancy/reachability and won't fire while the
     // hero is jumping or the pathfinder is mid-route.
     for (int attempt = 0; attempt < 6; ++attempt) {
-        const int dx = (int)(next() % 5) - 2; // -2..2
-        const int dy = (int)(next() % 5) - 2;
+        const int dx = (int)(NextRandom32() % 5) - 2; // -2..2
+        const int dy = (int)(NextRandom32() % 5) - 2;
         if (dx == 0 && dy == 0)
             continue;
         const Position candidate{ hero->m_posMap.x + dx, hero->m_posMap.y + dy };

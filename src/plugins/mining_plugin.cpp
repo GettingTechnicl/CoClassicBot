@@ -1,4 +1,5 @@
 #include "mining_plugin.h"
+#include "hunt_settings.h"
 #include "inventory_utils.h"
 #include "npc_utils.h"
 #include "revive_utils.h"
@@ -98,11 +99,6 @@ std::string ToLowerCopy(const std::string& value)
     std::transform(lower.begin(), lower.end(), lower.begin(),
         [](unsigned char c) { return (char)std::tolower(c); });
     return lower;
-}
-
-bool IsZeroPos(const Position& pos)
-{
-    return pos.x == 0 && pos.y == 0;
 }
 
 bool IsMovementCommand(const CCommand& cmd)
