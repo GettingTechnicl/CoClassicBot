@@ -88,6 +88,14 @@ inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)
     return result;
 }
 
+// Session 11: short hops prefer a real animated Walk over an instant Jump
+// when not running aggressive/speedhack speeds — jumping in front of other
+// players looks unnatural, but walking a few tiles reads as normal movement.
+// Shared here (rather than living in base_hunt_plugin.cpp) since both
+// autohunt movement (StartPathTo) and manual minimap click-to-navigate
+// (overlay.cpp) need the same threshold.
+constexpr int kWalkInsteadOfJumpTiles = 4;
+
 constexpr int kMinMovementIntervalMs = 100;
 constexpr int kMaxMovementIntervalMs = 5000;
 inline DWORD GetMovementIntervalMs(const AutoHuntSettings& settings)

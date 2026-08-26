@@ -1156,7 +1156,18 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                 // Cancel any active path on manual click
                                 Pathfinder::Get().Stop();
 
-                                if (map->CanJump(heroX, heroY, tileX, tileY, CGameMap::GetHeroAltThreshold())
+                                const int clickDist = CGameMap::TileDist(heroX, heroY, tileX, tileY);
+                                const bool preferWalk = clickDist <= kWalkInsteadOfJumpTiles
+                                    && !ShouldUseAggressiveSpeeds(GetAutoHuntSettings())
+                                    && !IsTileOccupied(tileX, tileY)
+                                    && map->IsWalkable(tileX, tileY)
+                                    && map->CanReach(heroX, heroY, tileX, tileY);
+
+                                if (preferWalk) {
+                                    // Short hop, no player nearby to hide movement style
+                                    // from (or speedhack is off) — walk instead of jump.
+                                    hero->Walk(tileX, tileY);
+                                } else if (map->CanJump(heroX, heroY, tileX, tileY, CGameMap::GetHeroAltThreshold())
                                     && !IsTileOccupied(tileX, tileY)) {
                                     // Direct jump
                                     hero->Jump(tileX, tileY);

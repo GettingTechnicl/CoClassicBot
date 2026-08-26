@@ -653,6 +653,16 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
             destination.x, destination.y);
         return true;
     }
+    // Prefer a real animated Walk over an instant Jump for short hops when
+    // not running aggressive speeds (no nearby player to hide from, or the
+    // speedhack toggle is off) — falls through to the jump/pathfind logic
+    // below if no reachable candidate tile was found (e.g. destination boxed
+    // in on all sides).
+    if (dist <= kWalkInsteadOfJumpTiles && !ShouldUseAggressiveSpeeds(settings)) {
+        if (StartWalkTo(hero, map, destination, stopRange))
+            return true;
+    }
+
     const bool canDirectJump = dist <= CGameMap::MAX_JUMP_DIST
         && map->CanJump(hx, hy, destination.x, destination.y, CGameMap::GetHeroAltThreshold())
         && !IsTileOccupied(destination.x, destination.y);
@@ -1433,7 +1443,20 @@ void BaseHuntPlugin::Update()
             SetState(AutoHuntState::LootNearby, "Picking up nearby loot");
             return;
         }
-        if (!midMovement) {
+
+        // Session 11: don't let loot pull the hero away from an engageable
+        // monster — only the free/no-detour pickup above (already attempted;
+        // it fires regardless of nearby combat) is allowed to win against
+        // combat. Cheap peek: FindBestTarget is a pure scan with no side
+        // effects, and gets called again below for the real combat handling
+        // — this just decides whether it's worth detouring for loot first.
+        Position peekApproachPos{}, peekAttackPos{};
+        int peekClumpSize = 0;
+        bool peekUseScatter = false;
+        const bool hasEngageableTarget = FindBestTarget(hero, map, settings,
+            &peekApproachPos, &peekAttackPos, &peekClumpSize, &peekUseScatter) != nullptr;
+
+        if (!midMovement && !hasEngageableTarget) {
             if (StartPathNearTarget(hero, map, loot->m_pos, kLootPathStopRange)) {
                 m_targetId = loot->m_id;
                 SetState(AutoHuntState::LootNearby, "Jumping to loot");
