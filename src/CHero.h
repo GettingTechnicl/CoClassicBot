@@ -3,6 +3,7 @@
 #include "CItem.h"
 #include "CMagic.h"
 #include "CStatTable.h"
+#include <algorithm>
 
 struct CMapItem;
 
@@ -62,6 +63,11 @@ public:
     static CHero* GetSingletonPtr();
 
     static constexpr int MAX_BAG_ITEMS = 40;
+
+    // Shared by every bag-capacity threshold setting (bagStoreThreshold,
+    // townBagThreshold, dropItemThreshold) — was independently re-clamped
+    // the same way in 4 different places.
+    static int ClampBagThreshold(int value) { return std::clamp(value, 1, MAX_BAG_ITEMS); }
 
 private:
     BYTE _pad71C[0x968 - 0x71C]; // +0x71C  hero runtime fields

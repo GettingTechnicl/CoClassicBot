@@ -1,5 +1,6 @@
 #include "mining_plugin.h"
 #include "hunt_settings.h"
+#include "hunt_intervals.h"
 #include "hunt_targeting.h"
 #include "inventory_utils.h"
 #include "npc_utils.h"
@@ -34,8 +35,6 @@ const Position kTwinCityWarehousePos = {409, 351};
 const Position kTwinCityPharmacistPos = {466, 327};
 constexpr uint32_t kMarketTravelSilverCost = 100;
 constexpr uint32_t kTwinCityGateSilverCost = 200;
-constexpr int kMinMovementIntervalMs = 100;
-constexpr int kMaxMovementIntervalMs = 5000;
 constexpr DWORD kMineActionIntervalMs = 1000;
 constexpr DWORD kNpcActionIntervalMs = 400;
 constexpr DWORD kDropItemIntervalMs = 800;
@@ -515,7 +514,7 @@ bool MiningPlugin::ShouldStartTownRunByBagThreshold(const CHero* hero, const Min
     if (!hero || settings.townBagThreshold <= 0)
         return false;
 
-    const int bagThreshold = std::clamp(settings.townBagThreshold, 1, CHero::MAX_BAG_ITEMS);
+    const int bagThreshold = CHero::ClampBagThreshold(settings.townBagThreshold);
     if ((int)hero->m_deqItem.size() < bagThreshold && !hero->IsBagFull())
         return false;
 
@@ -725,7 +724,7 @@ bool MiningPlugin::TryDropFilteredItem(CHero* hero, CGameMap* map, const MiningS
     if (!hero || !map)
         return false;
 
-    const int dropThreshold = std::clamp(settings.dropItemThreshold, 1, CHero::MAX_BAG_ITEMS);
+    const int dropThreshold = CHero::ClampBagThreshold(settings.dropItemThreshold);
     const bool hasDroppableItems = HasDroppableItems(hero, settings);
     if (!m_dropCleanupActive) {
         if ((int)hero->m_deqItem.size() < dropThreshold || !hasDroppableItems)
@@ -2072,7 +2071,7 @@ void MiningPlugin::RenderUI()
 
     if (ImGui::CollapsingHeader("Item Rules", kSectionFlags)) {
         ImGui::InputInt("Drop Threshold", &settings.dropItemThreshold);
-        settings.dropItemThreshold = std::clamp(settings.dropItemThreshold, 1, CHero::MAX_BAG_ITEMS);
+        settings.dropItemThreshold = CHero::ClampBagThreshold(settings.dropItemThreshold);
         ImGui::SliderInt("Town Return Threshold", &settings.townBagThreshold, 0, CHero::MAX_BAG_ITEMS);
         ImGui::TextDisabled("Return items trigger the trip back to town.");
         ImGui::TextDisabled("Town Return Threshold starts the town loop when bag slots reach the threshold and there are return, deposit, or sell items to process.");
@@ -2086,7 +2085,8 @@ void MiningPlugin::RenderUI()
     }
 
     if (ImGui::CollapsingHeader("Timing", kSectionFlags))
-        ImGui::SliderInt("Movement Interval (ms)", &settings.movementIntervalMs, 100, 5000);
+        ImGui::SliderInt("Movement Interval (ms)", &settings.movementIntervalMs,
+            kMinMovementIntervalMs, kMaxMovementIntervalMs);
 
     if (ImGui::CollapsingHeader("Session Tracker", kSectionFlags)) {
         if (ImGui::Button("Reset Mining Tracker"))

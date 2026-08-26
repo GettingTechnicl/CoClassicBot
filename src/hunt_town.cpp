@@ -170,7 +170,7 @@ bool HuntTownService::NeedTownRun(CHero* hero, const AutoHuntSettings& settings,
     }
 
     if (NeedsStorage(hero, settings)) {
-        const int bagThreshold = std::clamp(settings.bagStoreThreshold, 1, CHero::MAX_BAG_ITEMS);
+        const int bagThreshold = CHero::ClampBagThreshold(settings.bagStoreThreshold);
         if ((int)hero->m_deqItem.size() >= bagThreshold || hero->IsBagFull())
             return true;
     }

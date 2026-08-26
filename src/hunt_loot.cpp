@@ -360,7 +360,7 @@ bool HuntLootManager::TryDropTrashItem(CHero* hero, const AutoHuntSettings& sett
         return false;
 
     // Only fire when the bag is at/over the user's storage threshold.
-    const int bagThreshold = std::clamp(settings.bagStoreThreshold, 1, CHero::MAX_BAG_ITEMS);
+    const int bagThreshold = CHero::ClampBagThreshold(settings.bagStoreThreshold);
     if ((int)hero->m_deqItem.size() < bagThreshold)
         return false;
 
