@@ -1,5 +1,6 @@
 #include "melee_hunt_plugin.h"
 #include "jitter.h"
+#include "hunt_intervals.h"
 #include "hunt_targeting.h"
 #include "game.h"
 #include "CHero.h"
@@ -17,33 +18,6 @@ namespace {
 
 constexpr int kReliableAttackRange = 1;
 constexpr int kMinMobClumpSize = 2;
-constexpr int kMinAttackIntervalMs = 25;
-constexpr int kMaxAttackIntervalMs = 5000;
-constexpr int kMinTargetSwitchAttackIntervalMs = 0;
-constexpr int kMaxTargetSwitchAttackIntervalMs = 5000;
-
-DWORD ClampMs(int value, int minValue, int maxValue)
-{
-    return static_cast<DWORD>(std::clamp(value, minValue, maxValue));
-}
-
-// Session 10: jittered — see jitter.h. Attack/cyclone/target-switch are
-// "action items"; a random 50-250ms is always added on top, never subtracted.
-DWORD GetAttackIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(ClampMs(settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
-}
-
-DWORD GetCycloneAttackIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(ClampMs(settings.cycloneAttackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
-}
-
-DWORD GetTargetSwitchAttackIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(ClampMs(settings.targetSwitchAttackIntervalMs,
-        kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs));
-}
 
 } // anonymous namespace
 
@@ -369,14 +343,7 @@ void MeleeHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const AutoH
     }
 
     // Determine attack interval
-    const bool targetChanged = (m_targetId != target->GetID());
-    const bool justFinishedApproach = (m_state == AutoHuntState::ApproachTarget);
-    const DWORD attackInterval = hero->IsCycloneActive()
-        ? GetCycloneAttackIntervalMs(settings)
-        : GetAttackIntervalMs(settings);
-    const DWORD nextAttackDelay = (targetChanged || justFinishedApproach)
-        ? GetTargetSwitchAttackIntervalMs(settings)
-        : attackInterval;
+    const DWORD nextAttackDelay = ComputeNextAttackDelayMs(hero, target, settings);
 
     if (Pathfinder::Get().IsActive())
         Pathfinder::Get().Stop();

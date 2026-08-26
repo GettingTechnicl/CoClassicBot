@@ -1,5 +1,6 @@
 #include "game.h"
 #include "jitter.h"
+#include "hunt_intervals.h"
 #include "map_items.h"
 #include "hunt_loot.h"
 #include "hunt_town.h"
@@ -19,10 +20,6 @@ static constexpr DWORD kLootTargetSwitchIntervalMs = 100;
 
 static constexpr int kMinLootPickupIgnoreMs = 0;
 static constexpr int kMaxLootPickupIgnoreMs = 300000;
-static constexpr int kMinItemActionIntervalMs = 100;
-static constexpr int kMaxItemActionIntervalMs = 5000;
-static constexpr int kMinLootSpawnGraceMs = 0;
-static constexpr int kMaxLootSpawnGraceMs = 5000;
 static constexpr int kMinItemPickupDelayMs = 0;
 static constexpr int kMaxItemPickupDelayMs = 3000;
 static constexpr DWORD kDropRecordMatchWindowMs = 30000;  // match items against drop records within 30s
@@ -30,27 +27,9 @@ static constexpr DWORD kDropRecordMatchWindowMs = 30000;  // match items against
 // ── File-local helpers ────────────────────────────────────────────────────────
 namespace {
 
-DWORD ClampMs(int value, int minVal, int maxVal)
-{
-    return static_cast<DWORD>(std::clamp(value, minVal, maxVal));
-}
-
-DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)
-{
-    // Session 10: jittered per user direction — see jitter.h. Pickup is an
-    // "action item"; a perfectly periodic retry cadence is a detectable
-    // pattern, so a random 50-250ms is always added on top, never subtracted.
-    return WithActionJitter(ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs));
-}
-
 DWORD GetLootPickupIgnoreMs(const AutoHuntSettings& settings)
 {
     return ClampMs(settings.lootPickupIgnoreMs, kMinLootPickupIgnoreMs, kMaxLootPickupIgnoreMs);
-}
-
-DWORD GetLootSpawnGraceMs(const AutoHuntSettings& settings)
-{
-    return ClampMs(settings.lootSpawnGraceMs, kMinLootSpawnGraceMs, kMaxLootSpawnGraceMs);
 }
 
 DWORD GetItemPickupDelayMs(const AutoHuntSettings& settings)

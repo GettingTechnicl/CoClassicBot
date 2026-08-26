@@ -1,5 +1,6 @@
 #include "base_hunt_plugin.h"
 #include "jitter.h"
+#include "hunt_intervals.h"
 #include "hunt_buffs.h"
 #include "hunt_loot.h"
 #include "hunt_targeting.h"
@@ -42,16 +43,6 @@ constexpr int kMinMobClumpSize = 2;
 constexpr int kMinLootRange = 0;
 constexpr int kMaxLootRange = CGameMap::MAX_JUMP_DIST;
 constexpr int kLootPathStopRange = 0;
-constexpr int kMinMovementIntervalMs = 100;
-constexpr int kMaxMovementIntervalMs = 5000;
-constexpr int kMinAttackIntervalMs = 25;
-constexpr int kMaxAttackIntervalMs = 5000;
-constexpr int kMinTargetSwitchAttackIntervalMs = 0;
-constexpr int kMaxTargetSwitchAttackIntervalMs = 5000;
-constexpr int kMinItemActionIntervalMs = 100;
-constexpr int kMaxItemActionIntervalMs = 5000;
-constexpr int kMinLootSpawnGraceMs = 0;
-constexpr int kMaxLootSpawnGraceMs = 5000;
 constexpr int kMinEntityScanIntervalMs = 100;
 constexpr int kMaxEntityScanIntervalMs = 5000;
 constexpr int kMinItemPickupDelayMs = 0;
@@ -60,18 +51,12 @@ constexpr int kMinDecisionThrottleMs = 0;
 constexpr int kMaxDecisionThrottleMs = 1000;
 constexpr int kMinRandomWalkIntervalMs = 0;
 constexpr int kMaxRandomWalkIntervalMs = 10000;
-constexpr int kMinSelfCastIntervalMs = 100;
-constexpr int kMaxSelfCastIntervalMs = 5000;
-constexpr int kMinNpcActionIntervalMs = 100;
-constexpr int kMaxNpcActionIntervalMs = 2000;
 constexpr int kMinLootPickupIgnoreMs = 0;
 constexpr int kMaxLootPickupIgnoreMs = 300000;
 constexpr int kMinManualControlPauseMs = 0;
 constexpr int kMaxManualControlPauseMs = 30000;
 constexpr int kMinReviveDelayMs = 0;
 constexpr int kMaxReviveDelayMs = 60000;
-constexpr int kMinReviveRetryIntervalMs = 100;
-constexpr int kMaxReviveRetryIntervalMs = 10000;
 constexpr DWORD kPendingJumpStallMs = 500;
 // Session 10: hard cap on a path that claims to be active while the hero is
 // not actually moving. The pathfinder has its own stall recovery, but it was
@@ -90,34 +75,9 @@ bool IsWithinLootPickupRange(const AutoHuntSettings& settings, int distance)
     return lootRange > 0 ? distance <= lootRange : distance == 0;
 }
 
-DWORD ClampMs(int value, int minValue, int maxValue)
-{
-    return static_cast<DWORD>(std::clamp(value, minValue, maxValue));
-}
-
-DWORD GetMovementIntervalMs(const AutoHuntSettings& settings)
-{
-    // Session 10: jittered per user direction — see jitter.h. Movement is an
-    // "action item"; a perfectly periodic movement cadence is a detectable
-    // pattern, so a random 50-250ms is always added on top, never subtracted.
-    return WithActionJitter(ClampMs(settings.movementIntervalMs, kMinMovementIntervalMs, kMaxMovementIntervalMs));
-}
-
 DWORD GetJumpMovementIntervalMs(const AutoHuntSettings& settings, const CHero* /*hero*/)
 {
     return GetMovementIntervalMs(settings);
-}
-
-DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)
-{
-    // Session 10: jittered per user direction — see jitter.h. Pickup is an
-    // "action item" too.
-    return WithActionJitter(ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs));
-}
-
-DWORD GetLootSpawnGraceMs(const AutoHuntSettings& settings)
-{
-    return ClampMs(settings.lootSpawnGraceMs, kMinLootSpawnGraceMs, kMaxLootSpawnGraceMs);
 }
 
 DWORD GetEntityScanIntervalMs(const AutoHuntSettings& settings)
@@ -138,12 +98,6 @@ DWORD GetManualControlPauseMs(const AutoHuntSettings& settings)
 DWORD GetReviveDelayMs(const AutoHuntSettings& settings)
 {
     return ClampMs(settings.reviveDelayMs, kMinReviveDelayMs, kMaxReviveDelayMs);
-}
-
-DWORD GetReviveRetryIntervalMs(const AutoHuntSettings& settings)
-{
-    // Session 10: jittered — see jitter.h. Revive retry is a repeated action.
-    return WithActionJitter(ClampMs(settings.reviveRetryIntervalMs, kMinReviveRetryIntervalMs, kMaxReviveRetryIntervalMs));
 }
 
 bool TickIsFuture(DWORD targetTick, DWORD now)
@@ -736,6 +690,18 @@ bool BaseHuntPlugin::TryRandomWalk(CHero* hero, CGameMap* map, const AutoHuntSet
             return true;
     }
     return false;
+}
+
+DWORD BaseHuntPlugin::ComputeNextAttackDelayMs(CHero* hero, CRole* target, const AutoHuntSettings& settings) const
+{
+    const bool targetChanged = (m_targetId != target->GetID());
+    const bool justFinishedApproach = (m_state == AutoHuntState::ApproachTarget);
+    const DWORD attackInterval = hero->IsCycloneActive()
+        ? GetCycloneAttackIntervalMs(settings)
+        : GetAttackIntervalMs(settings);
+    return (targetChanged || justFinishedApproach)
+        ? GetTargetSwitchAttackIntervalMs(settings)
+        : attackInterval;
 }
 
 bool BaseHuntPlugin::StartWalkTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange)

@@ -148,6 +148,11 @@ protected:
     // movement interval so it can be dialed well below it for testing.
     bool TryRandomWalk(CHero* hero, CGameMap* map, const AutoHuntSettings& settings, DWORD now);
 
+    // Shared by ArcherHuntPlugin/MeleeHuntPlugin's HandleCombatAttack: use the
+    // target-switch delay right after acquiring/approaching a target, else the
+    // normal (cyclone-aware) attack interval.
+    DWORD ComputeNextAttackDelayMs(CHero* hero, CRole* target, const AutoHuntSettings& settings) const;
+
     void BeginTravelToZone(TravelPlugin* travel, const AutoHuntSettings& settings);
     void BeginTravelToMarket(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings);
     void HandleTravelToZone(TravelPlugin* travel, const AutoHuntSettings& settings);

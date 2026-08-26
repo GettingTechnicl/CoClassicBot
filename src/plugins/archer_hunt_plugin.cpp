@@ -1,5 +1,6 @@
 #include "archer_hunt_plugin.h"
 #include "jitter.h"
+#include "hunt_intervals.h"
 #include "hunt_targeting.h"
 #include "game.h"
 #include "CHero.h"
@@ -24,41 +25,6 @@ constexpr int kMinMobClumpSize = 2;
 constexpr int kArcherSafetyBufferTiles = 1;
 constexpr DWORD kArcherRetreatHoldMs = 3000;
 constexpr DWORD kFailedRetreatDestAvoidMs = 1000;
-constexpr int kMinAttackIntervalMs = 25;
-constexpr int kMaxAttackIntervalMs = 5000;
-constexpr int kMinTargetSwitchAttackIntervalMs = 0;
-constexpr int kMaxTargetSwitchAttackIntervalMs = 5000;
-constexpr int kMinItemActionIntervalMs = 100;
-constexpr int kMaxItemActionIntervalMs = 5000;
-
-DWORD ClampMs(int value, int minValue, int maxValue)
-{
-    return static_cast<DWORD>(std::clamp(value, minValue, maxValue));
-}
-
-// Session 10: all four jittered — see jitter.h. Attack/cyclone/target-switch/
-// pickup are all "action items"; a random 50-250ms is always added on top,
-// never subtracted.
-DWORD GetAttackIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(ClampMs(settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
-}
-
-DWORD GetCycloneAttackIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(ClampMs(settings.cycloneAttackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs));
-}
-
-DWORD GetTargetSwitchAttackIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(ClampMs(settings.targetSwitchAttackIntervalMs,
-        kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs));
-}
-
-DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs));
-}
 
 bool TickIsFuture(DWORD targetTick, DWORD now)
 {
@@ -956,14 +922,7 @@ void ArcherHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const Auto
     const int clumpSize = m_lastClumpSize;
     const bool isScatterClump = useScatter && clumpSize >= (std::max)(1, settings.minimumScatterHits);
 
-    const bool targetChanged = (m_targetId != target->GetID());
-    const bool justFinishedApproach = (m_state == AutoHuntState::ApproachTarget);
-    const DWORD attackInterval = hero->IsCycloneActive()
-        ? GetCycloneAttackIntervalMs(settings)
-        : GetAttackIntervalMs(settings);
-    const DWORD nextAttackDelay = (targetChanged || justFinishedApproach)
-        ? GetTargetSwitchAttackIntervalMs(settings)
-        : attackInterval;
+    const DWORD nextAttackDelay = ComputeNextAttackDelayMs(hero, target, settings);
 
     if (Pathfinder::Get().IsActive())
         Pathfinder::Get().Stop();

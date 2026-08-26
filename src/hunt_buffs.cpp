@@ -1,5 +1,6 @@
 #include "hunt_buffs.h"
 #include "jitter.h"
+#include "hunt_intervals.h"
 #include "hunt_targeting.h"
 #include "game.h"
 #include "map_items.h"
@@ -25,38 +26,10 @@ static constexpr int kNearbyPotionRange      = 10;
 static constexpr int kNearbyPotionCarryLimit = 2;
 static constexpr int kLootPathStopRange      = 0;
 
-static constexpr int kMinSelfCastIntervalMs  = 100;
-static constexpr int kMaxSelfCastIntervalMs  = 5000;
-static constexpr int kMinItemActionIntervalMs = 100;
-static constexpr int kMaxItemActionIntervalMs = 5000;
 static constexpr int kArcherSafetyBufferTiles = 1;
 
 // ── File-local helpers ────────────────────────────────────────────────────────
 namespace {
-
-DWORD ClampMs(int value, int minVal, int maxVal)
-{
-    return static_cast<DWORD>(std::clamp(value, minVal, maxVal));
-}
-
-// Session 10: jittered — see jitter.h. Self-cast/pickup are "action items";
-// a random 50-250ms is always added on top, never subtracted.
-DWORD GetSelfCastIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(ClampMs(settings.selfCastIntervalMs, kMinSelfCastIntervalMs, kMaxSelfCastIntervalMs));
-}
-
-DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs));
-}
-
-DWORD GetLootSpawnGraceMs(const AutoHuntSettings& settings)
-{
-    constexpr int kMin = 0;
-    constexpr int kMax = 5000;
-    return ClampMs(settings.lootSpawnGraceMs, kMin, kMax);
-}
 
 bool IsArcherModeEnabled(const AutoHuntSettings& settings)
 {

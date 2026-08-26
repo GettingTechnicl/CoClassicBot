@@ -1,5 +1,6 @@
 #include "game.h"
 #include "jitter.h"
+#include "hunt_intervals.h"
 #include "hunt_town.h"
 #include "inventory_utils.h"
 #include "npc_utils.h"
@@ -35,9 +36,6 @@ const BlacksmithEntry kBlacksmiths[] = {
 
 constexpr uint32_t kArrowCost = 34000;
 
-constexpr int kMinNpcActionIntervalMs = 100;
-constexpr int kMaxNpcActionIntervalMs = 2000;
-
 const BlacksmithEntry* FindBlacksmithForMap(OBJID mapId)
 {
     for (const auto& entry : kBlacksmiths) {
@@ -50,14 +48,6 @@ const BlacksmithEntry* FindBlacksmithForMap(OBJID mapId)
 bool IsArcherModeEnabled(const AutoHuntSettings& settings)
 {
     return settings.archerMode || settings.combatMode == AutoHuntCombatMode::Archer;
-}
-
-// Session 10: jittered — see jitter.h. NPC actions are "action items"; a
-// random 50-250ms is always added on top, never subtracted.
-DWORD GetNpcActionIntervalMs(const AutoHuntSettings& settings)
-{
-    return WithActionJitter(static_cast<DWORD>(std::clamp(settings.npcActionIntervalMs,
-        kMinNpcActionIntervalMs, kMaxNpcActionIntervalMs)));
 }
 
 } // namespace
