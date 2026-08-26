@@ -26,31 +26,12 @@ bool CanUseVipTeleportNow(const CHero* hero)
     return hero && hero->IsVip() && !IsVipTeleportOnCooldown(kVipTeleportCooldownMs);
 }
 
-bool IsTileOccupiedByRole(int tileX, int tileY)
-{
-    CRoleMgr* mgr = Game::GetRoleMgr();
-    if (!mgr || Entities::Roles().empty() || Entities::Roles().size() >= 10000)
-        return false;
-
-    for (size_t i = 0; i < Entities::Roles().size() && i < 500; i++) {
-        const auto ref = Entities::Roles()[i];
-        if (!ref)
-            continue;
-
-        CRole* role = ref.get();
-        if (role->m_posMap.x == tileX && role->m_posMap.y == tileY)
-            return true;
-    }
-
-    return false;
-}
-
 bool FindOpenTileNear(CGameMap* map, const Position& center, Position& outPos)
 {
     if (!map)
         return false;
 
-    if (map->IsWalkable(center.x, center.y) && !IsTileOccupiedByRole(center.x, center.y)) {
+    if (map->IsWalkable(center.x, center.y) && !IsTileOccupied(center.x, center.y)) {
         outPos = center;
         return true;
     }
@@ -64,7 +45,7 @@ bool FindOpenTileNear(CGameMap* map, const Position& center, Position& outPos)
                 const Position candidate = {center.x + dx, center.y + dy};
                 if (!map->IsWalkable(candidate.x, candidate.y))
                     continue;
-                if (IsTileOccupiedByRole(candidate.x, candidate.y))
+                if (IsTileOccupied(candidate.x, candidate.y))
                     continue;
 
                 outPos = candidate;
@@ -477,7 +458,7 @@ void TravelPlugin::Update()
 
         if (tx != targetPos.x || ty != targetPos.y) {
             spdlog::debug("[travel] Gateway approach ({},{}) -> ({},{}) walkable={} occupied={}",
-                   targetPos.x, targetPos.y, tx, ty, map->IsWalkable(tx, ty), IsTileOccupiedByRole(tx, ty));
+                   targetPos.x, targetPos.y, tx, ty, map->IsWalkable(tx, ty), IsTileOccupied(tx, ty));
         } else if (!map->IsWalkable(tx, ty)) {
             spdlog::warn("[travel] Target tile ({},{}) unavailable, using fallback ({},{}) walkable={}",
                    targetPos.x, targetPos.y, tx, ty, map->IsWalkable(tx, ty));
