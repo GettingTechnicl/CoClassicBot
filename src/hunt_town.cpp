@@ -20,6 +20,10 @@ const Position kComposeBankPos  = {179, 187};
 const Position kWarehousePos    = {182, 180};
 const Position kPharmacistPos   = {198, 181};
 
+// Session 11 [FREEZE FIX]: bank NPCs give up (skip the deposit rather than
+// retry forever) after this many failed open confirmations.
+constexpr int kMaxBankOpenAttempts = 3;
+
 struct BlacksmithEntry {
     OBJID       mapId;
     const char* npcName;
@@ -84,6 +88,8 @@ void HuntTownService::ResetStoreSequence()
     m_warehouseNpcId       = 0;
     m_storeItemId          = 0;
     m_storeMeteorCountBefore = 0;
+    m_treasureBankOpenAttempts = 0;
+    m_composeBankOpenAttempts  = 0;
 }
 
 // ── HuntTownService — Arrow helpers ──────────────────────────────────────────
@@ -821,22 +827,33 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
             return;
 
         case StorePhase::WaitTreasureBank:
-            // town-diag: OpenTreasureBank has no accompanying "open window"
-            // packet the way OpenWarehouse does — this phase can advance
-            // purely off the 1200ms timeout below even if the bank window
-            // never actually opened server-side. Log which path fired so a
-            // live capture can confirm whether IsNpcActive() ever goes true
-            // for this NPC at all.
+            // Session 11 [FREEZE FIX]: this used to advance to the deposit
+            // phase purely off a 1200ms timeout even when IsNpcActive() never
+            // confirmed the bank window actually opened. Live logging caught
+            // the client hard-freezing (required a Task Manager kill) right
+            // after DepositTreasureBankMeteors sent its deposit-confirm
+            // packet in that exact unconfirmed-window state. Never proceed
+            // to deposit without confirmation — retry the open a bounded
+            // number of times, then give up on this bank for the cycle.
             if (hero->IsNpcActive() && hero->GetActiveNpc() == m_treasureBankNpcId) {
-                spdlog::debug("[town-diag] WaitTreasureBank: NPC {} confirmed active, proceeding to deposit", m_treasureBankNpcId);
-            } else if (now - m_lastNpcActionTick > 1200) {
-                spdlog::warn("[town-diag] WaitTreasureBank: timed out after 1200ms WITHOUT IsNpcActive() confirming NPC {} - proceeding anyway, deposit may silently fail server-side", m_treasureBankNpcId);
-            }
-            if ((hero->IsNpcActive() && hero->GetActiveNpc() == m_treasureBankNpcId)
-                || now - m_lastNpcActionTick > 1200) {
+                m_treasureBankOpenAttempts = 0;
                 m_storePhase = HasTreasureBankMeteorItems(hero)
                     ? StorePhase::DepositTreasureMeteors
                     : StorePhase::DepositTreasureDragonBalls;
+                return;
+            }
+            if (now - m_lastNpcActionTick > 1200) {
+                ++m_treasureBankOpenAttempts;
+                if (m_treasureBankOpenAttempts >= kMaxBankOpenAttempts) {
+                    spdlog::warn("[hunt] TreasureBank NPC {} never confirmed open after {} attempts, giving up on this deposit cycle",
+                        m_treasureBankNpcId, m_treasureBankOpenAttempts);
+                    m_treasureBankOpenAttempts = 0;
+                    m_storePhase = StorePhase::MoveToComposeBank;
+                    return;
+                }
+                spdlog::warn("[hunt] TreasureBank NPC {} not confirmed open after 1200ms, retrying (attempt {}/{})",
+                    m_treasureBankNpcId, m_treasureBankOpenAttempts, kMaxBankOpenAttempts);
+                m_storePhase = StorePhase::OpenTreasureBank;
             }
             return;
 
@@ -922,9 +939,27 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
             return;
 
         case StorePhase::WaitComposeBank:
-            if ((hero->IsNpcActive() && hero->GetActiveNpc() == m_composeBankNpcId)
-                || now - m_lastNpcActionTick > 1200) {
+            // Session 11 [FREEZE FIX]: same unconfirmed-window issue as
+            // WaitTreasureBank above — never proceed to deposit without
+            // IsNpcActive() confirmation.
+            if (hero->IsNpcActive() && hero->GetActiveNpc() == m_composeBankNpcId) {
+                m_composeBankOpenAttempts = 0;
                 m_storePhase = StorePhase::DepositComposeBank;
+                return;
+            }
+            if (now - m_lastNpcActionTick > 1200) {
+                ++m_composeBankOpenAttempts;
+                if (m_composeBankOpenAttempts >= kMaxBankOpenAttempts) {
+                    spdlog::warn("[hunt] ComposeBank NPC {} never confirmed open after {} attempts, giving up on this deposit cycle",
+                        m_composeBankNpcId, m_composeBankOpenAttempts);
+                    m_composeBankOpenAttempts = 0;
+                    ResetStoreSequence();
+                    cb.beginTravelToZoneFn();
+                    return;
+                }
+                spdlog::warn("[hunt] ComposeBank NPC {} not confirmed open after 1200ms, retrying (attempt {}/{})",
+                    m_composeBankNpcId, m_composeBankOpenAttempts, kMaxBankOpenAttempts);
+                m_storePhase = StorePhase::OpenComposeBank;
             }
             return;
 

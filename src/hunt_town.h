@@ -181,4 +181,16 @@ private:
     int   m_repairSlot         = 0;
     int   m_arrowsBoughtCount  = 0;
     int   m_storeMeteorCountBefore = 0;
+
+    // Session 11 [FREEZE FIX]: OpenTreasureBank/OpenComposeBank have no
+    // "window confirmed open" packet the way OpenWarehouse does — live
+    // logging caught the client freezing hard (requiring a Task Manager
+    // kill) right after DepositTreasureBankMeteors sent a deposit-confirm
+    // packet to a bank NPC that IsNpcActive() never actually confirmed was
+    // open. These bound how many times WaitTreasureBank/WaitComposeBank will
+    // retry the open before giving up on that bank entirely for this store
+    // cycle, instead of ever blindly proceeding to send a deposit action
+    // against an unconfirmed dialog.
+    int   m_treasureBankOpenAttempts = 0;
+    int   m_composeBankOpenAttempts  = 0;
 };
