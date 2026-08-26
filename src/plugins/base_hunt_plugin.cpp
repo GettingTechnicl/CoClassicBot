@@ -1515,17 +1515,31 @@ void BaseHuntPlugin::Update()
             return;
         }
 
-        // Session 11: don't let loot pull the hero away from an engageable
-        // monster — only the free/no-detour pickup above (already attempted;
-        // it fires regardless of nearby combat) is allowed to win against
-        // combat. Cheap peek: FindBestTarget is a pure scan with no side
-        // effects, and gets called again below for the real combat handling
-        // — this just decides whether it's worth detouring for loot first.
-        Position peekApproachPos{}, peekAttackPos{};
-        int peekClumpSize = 0;
-        bool peekUseScatter = false;
-        const bool hasEngageableTarget = FindBestTarget(hero, map, settings,
-            &peekApproachPos, &peekAttackPos, &peekClumpSize, &peekUseScatter) != nullptr;
+        // Session 11: don't let ORDINARY loot pull the hero away from an
+        // engageable monster — only the free/no-detour pickup above
+        // (already attempted; it fires regardless of nearby combat) was
+        // previously allowed to win against combat. Priority items
+        // (IsPriorityLootItem: +items, Meteor/DragonBall family) are an
+        // explicit exception per the user's own framing — "if a meteor or
+        // dragonball is seen on the ground, stop everything and go get
+        // it" — so they always override an engageable target, restoring
+        // the original "loot always wins" behavior just for these
+        // specific items instead of every ground item. Also skips the
+        // FindBestTarget peek entirely in that case since its result
+        // wouldn't be used anyway.
+        const bool isPriorityLoot = HuntTownService::IsPriorityLootItem(*loot);
+        bool hasEngageableTarget = false;
+        if (!isPriorityLoot) {
+            // Cheap peek: FindBestTarget is a pure scan with no side
+            // effects, and gets called again below for the real combat
+            // handling — this just decides whether it's worth detouring
+            // for loot first.
+            Position peekApproachPos{}, peekAttackPos{};
+            int peekClumpSize = 0;
+            bool peekUseScatter = false;
+            hasEngageableTarget = FindBestTarget(hero, map, settings,
+                &peekApproachPos, &peekAttackPos, &peekClumpSize, &peekUseScatter) != nullptr;
+        }
 
         if (!midMovement && !hasEngageableTarget) {
             if (StartPathNearTarget(hero, map, loot->m_pos, kLootPathStopRange)) {
