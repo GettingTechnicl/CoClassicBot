@@ -622,15 +622,27 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
         return true;
     }
 
+    const AutoHuntSettings& settings = GetAutoHuntSettings();
+
+    // Session 10: this settle delay was hardcoded to 500ms, completely
+    // independent of movementIntervalMs/speedhack — even with the
+    // aggressive-speed floor (100ms) active, movement was still capped to
+    // a ~500ms cadence here, so "Speedhack If No Players Nearby" had no
+    // visible effect on normal pathfinding. Also a likely contributor to a
+    // separate stuck-loop bug: this branch returns true (blocked) without
+    // ever issuing a move, and the caller treats "true" as "movement is in
+    // progress" — if this kept blocking indefinitely, the hunt loop would
+    // spin here at full frame rate forever instead of ever recovering.
+    // Scales with the same aggressive/slider value movementIntervalMs uses
+    // instead of a fixed constant, so speedhack actually speeds this up too.
+    const DWORD settleThresholdMs = ShouldUseAggressiveSpeeds(settings) ? kMinMovementIntervalMs : 500;
     const DWORD pathfinderJumpAge = now - Pathfinder::Get().GetLastJumpTick();
-    if (pathfinderJumpAge < 500 && !Pathfinder::Get().IsActive()) {
-        spdlog::trace("[hunt] Move blocked: pathfinder settle age={}ms pos=({},{}) dest=({},{})",
-            pathfinderJumpAge, hero->m_posMap.x, hero->m_posMap.y,
+    if (pathfinderJumpAge < settleThresholdMs && !Pathfinder::Get().IsActive()) {
+        spdlog::trace("[hunt] Move blocked: pathfinder settle age={}ms threshold={}ms pos=({},{}) dest=({},{})",
+            pathfinderJumpAge, settleThresholdMs, hero->m_posMap.x, hero->m_posMap.y,
             destination.x, destination.y);
         return true;
     }
-
-    const AutoHuntSettings& settings = GetAutoHuntSettings();
     const bool canDirectJump = dist <= CGameMap::MAX_JUMP_DIST
         && map->CanJump(hx, hy, destination.x, destination.y, CGameMap::GetHeroAltThreshold())
         && !IsTileOccupied(destination.x, destination.y);
