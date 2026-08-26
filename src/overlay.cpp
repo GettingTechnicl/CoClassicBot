@@ -9,6 +9,7 @@
 #include "map_probe.h"
 #include "mapdata.h"
 #include "spawn_memory.h"
+#include "mem_stats.h"
 #include "pathfinder.h"
 #include "plugin_mgr.h"
 #include "gateway.h"
@@ -261,6 +262,10 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
             // second timer — same rhythm, no extra frame cost.
             MaybeAutoSaveSpawnMemory();
         }
+        // Session 10: memory-leak tracking — runs regardless of hero/login
+        // state so the process's baseline footprint is visible too, not
+        // just once in-world.
+        MaybeLogMemoryStats();
     }
 
     // ── Render ImGui frame ──

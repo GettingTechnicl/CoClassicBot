@@ -51,6 +51,7 @@ add_library(coclassic SHARED
     src/mapdata.cpp
     src/map_items.cpp
     src/spawn_memory.cpp
+    src/mem_stats.cpp
     src/map_probe.cpp
     src/config.cpp
     src/hunt_settings.cpp
