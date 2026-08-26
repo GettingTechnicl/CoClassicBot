@@ -433,15 +433,31 @@ namespace GameCall {
         return fn;
     }
 
-    // Session 8: resolves the live per-session connection object
-    // (CNetClient_ConnectionSingleton()->+0x20). NOT stable across relaunches
-    // or reconnects — call fresh each time, don't cache long-term.
+    // Session 10 [CRASH HARDENING]: resolves the live per-session connection
+    // object (CNetClient_ConnectionSingleton()->+0x20). NOT stable across
+    // relaunches or reconnects — call fresh each time, don't cache long-term.
+    //
+    // This is called on EVERY native packet send (movement, attack, pickup —
+    // everything routes through SendPacket()), and until now the +0x20 read
+    // was completely unguarded — no SEH, unlike almost every other raw
+    // pointer read in this codebase. If `outer` is ever torn down/reallocated
+    // at an unlucky moment relative to this read, the dereference could fault
+    // outright (previously an unguarded crash), or worse, silently hand back
+    // a stale-but-plausible pointer that then gets used to send a packet into
+    // memory that's since been repurposed — corrupting something unrelated
+    // that only crashes later, elsewhere. Guarded now; a bad read returns
+    // nullptr (SendPacket() already handles that as a clean failure) instead
+    // of either crashing or propagating a stale pointer forward.
     inline void* ResolveConnectionObject() {
         auto singleton = CNetClient_ConnectionSingleton();
         if (!singleton) return nullptr;
         void* outer = singleton();
         if (!outer) return nullptr;
-        return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(outer) + 0x20);
+        __try {
+            return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(outer) + 0x20);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return nullptr;
+        }
     }
 
     inline CHero_JumpFn CHero_Jump() {

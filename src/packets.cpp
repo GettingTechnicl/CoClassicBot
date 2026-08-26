@@ -281,6 +281,22 @@ void CleanupPacketHook()
 // later, but SendPacket() no longer depends on it). `connectionObject` is
 // resolved fresh every call (it's a per-session pointer, not stable across
 // relaunches/reconnects — see GameCall::ResolveConnectionObject()).
+// Raw-buffer-only helper (no C++ objects) so it can safely use __try/__except
+// around the call into native code. `conn` may be a stale-but-plausible
+// pointer (see ResolveConnectionObject()'s comment) — this is defense in
+// depth in case dereferencing it inside the game's own SendMsg faults.
+static bool CallSendMsgGuarded(GameCall::CNetClient_SendMsgRealFn sendMsg, void* conn,
+    const uint8_t* data, uint32_t size, uint8_t* outResult)
+{
+    __try {
+        *outResult = sendMsg(conn, data, size);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        spdlog::error("[packets] SendPacket: sendMsg call faulted (SEH caught), conn=0x{:X}", (uintptr_t)conn);
+        return false;
+    }
+}
+
 bool SendPacket(const uint8_t* data, size_t size)
 {
     void* conn = GameCall::ResolveConnectionObject();
@@ -294,11 +310,20 @@ bool SendPacket(const uint8_t* data, size_t size)
     if (!sendMsg)
         return false;
 
+    // Session 10 [CRASH DIAGNOSTICS]: trace the resolved connection pointer
+    // and packet type on every send. If this crashes again, comparing the
+    // conn pointer value across the last several sends will show whether it
+    // was drifting/unstable right before the process died.
+    const uint16_t msgType = size >= 4 ? *reinterpret_cast<const uint16_t*>(data + 2) : 0;
+    spdlog::trace("[packets] SendPacket: conn=0x{:X} msgType=0x{:X} size={}", (uintptr_t)conn, msgType, size);
+
     // Session 10: no explicit TrackOutgoingPacket() call needed here anymore —
     // InitPacketHook() now Detours this exact function (see above), so this
     // call already gets captured there. An explicit call here too would
     // double-log every packet this bot sends.
-    const uint8_t ok = sendMsg(conn, data, static_cast<uint32_t>(size));
+    uint8_t ok = 0;
+    if (!CallSendMsgGuarded(sendMsg, conn, data, static_cast<uint32_t>(size), &ok))
+        return false;
     return ok != 0;
 }
 

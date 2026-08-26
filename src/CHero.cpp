@@ -6,6 +6,7 @@
 #include "gateway.h"
 #include "packets.h"
 #include "hunt_settings.h"
+#include "hunt_town.h"
 #include "plugins/plugin_mgr.h"
 #include "plugins/travel_plugin.h"
 #include "log.h"
@@ -566,8 +567,18 @@ static bool SendPickupItemPacket(const CMapItem& item)
     buf[off++] = 0x20;
     off += WriteVarint(buf + off, static_cast<uint32_t>(item.m_pos.y));
 
+    // Session 10 [CRASH FIX]: GetPlus() reads MapItemInfo+0x48, which is only
+    // meaningful for equipment. Money/currency drops (Silver/Gold) have no
+    // real "plus" concept, so that offset is reading unrelated memory for
+    // them and can produce a nonzero value here — something a real client
+    // could never send for a money pickup (money can't be "+3"). Repeated
+    // dense gold pickups (autohunt in a mob clump) sending that garbage value
+    // correlates exactly with mystery disconnects that leave no local crash
+    // trace, consistent with a server-side validator flagging the anomaly and
+    // silently dropping the connection. Money always sends plus=0.
+    const uint32_t wirePlus = HuntTownService::IsMoneyMapItem(item) ? 0 : static_cast<uint32_t>(item.GetPlus());
     buf[off++] = 0x28;
-    off += WriteVarint(buf + off, static_cast<uint32_t>(item.GetPlus()));
+    off += WriteVarint(buf + off, wirePlus);
 
     buf[off++] = 0x30;
     off += WriteVarint(buf + off, kMsgMapItemModePickup);
