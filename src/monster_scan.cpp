@@ -21,13 +21,15 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 
-    // Dumps [start, end) relative to the CRole base as u32s, into a JSON
-    // array under `key`. Covers the two largest unmapped padding gaps in
-    // CRole.h -- _pad290 (0x290-0x3D0, right before the already-mapped
-    // m_nMaxHp) and _pad3D4 (0x3D4-0x6E0, right after it, before
-    // m_nStamina) -- on the theory that a level/tier field would plausibly
-    // sit alongside other already-known character-stat fields rather than
-    // somewhere unrelated.
+    // Session 12 round 2: a first pass dumping just the two biggest gaps
+    // (_pad290/_pad3D4, bracketing the already-mapped m_nMaxHp/m_nStamina)
+    // found nothing correlating with the user's confirmed green/white/red/
+    // black tiers -- not even loosely, at any stability threshold. Widening
+    // to dump the ENTIRE mapped CRole range (+0x20 through the end of
+    // m_nSyndicateRank at +0x71C) in one pass, covering every remaining
+    // unmapped gap (_pad20/_pad38/_pad6C/_padA4/_padF0/_pad118/_pad6E8) so
+    // a single re-run covers everything instead of needing another full
+    // play-session round trip if the answer isn't in the first two gaps.
     void DumpU32Range(FILE* f, const char* key, uintptr_t base, int start, int end)
     {
         fprintf(f, "\"%s\":[", key);
@@ -81,9 +83,7 @@ int DumpNearbyMonsterStats()
         }
         fprintf(f, "\",\"posX\":%d,\"posY\":%d,\"distToHero\":%.1f,\"maxHp\":%d,\"stamina\":%d,\"maxStamina\":%d,",
             role->m_posMap.x, role->m_posMap.y, dist, role->m_nMaxHp, role->m_nStamina, role->m_nMaxStamina);
-        DumpU32Range(f, "pad290", base, 0x290, 0x3D0);
-        fprintf(f, ",");
-        DumpU32Range(f, "pad3D4", base, 0x3D4, 0x6E0);
+        DumpU32Range(f, "full", base, 0x20, 0x71C);
         fprintf(f, "}\n");
         ++count;
     }
