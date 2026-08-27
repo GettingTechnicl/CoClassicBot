@@ -25,11 +25,12 @@ namespace {
 // are visible right now.
 std::unordered_map<OBJID, DWORD> g_monsterSeenTicks;
 
-// ---------------------------------------------------------------------------
-// Archer mode helpers
-// ---------------------------------------------------------------------------
+} // namespace
 
-constexpr int kArcherSafetyBufferTiles = 1;
+// ---------------------------------------------------------------------------
+// Archer mode helpers — shared across hunt_town/hunt_buffs/hunt_targeting/
+// archer_hunt_plugin/base_hunt_plugin (see hunt_targeting.h)
+// ---------------------------------------------------------------------------
 
 bool IsArcherModeEnabled(const AutoHuntSettings& settings)
 {
@@ -51,8 +52,6 @@ int GetRequiredArcherThreatDistance(int safetyDist)
 {
     return safetyDist > 0 ? (safetyDist + kArcherSafetyBufferTiles) : 0;
 }
-
-} // namespace
 
 // ---------------------------------------------------------------------------
 // Name filter helpers — shared across hunt_targeting/base_hunt_plugin/

@@ -1,6 +1,7 @@
 #include "game.h"
 #include "jitter.h"
 #include "hunt_intervals.h"
+#include "hunt_targeting.h"
 #include "hunt_town.h"
 #include "inventory_utils.h"
 #include "npc_utils.h"
@@ -23,6 +24,11 @@ const Position kPharmacistPos   = {198, 181};
 // Session 11 [FREEZE FIX]: bank NPCs give up (skip the deposit rather than
 // retry forever) after this many failed open confirmations.
 constexpr int kMaxBankOpenAttempts = 3;
+// Session 12 [LOCKUP FIX]: same idea, applied to the repair sequence and the
+// two Store sub-steps (meteor packing, warehouse deposit) that had the same
+// unbounded-retry gap -- see the fail-count members' comments in hunt_town.h.
+constexpr int kMaxRepairStepFailures = 3;
+constexpr int kMaxStoreStepFailures = 3;
 
 struct BlacksmithEntry {
     OBJID       mapId;
@@ -49,11 +55,6 @@ const BlacksmithEntry* FindBlacksmithForMap(OBJID mapId)
     return nullptr;
 }
 
-bool IsArcherModeEnabled(const AutoHuntSettings& settings)
-{
-    return settings.archerMode || settings.combatMode == AutoHuntCombatMode::Archer;
-}
-
 } // namespace
 
 // ── HuntTownService — Map query helpers ──────────────────────────────────────
@@ -71,6 +72,7 @@ void HuntTownService::ResetRepairSequence()
     m_repairNpcId  = 0;
     m_repairItemId = 0;
     m_repairSlot   = 0;
+    m_repairStepFailCount = 0;
 }
 
 void HuntTownService::ResetBuyArrowsSequence()
@@ -78,6 +80,7 @@ void HuntTownService::ResetBuyArrowsSequence()
     m_buyArrowsPhase   = BuyArrowsPhase::MoveToBlacksmith;
     m_blacksmithNpcId  = 0;
     m_arrowsBoughtCount = 0;
+    m_buyArrowFailCount = 0;
 }
 
 void HuntTownService::ResetStoreSequence()
@@ -90,6 +93,9 @@ void HuntTownService::ResetStoreSequence()
     m_storeMeteorCountBefore = 0;
     m_treasureBankOpenAttempts = 0;
     m_composeBankOpenAttempts  = 0;
+    m_packMeteorsFailCount = 0;
+    m_warehouseDepositFailCount = 0;
+    m_storeDepositSkipItemId = 0;
 }
 
 // ── HuntTownService — Arrow helpers ──────────────────────────────────────────
@@ -440,11 +446,20 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
 
         case RepairPhase::WaitUnequip:
             if (!hero->GetEquip(m_repairSlot) && FindInventoryItemById(hero, m_repairItemId)) {
+                m_repairStepFailCount = 0;
                 m_repairPhase = RepairPhase::Repair;
                 return;
             }
-            if (now - m_lastNpcActionTick > 2500)
+            if (now - m_lastNpcActionTick > 2500) {
+                if (++m_repairStepFailCount >= kMaxRepairStepFailures) {
+                    spdlog::warn("[hunt] Repair: unequip of item {} (slot {}) never confirmed after {} attempts, abandoning this repair cycle",
+                        m_repairItemId, m_repairSlot, m_repairStepFailCount);
+                    ResetRepairSequence();
+                    cb.beginTravelToZoneFn();
+                    return;
+                }
                 m_repairPhase = RepairPhase::Unequip;
+            }
             return;
 
         case RepairPhase::Repair:
@@ -459,11 +474,29 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
         case RepairPhase::WaitRepair: {
             CItem* bagItem = FindInventoryItemById(hero, m_repairItemId);
             if (bagItem && bagItem->GetDurabilityRaw() >= bagItem->GetMaxDurabilityRaw()) {
+                m_repairStepFailCount = 0;
                 m_repairPhase = RepairPhase::Reequip;
                 return;
             }
-            if (now - m_lastNpcActionTick > 2500)
+            if (now - m_lastNpcActionTick > 2500) {
+                // Session 12 [LOCKUP FIX]: give up on this repair attempt
+                // entirely rather than retry forever -- see
+                // kMaxRepairStepFailures. NOT abandoning just this item and
+                // moving to the next: the item is currently unequipped and
+                // sitting in the bag, so bailing all the way out (rather
+                // than risking silently leaving it there) means the next
+                // NeedsRepair() check re-drives the whole sequence, which
+                // still sees this item unequipped-but-not-repaired and
+                // starts over on it.
+                if (++m_repairStepFailCount >= kMaxRepairStepFailures) {
+                    spdlog::warn("[hunt] Repair: repairing item {} never confirmed after {} attempts, abandoning this repair cycle",
+                        m_repairItemId, m_repairStepFailCount);
+                    ResetRepairSequence();
+                    cb.beginTravelToZoneFn();
+                    return;
+                }
                 m_repairPhase = RepairPhase::Repair;
+            }
             return;
         }
 
@@ -480,11 +513,20 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
             CItem* equipped = hero->GetEquip(m_repairSlot);
             if (equipped && equipped->GetID() == m_repairItemId) {
                 m_repairItemId = 0;
+                m_repairStepFailCount = 0;
                 m_repairPhase = RepairPhase::Unequip;
                 return;
             }
-            if (now - m_lastNpcActionTick > 2500)
+            if (now - m_lastNpcActionTick > 2500) {
+                if (++m_repairStepFailCount >= kMaxRepairStepFailures) {
+                    spdlog::warn("[hunt] Repair: re-equip of item {} (slot {}) never confirmed after {} attempts, abandoning this repair cycle",
+                        m_repairItemId, m_repairSlot, m_repairStepFailCount);
+                    ResetRepairSequence();
+                    cb.beginTravelToZoneFn();
+                    return;
+                }
                 m_repairPhase = RepairPhase::Reequip;
+            }
             return;
         }
     }
@@ -578,10 +620,21 @@ void HuntTownService::HandleBuyArrowsState(CHero* hero, CGameMap* map,
         case BuyArrowsPhase::WaitBuy: {
             const int currentPacks = CountUsableArrowPacks(hero);
             if (currentPacks > m_arrowsBoughtCount - 1) {
+                m_buyArrowFailCount = 0;
                 m_buyArrowsPhase = BuyArrowsPhase::BuyArrow;
                 return;
             }
             if (now - m_lastNpcActionTick > 2500) {
+                // Session 12 [LOCKUP FIX]: give up buying arrows after
+                // repeated failures instead of retrying forever -- see
+                // m_buyArrowFailCount's comment in hunt_town.h.
+                if (++m_buyArrowFailCount >= kMaxStoreStepFailures) {
+                    spdlog::warn("[hunt] Arrow buy never confirmed after {} attempts, giving up on this purchase cycle",
+                        m_buyArrowFailCount);
+                    m_buyArrowFailCount = 0;
+                    m_buyArrowsPhase = BuyArrowsPhase::EquipArrows;
+                    return;
+                }
                 spdlog::warn("[hunt] Arrow buy timeout, retrying");
                 m_buyArrowsPhase = BuyArrowsPhase::BuyArrow;
             }
@@ -674,12 +727,23 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
             if (meteorCount < m_storeMeteorCountBefore || meteorCount < 10) {
                 m_storeItemId = 0;
                 m_storeMeteorCountBefore = 0;
+                m_packMeteorsFailCount = 0;
                 m_storePhase = StorePhase::PackMeteors;
                 return;
             }
             if (now - m_lastNpcActionTick > 2500) {
                 m_storeItemId = 0;
                 m_storeMeteorCountBefore = 0;
+                // Session 12 [LOCKUP FIX]: give up packing meteors after
+                // repeated failures instead of retrying forever -- see
+                // kMaxStoreStepFailures.
+                if (++m_packMeteorsFailCount >= kMaxStoreStepFailures) {
+                    spdlog::warn("[hunt] Packing meteors into scrolls never confirmed after {} attempts, giving up for this store cycle",
+                        m_packMeteorsFailCount);
+                    m_packMeteorsFailCount = 0;
+                    m_storePhase = StorePhase::MoveToWarehouse;
+                    return;
+                }
                 m_storePhase = StorePhase::PackMeteors;
             }
             return;
@@ -735,6 +799,11 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
             for (const auto& itemRef : hero->m_deqItem) {
                 if (!itemRef || !ShouldStoreWarehouseItem(settings, *itemRef))
                     continue;
+                // Session 12 [LOCKUP FIX]: skip an item that already failed
+                // to deposit kMaxStoreStepFailures times this cycle, so it
+                // doesn't block every other item behind it in the scan.
+                if (itemRef->GetID() == m_storeDepositSkipItemId)
+                    continue;
                 if (m_warehouseNpcId == 0)
                     return;
                 if (now - m_lastNpcActionTick < npcActionInterval)
@@ -748,6 +817,7 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
                 return;
             }
 
+            m_storeDepositSkipItemId = 0;  // no more candidates this cycle -- clear for the next one
             m_storePhase = StorePhase::DepositSilver;
             return;
         }
@@ -755,11 +825,26 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
         case StorePhase::WaitWarehouseDeposit:
             if (!FindInventoryItemById(hero, m_storeItemId)) {
                 m_storeItemId = 0;
+                m_warehouseDepositFailCount = 0;
                 m_storePhase = StorePhase::DepositWarehouse;
                 return;
             }
-            if (now - m_lastNpcActionTick > 2500)
+            if (now - m_lastNpcActionTick > 2500) {
+                // Session 12 [LOCKUP FIX]: give up on depositing THIS item
+                // after repeated failures instead of retrying it forever --
+                // see kMaxStoreStepFailures. Skips just this item id for the
+                // rest of the store cycle; DepositWarehouse's loop above
+                // moves on to the next qualifying item (or DepositSilver if
+                // none remain) instead of re-selecting the same stuck one.
+                if (++m_warehouseDepositFailCount >= kMaxStoreStepFailures) {
+                    spdlog::warn("[hunt] Warehouse deposit of item {} never confirmed after {} attempts, skipping it for the rest of this store cycle",
+                        m_storeItemId, m_warehouseDepositFailCount);
+                    m_storeDepositSkipItemId = m_storeItemId;
+                    m_warehouseDepositFailCount = 0;
+                    m_storeItemId = 0;
+                }
                 m_storePhase = StorePhase::DepositWarehouse;
+            }
             return;
 
         case StorePhase::DepositSilver: {

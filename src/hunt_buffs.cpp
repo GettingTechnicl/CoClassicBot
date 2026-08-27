@@ -26,23 +26,6 @@ static constexpr int kNearbyPotionRange      = 10;
 static constexpr int kNearbyPotionCarryLimit = 2;
 static constexpr int kLootPathStopRange      = 0;
 
-static constexpr int kArcherSafetyBufferTiles = 1;
-
-// ── File-local helpers ────────────────────────────────────────────────────────
-namespace {
-
-bool IsArcherModeEnabled(const AutoHuntSettings& settings)
-{
-    return settings.archerMode || settings.combatMode == AutoHuntCombatMode::Archer;
-}
-
-int GetRequiredArcherThreatDistance(int safetyDist)
-{
-    return safetyDist > 0 ? (safetyDist + kArcherSafetyBufferTiles) : 0;
-}
-
-} // namespace
-
 // ── HuntBuffManager implementation ───────────────────────────────────────────
 
 void HuntBuffManager::RefreshBuffState(CHero* hero)

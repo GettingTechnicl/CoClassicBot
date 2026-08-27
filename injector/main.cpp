@@ -178,12 +178,18 @@ static bool InputBox(HWND parent, const char* title, const char* prompt, char* b
         }
     }
 
-    if (inputConfirmed) {
+    const bool confirmed = inputConfirmed;
+    if (confirmed) {
         strncpy_s(buffer, bufferSize, inputBuffer, bufferSize - 1);
         buffer[bufferSize - 1] = 0;
-        return true;
     }
-    return false;
+    // Session 12: inputBuffer is `static` and previously never cleared, so
+    // whatever was last typed here — including a password, since `password`
+    // only changes the EDIT control's display masking, not what's actually
+    // stored — sat in static process memory indefinitely until some later,
+    // unrelated InputBox() call happened to overwrite it.
+    SecureZeroMemory(inputBuffer, sizeof(inputBuffer));
+    return confirmed;
 }
 
 namespace {
@@ -244,7 +250,17 @@ static bool ShowAccountPickerDialog(AccountProfile* outProfile)
                     DestroyWindow(hwnd);
                     return 0;
                 case kAccountAddId: {
+                    // Session 12: several early `return 0;` paths below leave
+                    // this scope without reaching the end of the block — an
+                    // RAII scrubber guarantees the stack buffer is zeroed on
+                    // every exit instead of needing a SecureZeroMemory call
+                    // placed before each individual return.
+                    struct ScrubOnExit {
+                        char* buf; size_t len;
+                        ~ScrubOnExit() { SecureZeroMemory(buf, len); }
+                    };
                     char label[128] = "", username[128] = "", password[128] = "", server[128] = "Classic (US)";
+                    ScrubOnExit scrubPassword{password, sizeof(password)};
                     if (!InputBox(hwnd, "Add Account - Label", "Label (e.g. \"Main\"):", label, sizeof(label)))
                         return 0;
                     if (!InputBox(hwnd, "Add Account - Username", "Username:", username, sizeof(username)))
@@ -270,6 +286,7 @@ static bool ShowAccountPickerDialog(AccountProfile* outProfile)
                         "Add Account - Proxy", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
                     if (useProxy == IDYES) {
                         char hostPort[128] = "", proxyUser[128] = "", proxyPassword[128] = "";
+                        ScrubOnExit scrubProxyPassword{proxyPassword, sizeof(proxyPassword)};
                         if (!InputBox(hwnd, "Add Account - Proxy Address", "Proxy host:port (e.g. 127.0.0.1:1080):",
                                 hostPort, sizeof(hostPort)))
                             return 0;
@@ -1879,6 +1896,19 @@ int main(int argc, char** argv)
     std::string dllStr = dllPath.string();
     bool injectionSucceeded = false;
 
+    // Session 12 [LOCKUP FIX]: bounds how many times in a row the game can
+    // exit almost immediately after launch before supervision gives up
+    // instead of relaunching forever. A crash after a real play session
+    // (long uptime) never counts against this — it's specifically a normal,
+    // rare recovery case this loop exists for. A crash loop (bad install,
+    // something killing the process on sight) previously relaunched, failed,
+    // relaunched, failed... indefinitely with only a flat 2s sleep between
+    // attempts, matching the same unbounded-retry class found elsewhere in
+    // this project this session.
+    constexpr int kMaxFastCrashes = 3;
+    constexpr DWORD kFastCrashThresholdMs = 30000;
+    int consecutiveFastCrashes = 0;
+
     // Session 10: wraps the original single-shot launch+inject sequence in a
     // supervise-and-relaunch loop. Only actually loops when an account was
     // selected above (haveProfile) — with no saved account this behaves
@@ -1886,6 +1916,7 @@ int main(int argc, char** argv)
     // no-account usage is unaffected.
     for (;;) {
         printf("[*] Launching fresh %s process...\n", GAME_EXE);
+        const DWORD launchTick = GetTickCount();
 
         STARTUPINFOA si{};
         si.cb = sizeof(si);
@@ -1991,6 +2022,21 @@ int main(int argc, char** argv)
             if (!proxyMode)
                 Sleep(1000);
             break;
+        }
+
+        const DWORD uptimeMs = GetTickCount() - launchTick;
+        if (uptimeMs < kFastCrashThresholdMs) {
+            ++consecutiveFastCrashes;
+            printf("[!] Game process exited after only %lums (fast crash %d/%d)\n",
+                uptimeMs, consecutiveFastCrashes, kMaxFastCrashes);
+            if (consecutiveFastCrashes >= kMaxFastCrashes) {
+                printf("[!] Game crashed %d times in a row shortly after launch — giving up auto-relaunch "
+                    "instead of retrying forever. Check the game/DLL for what's actually failing, then "
+                    "run the launcher again manually.\n", consecutiveFastCrashes);
+                break;
+            }
+        } else {
+            consecutiveFastCrashes = 0;
         }
 
         printf("[*] Game process exited unexpectedly — relaunching and logging back in automatically...\n");

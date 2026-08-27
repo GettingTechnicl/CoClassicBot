@@ -71,7 +71,8 @@ static const std::unordered_map<OBJID, std::vector<Gateway>> s_gateways = {
 
             // Portals
             {GatewayType::Portal, MAP_TWIN_CITY, {962, 557}, MAP_PHOENIX_CASTLE, {11, 376}},
-            {GatewayType::Portal, MAP_TWIN_CITY, {556, 964}, MAP_APE_MOUNTAIN, {381, 021}},
+            // Session 12: "021" was a C++ octal literal (=17 decimal), not 21 -- landed 4 tiles off.
+            {GatewayType::Portal, MAP_TWIN_CITY, {556, 964}, MAP_APE_MOUNTAIN, {381, 21}},
             {GatewayType::Portal, MAP_TWIN_CITY, {224, 196}, MAP_BIRD_ISLAND, {1010, 710}},
             {GatewayType::Portal, MAP_TWIN_CITY, {45, 395}, MAP_MINE_CAVE, {160, 96}}
         }

@@ -33,6 +33,28 @@ void AppendFilterToken(char* buffer, size_t bufferSize, const char* token);
 // If preferredOnly is true, only monsters matching monsterPreferNames are returned.
 std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool preferredOnly = false);
 
+// ── Archer mode helpers ───────────────────────────────────────────────────
+// Session 12: independently copy-pasted (byte-for-byte identical) across
+// hunt_town.cpp, hunt_buffs.cpp, hunt_targeting.cpp, archer_hunt_plugin.cpp,
+// and base_hunt_plugin.cpp — consolidated here for the same reason as the
+// name-filter helpers above.
+
+bool IsArcherModeEnabled(const AutoHuntSettings& settings);
+
+// Buffer added on top of the configured archer safety distance when
+// deciding how far a threat must be before it's considered "safe" —
+// prevents a threat sitting exactly at the safety distance from flapping
+// in and out of range every tick due to minor position jitter.
+constexpr int kArcherSafetyBufferTiles = 1;
+
+// Effective archer safety distance for the current settings — 0 (no safety
+// distance needed) if archer mode is off or Fly XP is active (immune to
+// melee), otherwise the configured settings.archerSafetyDistance.
+int GetArcherSafetyDistance(const AutoHuntSettings& settings);
+
+// safetyDist + kArcherSafetyBufferTiles, or 0 if safetyDist <= 0.
+int GetRequiredArcherThreatDistance(int safetyDist);
+
 // ── Destination jitter ───────────────────────────────────────────────────
 // Return a walkable tile NEAR `target`, never `target` itself.
 //

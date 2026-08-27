@@ -180,7 +180,29 @@ private:
     OBJID m_storeItemId        = 0;
     int   m_repairSlot         = 0;
     int   m_arrowsBoughtCount  = 0;
+    // Session 12 [LOCKUP FIX]: same gap as the repair/store sequences --
+    // WaitBuy retried BuyArrow on timeout with no bound. If BuyItem ever
+    // silently no-ops (pack count and silver both unchanged), neither of
+    // BuyArrow's own exit conditions would ever trip, looping forever.
+    int   m_buyArrowFailCount = 0;
     int   m_storeMeteorCountBefore = 0;
+
+    // Session 12 [LOCKUP FIX]: mirrors m_treasureBankOpenAttempts below --
+    // WaitUnequip/WaitRepair/WaitReequip each retried their action on
+    // timeout with no bound, so a single stuck unequip/repair/equip action
+    // stalled the whole town-run (not just repair) forever. Shared across
+    // all three sub-phases since they're sequential parts of one repair
+    // attempt; on giving up, the whole repair sequence is abandoned for
+    // this cycle rather than risking leaving gear half-unequipped by
+    // skipping just one step.
+    int   m_repairStepFailCount = 0;
+    // Same idea for the two Store sub-steps that had the identical gap.
+    int   m_packMeteorsFailCount = 0;
+    int   m_warehouseDepositFailCount = 0;
+    // Item that failed to deposit repeatedly this store cycle -- skipped by
+    // DepositWarehouse's scan so a single stuck item doesn't block every
+    // other item behind it, instead of aborting the whole store sequence.
+    OBJID m_storeDepositSkipItemId = 0;
 
     // Session 11 [FREEZE FIX]: OpenTreasureBank/OpenComposeBank have no
     // "window confirmed open" packet the way OpenWarehouse does — live

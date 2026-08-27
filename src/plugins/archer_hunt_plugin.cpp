@@ -22,7 +22,6 @@ namespace {
 
 constexpr int kReliableAttackRange = 1;
 constexpr int kMinMobClumpSize = 2;
-constexpr int kArcherSafetyBufferTiles = 1;
 constexpr DWORD kArcherRetreatHoldMs = 3000;
 constexpr DWORD kFailedRetreatDestAvoidMs = 1000;
 
@@ -34,11 +33,6 @@ bool TickIsFuture(DWORD targetTick, DWORD now)
 int GridDistance(const Position& a, const Position& b)
 {
     return (std::max)(std::abs(a.x - b.x), std::abs(a.y - b.y));
-}
-
-bool IsArcherModeEnabled(const AutoHuntSettings& settings)
-{
-    return settings.archerMode || settings.combatMode == AutoHuntCombatMode::Archer;
 }
 
 bool IsScatterLogicEnabled(const AutoHuntSettings& settings)
@@ -69,21 +63,6 @@ int GetRegularArcherAttackRange(const AutoHuntSettings& settings)
         }
     }
     return 0;
-}
-
-int GetArcherSafetyDistance(const AutoHuntSettings& settings)
-{
-    if (!IsArcherModeEnabled(settings))
-        return 0;
-    CHero* hero = Game::GetHero();
-    if (hero && hero->IsFlyActive())
-        return 0;
-    return (std::max)(0, settings.archerSafetyDistance);
-}
-
-int GetRequiredArcherThreatDistance(int safetyDist)
-{
-    return safetyDist > 0 ? (safetyDist + kArcherSafetyBufferTiles) : 0;
 }
 
 // Session 10: hard floor for AoE positioning — never stand on/adjacent to a

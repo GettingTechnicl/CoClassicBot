@@ -121,10 +121,6 @@ bool TickIsFuture(DWORD targetTick, DWORD now)
     return static_cast<int32_t>(targetTick - now) > 0;
 }
 
-bool IsArcherModeEnabled(const AutoHuntSettings& settings)
-{
-    return settings.archerMode || settings.combatMode == AutoHuntCombatMode::Archer;
-}
 
 const char* CombatModeLabel(AutoHuntCombatMode mode)
 {

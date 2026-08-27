@@ -147,9 +147,18 @@ static void ApplyLocalJumpPrediction(const MsgActionPacket& packet)
     hero->SyncClientPosition(destination.x, destination.y);
 }
 
+// Session 12: worst case is a 4-byte header + 10 fields, each up to 1 tag
+// byte + a 5-byte varint (uint32_t needs ceil(32/7)=5 LEB128 bytes) = 4 +
+// 10*6 = 64. The old `capacity < 32` check didn't reflect this — both
+// current callers already pass a 64-byte buffer so nothing was actually
+// overflowing, but a future caller passing 32-63 bytes would pass this
+// guard and then overflow, since nothing below re-checks `off` against
+// `capacity` per field.
+constexpr size_t kMsgActionPacketMaxSize = 64;
+
 static size_t BuildMsgActionPacket(const MsgActionPacket& packet, uint8_t* buf, size_t capacity)
 {
-    if (!buf || capacity < 32)
+    if (!buf || capacity < kMsgActionPacketMaxSize)
         return 0;
 
     int off = 4;

@@ -544,6 +544,10 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                     CGameMap* map = Game::GetMap();
                     // Session 9: entity source is the heap scan — see entities.h.
                     const std::vector<CRole*>& entityList = Entities::Get();
+                    // Session 12: fetched once here and reused by both the minimap and
+                    // the table view below, instead of each doing its own independent
+                    // MapItems::Get() heap-scan copy + IsAlive() pass over the same items.
+                    const std::vector<CMapItem*>& mapItemList = MapItems::Get();
                     bool hasMgr = !entityList.empty();
                     bool hasMap = map && map->m_sizeMap.iWidth > 0;
 
@@ -834,7 +838,6 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
 
                             // Ground items
                             if (hasMap && (g_entityFilter == 0 || g_entityFilter == 4)) {
-                                const auto& mapItemList = MapItems::Get();
                                 for (size_t i = 0; i < mapItemList.size() && i < 500; i++) {
                                     CMapItem* item = mapItemList[i];
                                     // Session 11 [CRASH FIX]: confirmed live crash site -
@@ -1320,7 +1323,10 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                             if (hasMgr && g_entityFilter != 4) {
                                 GuildSettings& guild = GetGuildSettings();
                                 bool deadFilter = guild.showDeadOnly && hero->HasSyndicate();
-                                const std::vector<CRole*> tableRoles = Entities::Get();
+                                // Session 12: reuse entityList (fetched once above for the
+                                // minimap) instead of a second Entities::Get() heap-scan
+                                // copy + IsAlive() pass over the same entities this frame.
+                                const std::vector<CRole*>& tableRoles = entityList;
                                 for (size_t i = 0; i < tableRoles.size() && i < 500; i++) {
                                     CRole* e = tableRoles[i];
                                     // Session 11 [CRASH FIX]: same hazard as the minimap's
@@ -1383,7 +1389,6 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
 
                             // Ground items
                             if (hasMap && (g_entityFilter == 0 || g_entityFilter == 4)) {
-                                const auto& mapItemList = MapItems::Get();
                                 for (size_t i = 0; i < mapItemList.size() && i < 500; i++) {
                                     CMapItem* item = mapItemList[i];
                                     // Session 11 [CRASH FIX]: same hazard as the minimap's
