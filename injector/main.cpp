@@ -24,6 +24,7 @@
 
 #include "credentials.h"
 #include "auto_login.h"
+#include "account_session.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -1714,6 +1715,229 @@ static std::string ResolveGameDir()
     return GAME_DIR;
 }
 
+// Everything RunAccountSupervisionLoop() needs beyond the AccountSession
+// itself — resolved once by main() before the (single, for now) session is
+// launched. Bundled rather than passed as a dozen separate parameters.
+struct SupervisionParams
+{
+    LaunchOptions options;
+    bool haveProfile = false;
+    std::string gamePathStr;
+    std::string gameDir;
+    std::string dllStr;
+    std::string exePath;
+    bool proxyMode = false;
+    ServerConfigPatch* serverPatch = nullptr;  // non-null only when proxyMode
+    Socks5Relay* relay = nullptr;              // non-null only when proxyMode
+    RelayLogger* activeLogger = nullptr;       // non-null only when proxyMode && packet logging is on
+};
+
+// The extracted, per-session version of what used to be main()'s own
+// for(;;) loop: launch -> inject -> auto-login -> supervise/relanuch,
+// writing all mutable state to `session` instead of main()-local variables
+// or process-global statics. Returns the same 0/1 main() used to return
+// directly (0 = injection succeeded at least once, 1 = a hard failure).
+//
+// Multi-account manager support, Phase 2: still called exactly once,
+// synchronously, from main() below — this only proves the extraction is
+// behavior-preserving before Phase 3 wraps it in a worker thread per
+// account. See ~/.claude/plans/zazzy-wondering-diffie.md.
+static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionParams& params)
+{
+    bool injectionSucceeded = false;
+
+    // Session 12 [LOCKUP FIX]: bounds how many times in a row the game can
+    // exit almost immediately after launch before supervision gives up
+    // instead of relaunching forever. A crash after a real play session
+    // (long uptime) never counts against this — it's specifically a normal,
+    // rare recovery case this loop exists for.
+    constexpr int kMaxFastCrashes = 3;
+    constexpr DWORD kFastCrashThresholdMs = 30000;
+
+    // Session 10: wraps the original single-shot launch+inject sequence in a
+    // supervise-and-relaunch loop. Only actually loops when an account was
+    // selected (params.haveProfile) — with no saved account this behaves
+    // exactly like the original one-shot flow, so existing proxy-only /
+    // no-account usage is unaffected.
+    for (;;) {
+        printf("[*] Launching fresh %s process...\n", GAME_EXE);
+        session->state = SessionState::Launching;
+        const DWORD launchTick = GetTickCount();
+
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+
+        if (!CreateProcessA(params.gamePathStr.c_str(), nullptr, nullptr, nullptr, FALSE, 0,
+                            nullptr, params.gameDir.c_str(), &si, &pi)) {
+            printf("[!] CreateProcess failed (0x%08lX)\n", GetLastError());
+            if (params.proxyMode) {
+                params.relay->Stop();
+                params.serverPatch->Restore();
+                if (params.activeLogger)
+                    params.activeLogger->Stop();
+            }
+            session->state = SessionState::Failed;
+            system("pause");
+            return 1;
+        }
+
+        const DWORD pid = pi.dwProcessId;
+        session->gamePid = pid;
+        printf("[+] Started %s (PID %lu)\n", GAME_EXE, pid);
+
+        // Write the deferred resume_hunt marker (see AccountSession::
+        // pendingResumeMarker) now that this relaunch's real PID exists.
+        if (session->pendingResumeMarker) {
+            std::ofstream marker(fs::path(params.exePath).parent_path() /
+                ("resume_hunt_" + std::to_string(pid) + ".flag"));
+            session->pendingResumeMarker = false;
+        }
+
+        DWORD waitIdle = WaitForInputIdle(pi.hProcess, 10000);
+        if (waitIdle == WAIT_TIMEOUT) {
+            printf("[*] WaitForInputIdle timed out, continuing with injection.\n");
+        } else if (waitIdle == WAIT_FAILED) {
+            printf("[*] WaitForInputIdle failed (0x%08lX), continuing with injection.\n", GetLastError());
+        }
+
+        Sleep(1000);
+        printf("[*] Injecting...\n");
+        session->state = SessionState::Injecting;
+        injectionSucceeded = Inject(pid, params.dllStr.c_str());
+        if (injectionSucceeded) {
+            printf("[+] Injection successful!\n");
+        } else {
+            printf("[!] Injection failed.\n");
+            if (!params.proxyMode && !params.haveProfile) {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+                session->state = SessionState::Failed;
+                system("pause");
+                return 1;
+            }
+            printf("[*] Keeping the game running despite the injection failure.\n");
+        }
+
+        // Auto-login drives ImConquer.exe's OWN login window from here, in
+        // launcher.exe's own process — NOT from inside coclassic.dll, which
+        // deliberately stays idle until login completes (see dllmain.cpp's
+        // InitThread comment on the server's "virtual machine detected"
+        // integrity check). A failed auto-login doesn't abort the run — the
+        // game keeps running and the user can finish logging in by hand.
+        if (params.haveProfile) {
+            session->state = SessionState::LoggingIn;
+            AutoLoginRequest loginReq{session->profile.username, session->profile.password, session->profile.server};
+            if (!AutoLogin::PerformLogin(loginReq, pid))
+                printf("[!] Auto-login did not complete cleanly — you may need to finish logging in manually this time.\n");
+        }
+
+        // Original single-shot proxy flow (no saved account): restore
+        // servers.json immediately so another instance can be launched right
+        // away, exactly as before. While actively supervising with a saved
+        // account, the patch stays in place across relaunches instead —
+        // we're the ones managing this session, so there's no "launch
+        // another instance in the meantime" case to leave room for.
+        if (params.proxyMode && !params.haveProfile) {
+            params.serverPatch->Restore();
+            printf("[+] %s restored. You can launch another instance now.\n", SERVER_CONFIG_NAME);
+        }
+
+        printf("[*] Supervising game process (PID %lu)...\n", pid);
+        session->state = SessionState::Running;
+        HANDLE waitHandles[3] = { pi.hProcess, session->stopEvent, nullptr };
+        DWORD handleCount = 2;
+        const bool killSwitchArmed = params.proxyMode && params.options.m_killSwitch && params.relay->GetFailClosedEvent();
+        if (killSwitchArmed) {
+            waitHandles[2] = params.relay->GetFailClosedEvent();
+            handleCount = 3;
+        }
+        const DWORD wait = WaitForMultipleObjects(handleCount, waitHandles, FALSE, INFINITE);
+        const bool killSwitchFired = killSwitchArmed && wait == WAIT_OBJECT_0 + 2;
+        const bool stoppedByUser = wait == WAIT_OBJECT_0 + 1;
+
+        if (killSwitchFired) {
+            printf("[proxy] KILL-SWITCH: terminating game process to avoid continuing after proxy failure.\n");
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 10000);
+        }
+
+        // Per-account "Exit" (as opposed to "Exit Manager") also closes the
+        // game itself, not just supervision — see AccountSession::
+        // killGameOnStop's own comment.
+        if (stoppedByUser && session->killGameOnStop.load()) {
+            printf("[*] Exit requested — terminating game process.\n");
+            TerminateProcess(pi.hProcess, 0);
+            WaitForSingleObject(pi.hProcess, 10000);
+        }
+
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+
+        if (stoppedByUser) {
+            printf("[*] Stop requested — ending supervision.\n");
+            session->state = SessionState::Idle;
+            break;
+        }
+        if (killSwitchFired) {
+            // Never auto-relaunch past a kill-switch trip: it exists
+            // specifically to stop playing when the proxy connection is
+            // broken, so relaunching through it would defeat the point.
+            // (Its underlying event is also manual-reset and never cleared,
+            // so looping back to wait on it again would fire immediately.)
+            printf("[proxy] Kill-switch fired — ending supervision instead of relaunching.\n");
+            session->state = SessionState::Failed;
+            break;
+        }
+        if (!params.haveProfile) {
+            if (!params.proxyMode)
+                Sleep(1000);
+            session->state = SessionState::Idle;
+            break;
+        }
+
+        session->state = SessionState::Crashed;
+        const DWORD uptimeMs = GetTickCount() - launchTick;
+        if (uptimeMs < kFastCrashThresholdMs) {
+            ++session->consecutiveFastCrashes;
+            printf("[!] Game process exited after only %lums (fast crash %d/%d)\n",
+                uptimeMs, session->consecutiveFastCrashes, kMaxFastCrashes);
+            if (session->consecutiveFastCrashes >= kMaxFastCrashes) {
+                printf("[!] Game crashed %d times in a row shortly after launch — giving up auto-relaunch "
+                    "instead of retrying forever. Check the game/DLL for what's actually failing, then "
+                    "run the launcher again manually.\n", session->consecutiveFastCrashes);
+                session->state = SessionState::Failed;
+                break;
+            }
+        } else {
+            session->consecutiveFastCrashes = 0;
+        }
+
+        printf("[*] Game process exited unexpectedly — relaunching and logging back in automatically...\n");
+
+        // Tells coclassic.dll's next init that this specific relaunch is a
+        // crash-recovery resume, not an intentional fresh session — the only
+        // case where previously-enabled plugins (autohunt, mining, etc.)
+        // should come back on automatically without the user re-checking
+        // anything. See dllmain.cpp's ConsumeResumeHuntMarker(). The actual
+        // file write is deferred to the top of the next iteration, once the
+        // new process's PID is known (see AccountSession::pendingResumeMarker).
+        session->pendingResumeMarker = true;
+
+        Sleep(2000);
+    }
+
+    if (params.proxyMode) {
+        params.relay->Stop();
+        if (params.activeLogger)
+            params.activeLogger->Stop();
+        params.serverPatch->Restore();  // no-op if the !haveProfile path above already restored it
+        g_runtimeContext = nullptr;
+    }
+
+    return injectionSucceeded ? 0 : 1;
+}
+
 int main(int argc, char** argv)
 {
     printf("=== coclassic launcher ===\n\n");
@@ -1894,190 +2118,30 @@ int main(int argc, char** argv)
     }
 
     std::string dllStr = dllPath.string();
-    bool injectionSucceeded = false;
 
-    // Session 12 [LOCKUP FIX]: bounds how many times in a row the game can
-    // exit almost immediately after launch before supervision gives up
-    // instead of relaunching forever. A crash after a real play session
-    // (long uptime) never counts against this — it's specifically a normal,
-    // rare recovery case this loop exists for. A crash loop (bad install,
-    // something killing the process on sight) previously relaunched, failed,
-    // relaunched, failed... indefinitely with only a flat 2s sleep between
-    // attempts, matching the same unbounded-retry class found elsewhere in
-    // this project this session.
-    constexpr int kMaxFastCrashes = 3;
-    constexpr DWORD kFastCrashThresholdMs = 30000;
-    int consecutiveFastCrashes = 0;
+    // Multi-account manager support, Phase 2: wire up exactly one
+    // AccountSession/SupervisionParams and run it synchronously through
+    // RunAccountSupervisionLoop(), instead of the loop that used to be
+    // inline here. session.stopEvent reuses the SAME event Ctrl+C already
+    // signals (g_stopSupervisingEvent) — there's still only one session and
+    // one console control handler at this point, so this is behaviorally
+    // identical to before. Phase 3 gives each session its own independent
+    // stopEvent once the manager can run more than one at a time.
+    AccountSession session;
+    session.profile = selectedProfile;
+    session.stopEvent = g_stopSupervisingEvent;
 
-    // Multi-account manager support: the resume_hunt marker tells the NEXT
-    // launched process's coclassic.dll that it's a crash-recovery relaunch,
-    // not a fresh session (see dllmain.cpp's ConsumeResumeHuntMarker()). It
-    // has to be written under that next process's own PID, but at the point
-    // an unexpected exit is detected, that PID doesn't exist yet — it's
-    // only known once the loop comes back around and CreateProcessA
-    // succeeds again. This flag defers the write to that point instead of
-    // writing it immediately (which would have no PID to key it by).
-    bool pendingResumeMarker = false;
+    SupervisionParams params;
+    params.options = options;
+    params.haveProfile = haveProfile;
+    params.gamePathStr = gamePathStr;
+    params.gameDir = gameDir;
+    params.dllStr = dllStr;
+    params.exePath = exePath;
+    params.proxyMode = proxyMode;
+    params.serverPatch = proxyMode ? &serverPatch : nullptr;
+    params.relay = proxyMode ? &relay : nullptr;
+    params.activeLogger = activeLogger;
 
-    // Session 10: wraps the original single-shot launch+inject sequence in a
-    // supervise-and-relaunch loop. Only actually loops when an account was
-    // selected above (haveProfile) — with no saved account this behaves
-    // exactly like the original one-shot flow, so existing proxy-only /
-    // no-account usage is unaffected.
-    for (;;) {
-        printf("[*] Launching fresh %s process...\n", GAME_EXE);
-        const DWORD launchTick = GetTickCount();
-
-        STARTUPINFOA si{};
-        si.cb = sizeof(si);
-        PROCESS_INFORMATION pi{};
-
-        if (!CreateProcessA(gamePathStr.c_str(), nullptr, nullptr, nullptr, FALSE, 0,
-                            nullptr, gameDir.c_str(), &si, &pi)) {
-            printf("[!] CreateProcess failed (0x%08lX)\n", GetLastError());
-            if (proxyMode) {
-                relay.Stop();
-                serverPatch.Restore();
-                if (activeLogger)
-                    relayLogger.Stop();
-            }
-            system("pause");
-            return 1;
-        }
-
-        const DWORD pid = pi.dwProcessId;
-        printf("[+] Started %s (PID %lu)\n", GAME_EXE, pid);
-
-        // Write the deferred resume_hunt marker (see pendingResumeMarker's
-        // declaration above) now that this relaunch's real PID exists.
-        if (pendingResumeMarker) {
-            std::ofstream marker(fs::path(exePath).parent_path() /
-                ("resume_hunt_" + std::to_string(pid) + ".flag"));
-            pendingResumeMarker = false;
-        }
-
-        DWORD waitIdle = WaitForInputIdle(pi.hProcess, 10000);
-        if (waitIdle == WAIT_TIMEOUT) {
-            printf("[*] WaitForInputIdle timed out, continuing with injection.\n");
-        } else if (waitIdle == WAIT_FAILED) {
-            printf("[*] WaitForInputIdle failed (0x%08lX), continuing with injection.\n", GetLastError());
-        }
-
-        Sleep(1000);
-        printf("[*] Injecting...\n");
-        injectionSucceeded = Inject(pid, dllStr.c_str());
-        if (injectionSucceeded) {
-            printf("[+] Injection successful!\n");
-        } else {
-            printf("[!] Injection failed.\n");
-            if (!proxyMode && !haveProfile) {
-                CloseHandle(pi.hThread);
-                CloseHandle(pi.hProcess);
-                system("pause");
-                return 1;
-            }
-            printf("[*] Keeping the game running despite the injection failure.\n");
-        }
-
-        // Auto-login drives ImConquer.exe's OWN login window from here, in
-        // launcher.exe's own process — NOT from inside coclassic.dll, which
-        // deliberately stays idle until login completes (see dllmain.cpp's
-        // InitThread comment on the server's "virtual machine detected"
-        // integrity check). A failed auto-login doesn't abort the run — the
-        // game keeps running and the user can finish logging in by hand.
-        if (haveProfile) {
-            AutoLoginRequest loginReq{selectedProfile.username, selectedProfile.password, selectedProfile.server};
-            if (!AutoLogin::PerformLogin(loginReq, pid))
-                printf("[!] Auto-login did not complete cleanly — you may need to finish logging in manually this time.\n");
-        }
-
-        // Original single-shot proxy flow (no saved account): restore
-        // servers.json immediately so another instance can be launched right
-        // away, exactly as before. While actively supervising with a saved
-        // account, the patch stays in place across relaunches instead —
-        // we're the ones managing this session, so there's no "launch
-        // another instance in the meantime" case to leave room for.
-        if (proxyMode && !haveProfile) {
-            serverPatch.Restore();
-            printf("[+] %s restored. You can launch another instance now.\n", SERVER_CONFIG_NAME);
-        }
-
-        printf("[*] Supervising game process (PID %lu)...\n", pid);
-        HANDLE waitHandles[3] = { pi.hProcess, g_stopSupervisingEvent, nullptr };
-        DWORD handleCount = 2;
-        const bool killSwitchArmed = proxyMode && options.m_killSwitch && relay.GetFailClosedEvent();
-        if (killSwitchArmed) {
-            waitHandles[2] = relay.GetFailClosedEvent();
-            handleCount = 3;
-        }
-        const DWORD wait = WaitForMultipleObjects(handleCount, waitHandles, FALSE, INFINITE);
-        const bool killSwitchFired = killSwitchArmed && wait == WAIT_OBJECT_0 + 2;
-        const bool stoppedByUser = wait == WAIT_OBJECT_0 + 1;
-
-        if (killSwitchFired) {
-            printf("[proxy] KILL-SWITCH: terminating game process to avoid continuing after proxy failure.\n");
-            TerminateProcess(pi.hProcess, 1);
-            WaitForSingleObject(pi.hProcess, 10000);
-        }
-
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-
-        if (stoppedByUser) {
-            printf("[*] Stop requested — leaving the current game session running and ending supervision.\n");
-            break;
-        }
-        if (killSwitchFired) {
-            // Never auto-relaunch past a kill-switch trip: it exists
-            // specifically to stop playing when the proxy connection is
-            // broken, so relaunching through it would defeat the point.
-            // (Its underlying event is also manual-reset and never cleared,
-            // so looping back to wait on it again would fire immediately.)
-            printf("[proxy] Kill-switch fired — ending supervision instead of relaunching.\n");
-            break;
-        }
-        if (!haveProfile) {
-            if (!proxyMode)
-                Sleep(1000);
-            break;
-        }
-
-        const DWORD uptimeMs = GetTickCount() - launchTick;
-        if (uptimeMs < kFastCrashThresholdMs) {
-            ++consecutiveFastCrashes;
-            printf("[!] Game process exited after only %lums (fast crash %d/%d)\n",
-                uptimeMs, consecutiveFastCrashes, kMaxFastCrashes);
-            if (consecutiveFastCrashes >= kMaxFastCrashes) {
-                printf("[!] Game crashed %d times in a row shortly after launch — giving up auto-relaunch "
-                    "instead of retrying forever. Check the game/DLL for what's actually failing, then "
-                    "run the launcher again manually.\n", consecutiveFastCrashes);
-                break;
-            }
-        } else {
-            consecutiveFastCrashes = 0;
-        }
-
-        printf("[*] Game process exited unexpectedly — relaunching and logging back in automatically...\n");
-
-        // Tells coclassic.dll's next init that this specific relaunch is a
-        // crash-recovery resume, not an intentional fresh session — the only
-        // case where previously-enabled plugins (autohunt, mining, etc.)
-        // should come back on automatically without the user re-checking
-        // anything. See dllmain.cpp's ConsumeResumeHuntMarker(). The actual
-        // file write is deferred to the top of the next iteration, once the
-        // new process's PID is known (see pendingResumeMarker's declaration).
-        pendingResumeMarker = true;
-
-        Sleep(2000);
-    }
-
-    if (proxyMode) {
-        relay.Stop();
-        if (activeLogger)
-            relayLogger.Stop();
-        serverPatch.Restore();  // no-op if the !haveProfile path above already restored it
-        g_runtimeContext = nullptr;
-    }
-
-    return injectionSucceeded ? 0 : 1;
+    return RunAccountSupervisionLoop(&session, params);
 }
