@@ -121,10 +121,11 @@ In VPN mode the game connects normally through the system network stack. The lau
 | Tab | Description |
 |-----|-------------|
 | **Player** | Hero stats, inventory, equipment |
-| **Map** | Map info, tools, and the Travel section |
-| **Plugins** | Per-plugin settings and controls (hunt plugins share one "Hunting" entry with sub-tabs) |
+| **Map** | Map info, minimap (pan/zoom/click-to-jump), entity table |
+| **Automation** | Per-plugin settings and controls, sidebar grouped by category: Hunting (own sub-tabs), Gathering (Mining, Mule), Travel & Movement (Travel, Follow), Combat & Skill Automation (Artisan Spammer, Skill Trainer), Visual Aids (Aim Helper, Revive Helper) |
+| **Notifications** | Discord webhook config + Whisper/Loot Drop/Item notification toggles |
+| **Developer Tools** | RE/debug tools not needed for normal use — Native Pickup/Jump/Walk Test, Map Probe, Monster Stat Scan, Combat Test, Logging & Diagnostics |
 | **Packets** | Live packet logger |
-| **Misc** | Discord webhook/notification settings, hunt routes/diagnostics, and standalone debug tools (map probe, combat test, monster stat scan, etc.) |
 
 ## Features
 
