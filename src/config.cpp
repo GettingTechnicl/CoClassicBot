@@ -495,6 +495,10 @@ static std::string BuildCurrentConfigSnapshot()
     AppendIntSnapshot(snapshot, "manualControlPauseMs", autoHunt.manualControlPauseMs);
     AppendIntSnapshot(snapshot, "reviveDelayMs", autoHunt.reviveDelayMs);
     AppendIntSnapshot(snapshot, "reviveRetryIntervalMs", autoHunt.reviveRetryIntervalMs);
+    AppendIntSnapshot(snapshot, "entityScanIntervalMs", autoHunt.entityScanIntervalMs);
+    AppendIntSnapshot(snapshot, "itemPickupDelayMs", autoHunt.itemPickupDelayMs);
+    AppendIntSnapshot(snapshot, "decisionThrottleMs", autoHunt.decisionThrottleMs);
+    AppendIntSnapshot(snapshot, "randomWalkIntervalMs", autoHunt.randomWalkIntervalMs);
     AppendIntSnapshot(snapshot, "minimumLootPlus", autoHunt.minimumLootPlus);
     AppendIntSnapshot(snapshot, "minimumStorePlus", autoHunt.minimumStorePlus);
     AppendIntSnapshot(snapshot, "minimumLootGoldValue", autoHunt.minimumLootGoldValue);
@@ -699,6 +703,10 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "manualControlPauseMs", autoHunt.manualControlPauseMs);
     WriteInt(file, section, "reviveDelayMs", autoHunt.reviveDelayMs);
     WriteInt(file, section, "reviveRetryIntervalMs", autoHunt.reviveRetryIntervalMs);
+    WriteInt(file, section, "entityScanIntervalMs", autoHunt.entityScanIntervalMs);
+    WriteInt(file, section, "itemPickupDelayMs", autoHunt.itemPickupDelayMs);
+    WriteInt(file, section, "decisionThrottleMs", autoHunt.decisionThrottleMs);
+    WriteInt(file, section, "randomWalkIntervalMs", autoHunt.randomWalkIntervalMs);
     WriteInt(file, section, "minimumLootPlus", autoHunt.minimumLootPlus);
     WriteInt(file, section, "minimumStorePlus", autoHunt.minimumStorePlus);
     WriteInt(file, section, "minimumLootGoldValue", autoHunt.minimumLootGoldValue);
@@ -960,6 +968,26 @@ static void LoadAutoHuntSection(const char* file, const char* section)
         autoHunt.reviveRetryIntervalMs = 100;
     if (autoHunt.reviveRetryIntervalMs > 10000)
         autoHunt.reviveRetryIntervalMs = 10000;
+    autoHunt.entityScanIntervalMs = ReadInt(file, section, "entityScanIntervalMs", autoHunt.entityScanIntervalMs);
+    if (autoHunt.entityScanIntervalMs < 100)
+        autoHunt.entityScanIntervalMs = 100;
+    if (autoHunt.entityScanIntervalMs > 5000)
+        autoHunt.entityScanIntervalMs = 5000;
+    autoHunt.itemPickupDelayMs = ReadInt(file, section, "itemPickupDelayMs", autoHunt.itemPickupDelayMs);
+    if (autoHunt.itemPickupDelayMs < 0)
+        autoHunt.itemPickupDelayMs = 0;
+    if (autoHunt.itemPickupDelayMs > 3000)
+        autoHunt.itemPickupDelayMs = 3000;
+    autoHunt.decisionThrottleMs = ReadInt(file, section, "decisionThrottleMs", autoHunt.decisionThrottleMs);
+    if (autoHunt.decisionThrottleMs < 0)
+        autoHunt.decisionThrottleMs = 0;
+    if (autoHunt.decisionThrottleMs > 1000)
+        autoHunt.decisionThrottleMs = 1000;
+    autoHunt.randomWalkIntervalMs = ReadInt(file, section, "randomWalkIntervalMs", autoHunt.randomWalkIntervalMs);
+    if (autoHunt.randomWalkIntervalMs < 0)
+        autoHunt.randomWalkIntervalMs = 0;
+    if (autoHunt.randomWalkIntervalMs > 10000)
+        autoHunt.randomWalkIntervalMs = 10000;
     autoHunt.minimumLootPlus = ReadInt(file, section, "minimumLootPlus", 0);
     autoHunt.minimumStorePlus = ReadInt(file, section, "minimumStorePlus", autoHunt.minimumLootPlus);
     autoHunt.minimumLootGoldValue = ReadInt(file, section, "minimumLootGoldValue", 0);
