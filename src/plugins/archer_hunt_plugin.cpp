@@ -440,6 +440,19 @@ bool ArcherHuntPlugin::TryArcherDangerRetreat(CHero* hero, CGameMap* map, const 
         hero->Jump(dest.x, dest.y);
         m_lastMoveTick = jumpNow;
         ArmPendingJump(hero, dest, jumpNow, true);
+        // Session 13: m_retreatCooldownTick was declared and reset to 0 in
+        // two places but never actually armed with a future expiry, so the
+        // guard at this function's entry (`m_retreatCooldownTick != 0 &&
+        // now < m_retreatCooldownTick`) was permanently a no-op — kiting
+        // retreat jumps chained back-to-back as fast as landing detection
+        // allowed, completely bypassing GetMovementIntervalMs()/
+        // ShouldUseAggressiveSpeeds() (this file never called either).
+        // Live-reported: speedhack visible to other players regardless of
+        // hunt zone mode, since this path never checked player-nearby at
+        // all. Arm it with the same pacing everything else uses — fast
+        // floor when safe, the Advanced tab's slider value the moment a
+        // player is detected.
+        m_retreatCooldownTick = jumpNow + GetMovementIntervalMs(settings);
         SetState(AutoHuntState::ApproachTarget, reason);
     };
 
