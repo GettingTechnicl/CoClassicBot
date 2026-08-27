@@ -44,12 +44,18 @@ struct AutoLoginRequest
 
 namespace AutoLogin {
 
-// Waits (up to timeoutMs) for ImConquer.exe's login window to appear, fills
-// in the given credentials, and clicks Login. Returns true if the window
-// was found and all fields/the Login button were successfully driven —
-// this does NOT confirm the login itself succeeded (wrong password, banned
-// account, etc. all still show true here), only that the UI was operated.
+// Waits (up to timeoutMs) for the login window belonging SPECIFICALLY to the
+// process identified by targetPid to appear, fills in the given credentials,
+// and clicks Login. Returns true if the window was found and all fields/the
+// Login button were successfully driven — this does NOT confirm the login
+// itself succeeded (wrong password, banned account, etc. all still show true
+// here), only that the UI was operated.
 // Logs each step to stdout so a failed run is diagnosable without a debugger.
-bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs = 30000);
+//
+// The PID filter matters once more than one ImConquer.exe can be running at
+// the same time (the multi-account manager) — without it, a plain
+// title-only window search would nondeterministically grab whichever
+// process's login window happens to match first.
+bool PerformLogin(const AutoLoginRequest& request, uint32_t targetPid, uint32_t timeoutMs = 30000);
 
 }  // namespace AutoLogin

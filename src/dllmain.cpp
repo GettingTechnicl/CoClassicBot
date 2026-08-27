@@ -19,10 +19,20 @@ HMODULE g_hModule = nullptr;
 namespace {
 
 // launcher.exe writes this file (see injector/main.cpp's supervision loop)
-// immediately before relaunching after an UNEXPECTED game exit — never on
-// a normal fresh launch. Its mere presence, checked once right here, is the
-// only signal distinguishing "this is a crash-recovery resume" from
-// "this is an intentional new session" — see IPlugin::ResumeEnabledStateFromSettings.
+// immediately after relaunching this specific process following an
+// UNEXPECTED game exit — never on a normal fresh launch. Its mere presence,
+// checked once right here, is the only signal distinguishing "this is a
+// crash-recovery resume" from "this is an intentional new session" — see
+// IPlugin::ResumeEnabledStateFromSettings.
+//
+// Keyed by this process's own PID (multi-account manager support): with
+// more than one game process able to run concurrently, a single fixed
+// filename would race between accounts — whichever process's DLL happened
+// to check first would consume the marker meant for a different one. The
+// launcher writes resume_hunt_<pid>.flag using the exact PID it just
+// launched (from CreateProcessA's own PROCESS_INFORMATION), so reading it
+// back via this process's own GetCurrentProcessId() is symmetric with no
+// extra coordination needed.
 std::string ResumeHuntMarkerPath()
 {
     char buf[MAX_PATH];
@@ -31,7 +41,7 @@ std::string ResumeHuntMarkerPath()
     const auto pos = path.find_last_of("\\/");
     if (pos != std::string::npos)
         path = path.substr(0, pos + 1);
-    path += "resume_hunt.flag";
+    path += "resume_hunt_" + std::to_string(GetCurrentProcessId()) + ".flag";
     return path;
 }
 

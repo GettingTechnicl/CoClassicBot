@@ -1909,6 +1909,16 @@ int main(int argc, char** argv)
     constexpr DWORD kFastCrashThresholdMs = 30000;
     int consecutiveFastCrashes = 0;
 
+    // Multi-account manager support: the resume_hunt marker tells the NEXT
+    // launched process's coclassic.dll that it's a crash-recovery relaunch,
+    // not a fresh session (see dllmain.cpp's ConsumeResumeHuntMarker()). It
+    // has to be written under that next process's own PID, but at the point
+    // an unexpected exit is detected, that PID doesn't exist yet — it's
+    // only known once the loop comes back around and CreateProcessA
+    // succeeds again. This flag defers the write to that point instead of
+    // writing it immediately (which would have no PID to key it by).
+    bool pendingResumeMarker = false;
+
     // Session 10: wraps the original single-shot launch+inject sequence in a
     // supervise-and-relaunch loop. Only actually loops when an account was
     // selected above (haveProfile) — with no saved account this behaves
@@ -1937,6 +1947,14 @@ int main(int argc, char** argv)
 
         const DWORD pid = pi.dwProcessId;
         printf("[+] Started %s (PID %lu)\n", GAME_EXE, pid);
+
+        // Write the deferred resume_hunt marker (see pendingResumeMarker's
+        // declaration above) now that this relaunch's real PID exists.
+        if (pendingResumeMarker) {
+            std::ofstream marker(fs::path(exePath).parent_path() /
+                ("resume_hunt_" + std::to_string(pid) + ".flag"));
+            pendingResumeMarker = false;
+        }
 
         DWORD waitIdle = WaitForInputIdle(pi.hProcess, 10000);
         if (waitIdle == WAIT_TIMEOUT) {
@@ -1969,7 +1987,7 @@ int main(int argc, char** argv)
         // game keeps running and the user can finish logging in by hand.
         if (haveProfile) {
             AutoLoginRequest loginReq{selectedProfile.username, selectedProfile.password, selectedProfile.server};
-            if (!AutoLogin::PerformLogin(loginReq))
+            if (!AutoLogin::PerformLogin(loginReq, pid))
                 printf("[!] Auto-login did not complete cleanly — you may need to finish logging in manually this time.\n");
         }
 
@@ -2045,10 +2063,10 @@ int main(int argc, char** argv)
         // crash-recovery resume, not an intentional fresh session — the only
         // case where previously-enabled plugins (autohunt, mining, etc.)
         // should come back on automatically without the user re-checking
-        // anything. See dllmain.cpp's ConsumeResumeHuntMarker().
-        {
-            std::ofstream marker(fs::path(exePath).parent_path() / "resume_hunt.flag");
-        }
+        // anything. See dllmain.cpp's ConsumeResumeHuntMarker(). The actual
+        // file write is deferred to the top of the next iteration, once the
+        // new process's PID is known (see pendingResumeMarker's declaration).
+        pendingResumeMarker = true;
 
         Sleep(2000);
     }

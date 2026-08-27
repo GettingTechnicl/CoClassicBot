@@ -59,12 +59,48 @@ bool ForceForegroundWindow(HWND target)
     return GetForegroundWindow() == target;
 }
 
-HWND FindLoginWindow(uint32_t timeoutMs)
+// Multi-account manager support: FindWindowA(nullptr, title) matches ANY
+// top-level window on the desktop with that exact title, with no way to
+// tell which process it belongs to. That's fine for a single game window,
+// but with two+ ImConquer.exe processes running concurrently (each showing
+// the identical "[ClassicConquer]" login title before its own auto-login
+// completes), a plain title search would nondeterministically grab
+// whichever one happens to match first — driving credentials into the
+// wrong account's login window. Filtering by the target process's PID
+// (already known to the caller, from the CreateProcessA call that just
+// launched it) disambiguates correctly regardless of how many other game
+// windows are open at the same time.
+struct FindLoginWindowContext
+{
+    DWORD targetPid = 0;
+    HWND  found = nullptr;
+};
+
+BOOL CALLBACK EnumLoginWindowProc(HWND hwnd, LPARAM lParam)
+{
+    auto* ctx = reinterpret_cast<FindLoginWindowContext*>(lParam);
+    DWORD windowPid = 0;
+    GetWindowThreadProcessId(hwnd, &windowPid);
+    if (windowPid != ctx->targetPid)
+        return TRUE;  // keep enumerating
+
+    char title[256] = {};
+    GetWindowTextA(hwnd, title, sizeof(title));
+    if (strcmp(title, kLoginWindowTitle) == 0) {
+        ctx->found = hwnd;
+        return FALSE;  // stop — found it
+    }
+    return TRUE;
+}
+
+HWND FindLoginWindow(DWORD targetPid, uint32_t timeoutMs)
 {
     const DWORD start = GetTickCount();
     while (GetTickCount() - start < timeoutMs) {
-        if (HWND hwnd = FindWindowA(nullptr, kLoginWindowTitle))
-            return hwnd;
+        FindLoginWindowContext ctx{targetPid, nullptr};
+        EnumWindows(EnumLoginWindowProc, reinterpret_cast<LPARAM>(&ctx));
+        if (ctx.found)
+            return ctx.found;
         Sleep(250);
     }
     return nullptr;
@@ -255,10 +291,10 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
 
 namespace AutoLogin {
 
-bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
+bool PerformLogin(const AutoLoginRequest& request, uint32_t targetPid, uint32_t timeoutMs)
 {
-    printf("[auto-login] Waiting for login window (\"%s\")...\n", kLoginWindowTitle);
-    HWND loginWnd = FindLoginWindow(timeoutMs);
+    printf("[auto-login] Waiting for login window (\"%s\") for pid=%u...\n", kLoginWindowTitle, targetPid);
+    HWND loginWnd = FindLoginWindow(static_cast<DWORD>(targetPid), timeoutMs);
     if (!loginWnd) {
         printf("[auto-login] Login window did not appear within %ums.\n", timeoutMs);
         return false;
