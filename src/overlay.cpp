@@ -1306,7 +1306,7 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                         if (noData) {
                             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
                                 "No entities nearby.");
-                        } else if (ImGui::BeginTable("##ent", 6,
+                        } else if (ImGui::BeginTable("##ent", 7,
                                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                 ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
                                 ImVec2(0, 200.0f))) {
@@ -1315,6 +1315,12 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                             ImGui::TableSetupColumn("Name",  ImGuiTableColumnFlags_WidthStretch);
                             ImGui::TableSetupColumn("Guild", ImGuiTableColumnFlags_WidthFixed, 100.0f);
                             ImGui::TableSetupColumn("Type",  ImGuiTableColumnFlags_WidthFixed, 70.0f);
+                            // Session 12: unverified — see CRole::IsRedName/
+                            // IsBlackName's comment. Cross-check this column
+                            // against a known redname/blackname player's
+                            // actual in-game name color before trusting it
+                            // for anything (e.g. Paranoia Mode threat tiers).
+                            ImGui::TableSetupColumn("PK?##pkstatus", ImGuiTableColumnFlags_WidthFixed, 60.0f);
                             ImGui::TableSetupColumn("Pos",   ImGuiTableColumnFlags_WidthFixed, 100.0f);
                             ImGui::TableSetupColumn("Dist",  ImGuiTableColumnFlags_WidthFixed, 50.0f);
                             ImGui::TableHeadersRow();
@@ -1380,6 +1386,11 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                     ImGui::TableNextColumn();
                                     ImGui::TextColored(typeColor, "%s", type);
                                     ImGui::TableNextColumn();
+                                    if (e->IsBlackName())
+                                        ImGui::TextColored(ImVec4(0.6f, 0.1f, 0.1f, 1.0f), "Black");
+                                    else if (e->IsRedName())
+                                        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Red");
+                                    ImGui::TableNextColumn();
                                     ImGui::Text("(%d, %d)", e->m_posMap.x, e->m_posMap.y);
                                     ImGui::TableNextColumn();
                                     ImGui::Text("%.0f", dist);
@@ -1415,6 +1426,8 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                     // no guild for items
                                     ImGui::TableNextColumn();
                                     ImGui::TextColored(ImVec4(0.86f,0.63f,1,1), "Item");
+                                    ImGui::TableNextColumn();
+                                    // no PK status for items
                                     ImGui::TableNextColumn();
                                     ImGui::Text("(%d, %d)", item->m_pos.x, item->m_pos.y);
                                     ImGui::TableNextColumn();

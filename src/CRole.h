@@ -212,6 +212,14 @@ public:
     BOOL IsStigmaActive() const { return TestState(USERSTATUS_ATKPOWER); }
     BOOL IsSupermanActive() const { return TestState(USERSTATUS_SUPERMAN); }
     BOOL IsMagicShieldActive() const { return TestState(USERSTATUS_SHIELD); }
+    // Session 12: PK-flag name-color bits — a player at 30+ PK points shows
+    // a red name (chance to drop gear on death), 100+ shows black (much
+    // higher chance). USERSTATUS_RED/USERSTATUS_BLACK were defined but never
+    // read anywhere in this codebase before now, and never verified live —
+    // added specifically to cross-check against a known-redname/blackname
+    // player's actual in-game name color via the overlay's Entities table.
+    BOOL IsRedName() const { return TestState(USERSTATUS_RED); }
+    BOOL IsBlackName() const { return TestState(USERSTATUS_BLACK); }
     int GetStamina() const { return m_nStamina; }
     int GetMaxStamina() const { return m_nMaxStamina; }
     BOOL IsMining() const { return m_cmdAction.iType == _COMMAND_MINE; }
