@@ -1112,7 +1112,6 @@ static void RenderMapOverviewSection(CHero* hero, CGameMap* map, bool hasMap, OB
                         ImGui::Text("Middle or Right drag - pan");
                         ImGui::Text("Right double-click   - recentre on hero");
                         ImGui::Text("Left click           - capture, when a capture mode is armed");
-                        ImGui::Text("Ctrl + Left click    - move hero to clicked tile");
                         ImGui::EndTooltip();
                     }
                     ImGui::SameLine();
@@ -1185,6 +1184,23 @@ static void RenderMinimapSection(CHero* hero, CGameMap* map,
                         // Effective radius: enough to cover the entire map from any camera position
                         int maxDim = (mapW_t > mapH_t) ? mapW_t : mapH_t;
                         int effectiveRadius = maxDim + 1;
+
+                        // Session 13: isolate the canvas in its own child so mouse
+                        // wheel zoom doesn't ALSO scroll the outer "CoClassic Bot"
+                        // window at the same time -- an InvisibleButton alone
+                        // doesn't capture wheel input, so it was falling through
+                        // to the window's own default wheel-scroll handling.
+                        // Live-reported symptom this fixes: plain scroll nudged
+                        // the whole window (only Ctrl+scroll avoided it, since
+                        // Ctrl+wheel isn't ImGui's window-scroll gesture), and
+                        // Shift+scroll triggered ImGui's horizontal-scroll
+                        // convention on top of our zoom, producing visible jank.
+                        // A real BeginChild is the correct fix, not a modifier-key
+                        // workaround (which is what the previous, reverted attempt
+                        // at this was).
+                        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+                        ImGui::BeginChild("##mapcanvas_scroll_isolation", ImVec2(canvasW, canvasH), false,
+                            ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove);
 
                         ImVec2 canvasPos = ImGui::GetCursorScreenPos();
                         ImGui::InvisibleButton("##mapcanvas", ImVec2(canvasW, canvasH));
@@ -1284,6 +1300,21 @@ static void RenderMinimapSection(CHero* hero, CGameMap* map,
                             camTileX = g_mapCamX;
                             camTileY = g_mapCamY;
                         }
+
+                        // Session 13: clamp the camera to the map's tile bounds so
+                        // drag-panning or zoom-anchoring can't drift it far enough
+                        // that the map diamond ends up entirely outside the canvas
+                        // (live-reported: dragging left the whole map unviewable,
+                        // with only the yellow hero marker's old position as a
+                        // clue where it had gone). Clamped after all of this
+                        // frame's writes (zoom, drag, recentre) so it catches
+                        // whichever path moved the camera, and written back to
+                        // g_mapCamX/Y so next frame's drag-start captures the
+                        // clamped value too.
+                        camTileX = std::clamp(camTileX, 0.0f, (float)mapW_t);
+                        camTileY = std::clamp(camTileY, 0.0f, (float)mapH_t);
+                        g_mapCamX = camTileX;
+                        g_mapCamY = camTileY;
 
                         ImVec2 canvasEnd(canvasPos.x + canvasW, canvasPos.y + canvasH);
                         dl->PushClipRect(canvasPos, canvasEnd, true);
@@ -1678,16 +1709,7 @@ static void RenderMinimapSection(CHero* hero, CGameMap* map,
                             int tileX = (int)roundf(camTileX + ftdx);
                             int tileY = (int)roundf(camTileY + ftdy);
 
-                            // Session 13: a bare click used to ALWAYS move the hero
-                            // here whenever no capture mode consumed it -- trivially
-                            // easy to trigger by accident while just looking at the
-                            // map. Capture-mode clicks (armed via an explicit
-                            // "Capture..." button first) stay unprotected, since
-                            // arming one is already a deliberate two-step action.
-                            // Manual click-to-move specifically now requires Ctrl
-                            // held, so an accidental plain click is inert.
-                            if (!PluginManager::Get().HandleMapClick({tileX, tileY})
-                                && ImGui::GetIO().KeyCtrl) {
+                            if (!PluginManager::Get().HandleMapClick({tileX, tileY})) {
                                 // Cancel any active path on manual click
                                 Pathfinder::Get().Stop();
 
@@ -1776,6 +1798,9 @@ static void RenderMinimapSection(CHero* hero, CGameMap* map,
                         }
 
                         dl->PopClipRect();
+
+                        ImGui::EndChild();
+                        ImGui::PopStyleVar();
 
                         // ── Gateway table for current map ──
                         if (!gateways.empty() && ImGui::TreeNode("Gateways##gwlist")) {
