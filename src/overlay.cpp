@@ -577,6 +577,760 @@ static void RenderPacketsTab()
     }
 }
 
+// Session 13 [HkPresent split, phase 3]: the Misc tab's independent headers.
+// Each is already its own self-contained { }-scoped block fetching its own
+// settings reference — extracted verbatim into its own function, `hero`
+// passed to every one (even where unused) for a consistent signature. The
+// CollapsingHeader call itself moves WITH the body (unlike BeginTabItem/
+// EndTabItem in phases 1-2) since each section is independently gated, not
+// wrapping shared tab-level content.
+static void RenderMiscDiscordWebhookSection(CHero* /*hero*/)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Discord Webhook", kSectionFlags)) {
+        DiscordSettings& discord = GetDiscordSettings();
+        ImGui::Checkbox("Enable Discord Webhook", &discord.webhookEnabled);
+        // Session 12: masked -- a webhook URL is a bearer credential
+        // (anyone with it can post to the channel), same as a password.
+        ImGui::InputText("Webhook URL##discord", discord.webhookUrl, IM_ARRAYSIZE(discord.webhookUrl),
+            ImGuiInputTextFlags_Password);
+        ImGui::InputText("Mention User ID##discord", discord.mentionUserId, IM_ARRAYSIZE(discord.mentionUserId));
+        if (ImGui::Button("Test Webhook")) {
+            if (discord.webhookUrl[0] != '\0') {
+                CHero* heroTest = Game::GetHero();
+                char msg[256];
+                if (heroTest)
+                    snprintf(msg, sizeof(msg), "[%s] Discord webhook test.", heroTest->GetName());
+                else
+                    snprintf(msg, sizeof(msg), "[coclassic] Discord webhook test.");
+                std::string payload = BuildDiscordWebhookPayload(msg, discord.mentionUserId);
+                SendDiscordWebhookPayloadAsync(discord.webhookUrl, std::move(payload));
+            }
+        }
+        ImGui::TextDisabled("Shared webhook used by all notification features.");
+    }
+}
+
+static void RenderMiscWhisperNotificationsSection(CHero* /*hero*/)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Whisper Notifications", kSectionFlags)) {
+        MiscSettings& misc = GetMiscSettings();
+        ImGui::Checkbox("Notify on Whisper", &misc.whisperNotifyEnabled);
+        ImGui::TextDisabled("Sends a Discord notification when another player whispers you.");
+    }
+}
+
+static void RenderMiscLoggingDiagnosticsSection(CHero* /*hero*/)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Logging & Diagnostics", kSectionFlags)) {
+        MiscSettings& misc = GetMiscSettings();
+        static const char* kLevelNames[] = {
+            "Trace (very verbose)", "Debug", "Info", "Warning", "Error", "Critical", "Off"
+        };
+        int levelIdx = std::clamp(misc.logLevel, 0, 6);
+        if (ImGui::Combo("Log Level", &levelIdx, kLevelNames, IM_ARRAYSIZE(kLevelNames))) {
+            misc.logLevel = levelIdx;
+            Log::SetLevel(levelIdx);
+        }
+        ImGui::TextDisabled("Trace generates tens of thousands of lines in a few minutes of "
+            "play. Info or Warning is enough for normal use; turn Trace/Debug back on only "
+            "when actively diagnosing something.");
+
+        const std::string& logPath = Log::GetLogPath();
+        ImGui::Text("Log file:");
+        ImGui::SameLine();
+        ImGui::TextWrapped("%s", logPath.empty() ? "(file logging unavailable)" : logPath.c_str());
+        if (!logPath.empty() && ImGui::Button("Copy Log Path"))
+            ImGui::SetClipboardText(logPath.c_str());
+
+        ImGui::Separator();
+        const MemStats mem = GetCurrentMemoryStats();
+        if (mem.valid) {
+            ImGui::Text("Working Set: %zu MB", mem.workingSetKb / 1024);
+            ImGui::SameLine();
+            ImGui::Text("| Private: %zu MB", mem.privateKb / 1024);
+            ImGui::SameLine();
+            ImGui::Text("| Peak: %zu MB", mem.peakWorkingSetKb / 1024);
+        } else {
+            ImGui::TextDisabled("Memory stats unavailable.");
+        }
+    }
+}
+
+static void RenderMiscNativePickupTestSection(CHero* /*hero*/)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Debug: Native Pickup Test", kSectionFlags)) {
+        static int testItemId = 0;
+        static int testX = 0;
+        static int testY = 0;
+        ImGui::TextDisabled("Session 5: tests CHero::PickupItem's new native call path");
+        ImGui::TextDisabled("(GameRva::CNETCLIENT_SEND_MAPITEM_MSG). SEH-guarded.");
+        ImGui::InputInt("Item ID", &testItemId);
+        ImGui::InputInt("X", &testX);
+        ImGui::InputInt("Y", &testY);
+        if (ImGui::Button("Test Native Pickup") && testItemId != 0) {
+            CMapItem testItem = {};
+            testItem.m_id = static_cast<OBJID>(testItemId);
+            testItem.m_idType = 1000000; // Stancher, only used if plus lookup needed
+            testItem.m_pos = Position(testX, testY);
+            testItem.m_pInfo = nullptr; // GetPlus() safely returns 0 when null
+            spdlog::info("[debug] Test Native Pickup: id={} x={} y={}", testItemId, testX, testY);
+            DebugTestNativePickup(testItem);
+        }
+    }
+}
+
+static void RenderMiscNativeJumpTestSection(CHero* /*hero*/)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Debug: Native Jump Test", kSectionFlags)) {
+        static int jumpX = 0;
+        static int jumpY = 0;
+        // Session 9: defaults ON now. This used to drive the
+        // CCommand/SetCommand prediction path (which crashed
+        // the game repeatedly and defaulted OFF for safety);
+        // it now drives CRole::SyncClientPosition(), which is
+        // three plain data writes and live-verified safe.
+        static bool jumpApplyPrediction = true;
+        ImGui::TextDisabled("Sends the move packet, then syncs the client's own position");
+        ImGui::TextDisabled("fields (start/dest/world). Live-verified; no SetCommand involved.");
+        ImGui::InputInt("Dest X", &jumpX);
+        ImGui::InputInt("Dest Y", &jumpY);
+        ImGui::Checkbox("Sync client position after move", &jumpApplyPrediction);
+        if (ImGui::Button("Test Native Jump")) {
+            spdlog::info("[debug] Test Native Jump: x={} y={} predict={}", jumpX, jumpY, jumpApplyPrediction);
+            DebugTestJump(jumpX, jumpY, jumpApplyPrediction);
+        }
+    }
+}
+
+static void RenderMiscNativeWalkTestSection(CHero* hero)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Debug: Native Walk Test", kSectionFlags)) {
+        static int walkX = 0;
+        static int walkY = 0;
+        ImGui::TextDisabled("Sends the walk packet, then CRole::SetCommand(iType=15).");
+        ImGui::TextDisabled("Use a destination 1-2 tiles from your current position.");
+        ImGui::InputInt("Walk Dest X", &walkX);
+        ImGui::InputInt("Walk Dest Y", &walkY);
+        if (hero) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Use +1,+0##walk"))
+                { walkX = hero->m_posMap.x + 1; walkY = hero->m_posMap.y; }
+        }
+        if (ImGui::Button("Test Native Walk")) {
+            spdlog::info("[debug] Test Native Walk: x={} y={}", walkX, walkY);
+            DebugTestWalk(walkX, walkY);
+        }
+    }
+}
+
+// Session 10: recorded patrol routes. A route is a guide,
+// not a cage — see hunt_settings.h. Walk the patrol you
+// want, name it, and the raw trail is collapsed to corner
+// waypoints via SimplifyPath.
+static void RenderMiscHuntRoutesSection(CHero* /*hero*/)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Hunt Routes", kSectionFlags)) {
+        AutoHuntSettings& rs = GetAutoHuntSettings();
+        const OBJID curMap = Game::GetCurrentMapId();
+        static char routeName[64] = "route1";
+
+        ImGui::Text("Current map: %u", curMap);
+        ImGui::InputText("Route name", routeName, sizeof(routeName));
+
+        if (!RouteRecordIsActive()) {
+            if (ImGui::Button("Start Recording")) {
+                RouteRecordStart();
+                spdlog::info("[route] recording started on map {}", curMap);
+            }
+        } else {
+            ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1),
+                "RECORDING - %d tiles walked", RouteRecordSampleCount());
+            if (ImGui::Button("Stop && Save")) {
+                const bool ok = RouteRecordStop(rs, curMap, routeName);
+                spdlog::info("[route] recording stopped, saved={}", ok);
+            }
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Saved routes:");
+        for (const HuntRoute& r : rs.routes) {
+            const bool active = (r.name == rs.activeRouteName);
+            ImGui::Text("  %s%s  map=%u  %d waypoints",
+                        active ? "* " : "  ", r.name.c_str(),
+                        r.mapId, (int)r.waypoints.size());
+            if (r.mapId == curMap) {
+                ImGui::SameLine();
+                ImGui::PushID(r.name.c_str());
+                if (ImGui::SmallButton("Use")) {
+                    rs.activeRouteName = r.name;
+                    rs.zoneMapId = r.mapId;
+                    rs.zoneMode = AutoHuntZoneMode::Route;
+                }
+                ImGui::PopID();
+            }
+        }
+
+        ImGui::Separator();
+        // The corridor IS the leash: the bot's body may leave
+        // the line by this much and no more.
+        ImGui::TextDisabled("Corridor (leash): %d tiles%s",
+            GetRouteCorridor(rs),
+            rs.routeCorridorOverride > 0 ? " (override)" : " (from attack range)");
+        ImGui::InputInt("Corridor override (0=auto)", &rs.routeCorridorOverride);
+        ImGui::InputInt("Waypoint tolerance", &rs.routeWaypointTolerance);
+
+        int linger = (int)rs.lingerMode;
+        ImGui::Combo("Linger", &linger, "Auto\0Move on\0Stay and clear\0");
+        rs.lingerMode = (AutoHuntLingerMode)linger;
+        ImGui::TextDisabled("Auto: derived from measured time-to-kill.");
+    }
+}
+
+// Session 10: hunt diagnostics. The loop already records a
+// state + reason every frame; without showing it, "the bot
+// isn't attacking" is impossible to diagnose from the UI.
+// Also surfaces the two silent early-outs that stop an
+// archer dead: no right-hand weapon (ShootTarget returns
+// immediately) and no targets passing the filters.
+static void RenderMiscHuntDiagnosticsSection(CHero* hero)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Hunt Diagnostics", kSectionFlags)) {
+        BaseHuntPlugin* hunt = nullptr;
+        if (auto* a = PluginManager::Get().GetPlugin<ArcherHuntPlugin>(); a && a->m_enabled)
+            hunt = a;
+        else if (auto* m = PluginManager::Get().GetPlugin<MeleeHuntPlugin>(); m && m->m_enabled)
+            hunt = m;
+
+        if (!hunt) {
+            ImGui::TextDisabled("No hunt plugin enabled.");
+        } else {
+            ImGui::Text("State:  %s", hunt->GetStateNamePublic());
+            ImGui::TextWrapped("Reason: %s", hunt->GetStatusText());
+
+            // Effective vs actual position. A mismatch means
+            // every range check AND every scatter direction is
+            // being computed from a tile the hero isn't on.
+            if (hero) {
+                const Position eff = hunt->GetEffectivePosDebug(hero);
+                const Position act = hero->m_posMap;
+                const DWORD pj = hunt->GetPendingJumpTick();
+                if (eff.x != act.x || eff.y != act.y) {
+                    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                        "AIMING FROM WRONG TILE: effective (%d,%d) vs actual (%d,%d)",
+                        eff.x, eff.y, act.x, act.y);
+                    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                        "  pendingJumpTick=%u dest=(%d,%d) age=%ums",
+                        pj, hunt->GetPendingJumpDest().x, hunt->GetPendingJumpDest().y,
+                        pj ? (GetTickCount() - pj) : 0);
+                } else {
+                    ImGui::TextDisabled("effective pos == actual (%d,%d)%s",
+                        act.x, act.y, pj ? "  [pendingJump set]" : "");
+                }
+                // Pathfinder state. "Active" doubles as
+                // "movement is happening" throughout the hunt
+                // loop and also gates the attack, so a path
+                // that stops progressing freezes everything.
+                Pathfinder& pf = Pathfinder::Get();
+                if (pf.IsActive()) {
+                    const Position wp = pf.GetCurrentWaypoint();
+                    const DWORD sinceProgress = GetTickCount() - pf.GetLastProgressTick();
+                    const bool stuck = sinceProgress > 2000;
+                    ImGui::TextColored(stuck ? ImVec4(1, 0.3f, 0.3f, 1)
+                                             : ImVec4(0.6f, 0.6f, 0.6f, 1),
+                        "path ACTIVE wp %d/%d -> (%d,%d)  noProgress=%ums%s",
+                        (int)pf.GetCurrentIndex(), (int)pf.GetWaypoints().size(),
+                        wp.x, wp.y, sinceProgress,
+                        stuck ? "  <-- STUCK, blocks attacks" : "");
+                } else {
+                    ImGui::TextDisabled("path idle");
+                }
+            }
+        }
+
+        ImGui::Separator();
+        if (hero) {
+            // ShootTarget() returns immediately with no weapon,
+            // so an unequipped bow silently disables all ranged
+            // attacks — exactly the failure seen after a repair
+            // run that unequipped but never re-equipped.
+            CItem* rw = hero->GetEquip(EquipSlot::RWEAPON);
+            CItem* lw = hero->GetEquip(EquipSlot::LWEAPON);
+            if (rw)
+                ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1),
+                    "R.Hand: typeId=%u  (ranged attacks enabled)", rw->GetTypeID());
+            else
+                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                    "R.Hand: EMPTY -> ShootTarget() no-ops, archer cannot attack");
+            ImGui::Text("L.Hand: %s",
+                lw ? std::to_string(lw->GetTypeID()).c_str() : "(empty)");
+        }
+
+        const AutoHuntSettings& ahd = GetAutoHuntSettings();
+        const auto targets = CollectHuntTargets(ahd);
+        ImGui::Text("Targets passing filters: %d", (int)targets.size());
+        if (!targets.empty() && hero) {
+            CRole* t = targets.front();
+            ImGui::TextDisabled("  nearest: %s id=%u (%d,%d) dist=%d",
+                t->GetName(), t->GetID(), t->m_posMap.x, t->m_posMap.y,
+                CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
+                                   t->m_posMap.x, t->m_posMap.y));
+        }
+        ImGui::TextDisabled("zoneMapId=%u  currentMap=%u  searchRange=%d",
+                            ahd.zoneMapId, Game::GetCurrentMapId(), ahd.mobSearchRange);
+        // The leash applies to every zone mode, not just routes.
+        ImGui::TextDisabled("leash=%d tiles (body may leave zone by this)",
+                            GetHuntLeash(ahd));
+        // IsJumping() sticking on is a silent killer: it gates
+        // the attack and poisons the effective hero position.
+        if (hero) {
+            const bool jumping = hero->IsJumping() != 0;
+            if (jumping)
+                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                    "IsJumping=TRUE -> attacks are gated off. cmd target (%d,%d) vs pos (%d,%d)",
+                    hero->GetCommand().posTarget.x, hero->GetCommand().posTarget.y,
+                    hero->m_posMap.x, hero->m_posMap.y);
+            else
+                ImGui::TextDisabled("IsJumping=false (attacks allowed)");
+        }
+        // Show how much of a circle zone is actually usable.
+        if (ahd.zoneMode == AutoHuntZoneMode::Circle && ahd.zoneRadius > 0) {
+            if (MapGrid* g = GetCurrentMapGrid()) {
+                int total = 0, walk = 0;
+                const int r = ahd.zoneRadius;
+                for (int dy = -r; dy <= r; dy += 2)
+                    for (int dx = -r; dx <= r; dx += 2) {
+                        if (dx * dx + dy * dy > r * r) continue;
+                        ++total;
+                        if (g->IsWalkable(ahd.zoneCenter.x + dx, ahd.zoneCenter.y + dy))
+                            ++walk;
+                    }
+                const float pct = total ? 100.0f * (float)walk / (float)total : 0.0f;
+                if (pct < 70.0f)
+                    ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1),
+                        "Zone is only %.0f%% walkable - shrink or move it", pct);
+                else
+                    ImGui::TextDisabled("Zone walkable: %.0f%%", pct);
+            }
+        }
+        ImGui::TextDisabled("engage margin=%d tiles (monsters valid this far out)",
+                            GetHuntEngageMargin(ahd));
+        {
+            // Spawn memory: shows whether the bot has learned
+            // enough about this map to steer by it yet.
+            const OBJID mid = Game::GetCurrentMapId();
+            const SpawnMemory::Stats sm = SpawnMemory::GetStats(mid);
+            const bool useful = SpawnMemory::HasUsefulData(mid);
+            ImGui::TextColored(useful ? ImVec4(0.4f, 1, 0.4f, 1)
+                                      : ImVec4(0.6f, 0.6f, 0.6f, 1),
+                "spawn memory: %d buckets, %d observations%s",
+                sm.buckets, sm.observations,
+                useful ? " (steering exploration)" : " (still learning)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear map"))
+                SpawnMemory::ClearMap(mid);
+        }
+
+        {
+            // Ground-item scan (session 10): map->m_vecItems was
+            // NEVER populated on v1074, so loot/potion pickup
+            // silently found nothing all project. This is its
+            // replacement (map_items.h) — if this reads 0 while
+            // items are visibly on the ground, the heap-scan
+            // signature itself needs revisiting, same as the
+            // entity funnel counters did for monster detection.
+            const MapItems::Stats ms2 = MapItems::GetStats();
+            ImGui::TextColored(ms2.total > 0 ? ImVec4(0.4f, 1, 0.4f, 1)
+                                             : ImVec4(1, 0.6f, 0.2f, 1),
+                "ground items: %d (scan #%u, %ums)",
+                ms2.total, ms2.scans, ms2.lastScanMs);
+        }
+
+        ImGui::Separator();
+        // m_deqItem (+0xB70) is unverified and reads empty, which
+        // is why the repair sequence never re-equips.
+        if (hero) {
+            const size_t bag = hero->m_deqItem.size();
+            if (bag == 0)
+                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                    "Inventory reads 0 items -> repair can never re-equip");
+            else
+                ImGui::Text("Inventory: %d items", (int)bag);
+        }
+        if (ImGui::Button("Find Inventory Container")) {
+            const bool ok = DebugFindInventory();
+            spdlog::info("[debug] Inventory probe ok={}", ok);
+        }
+
+        // Repair sequence state. It stalls somewhere between
+        // unequip and re-equip; this shows exactly where, and
+        // the durability values it is comparing.
+        if (hunt) {
+            ImGui::Separator();
+            const HuntTownService& ts = hunt->GetTownService();
+            const OBJID rid = ts.GetRepairItemId();
+            ImGui::Text("Repair phase: %s",
+                        HuntTownService::RepairPhaseName(ts.GetRepairPhase()));
+            ImGui::TextDisabled("  repairItemId=%u slot=%d npcId=%u",
+                                rid, ts.GetRepairSlot(), ts.GetRepairNpcId());
+            if (rid && hero) {
+                // WaitRepair only advances when cur >= max, so
+                // these two numbers say whether the NPC repair
+                // actually took effect.
+                CItem* bag = FindInventoryItemById(hero, rid);
+                CItem* eq  = hero->GetEquip(ts.GetRepairSlot());
+                if (bag)
+                    ImGui::TextDisabled("  in bag: dur %d / %d",
+                        bag->GetDurabilityRaw(), bag->GetMaxDurabilityRaw());
+                else
+                    ImGui::TextDisabled("  in bag: NOT FOUND");
+                ImGui::TextDisabled("  in slot: %s",
+                    eq ? (eq->GetID() == rid ? "yes (re-equipped)" : "different item")
+                       : "empty");
+            }
+        }
+    }
+}
+
+// Session 10: one-shot structural probe for the active
+// CGameMap. Game::GetMap() is confirmed broken (its RVA
+// dereferences to garbage); this pins down BOTH the access
+// path and the field offsets before anything is changed.
+static void RenderMiscMapProbeSection(CHero* hero)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Debug: Map Probe", kSectionFlags)) {
+        static int expectedMapId = 1002;   // Twin City
+        ImGui::TextDisabled("Read-only. Writes C:\\Users\\Public\\coclassic_mapprobe.json");
+        ImGui::TextDisabled("Set the ID of the map you're standing in, then probe.");
+        ImGui::InputInt("Current map ID", &expectedMapId);
+        ImGui::TextDisabled("1000 Desert  1002 Twin City  1003 Mine  1004 Market  1020 Bird Is.");
+        if (ImGui::Button("Run Map Probe")) {
+            const bool ok = DebugProbeGameMap(expectedMapId);
+            spdlog::info("[debug] Map probe run, expectedMapId={} ok={}", expectedMapId, ok);
+        }
+
+        ImGui::Separator();
+        // Stage 2: the vtable objects are descriptors with no
+        // cell data, so find the live grid by its dimensions.
+        static int mapW = 543, mapH = 772;   // Twin City
+        ImGui::TextDisabled("Stage 2: find the live cell grid by map dimensions.");
+        ImGui::InputInt("Map width", &mapW);
+        ImGui::InputInt("Map height", &mapH);
+        if (ImGui::Button("Find Map Data")) {
+            const bool ok = DebugProbeMapData(mapW, mapH);
+            spdlog::info("[debug] Map data probe {}x{} ok={}", mapW, mapH, ok);
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Auto-Find Grid")) {
+            const bool ok = DebugAutoFindGrid(mapW, mapH);
+            spdlog::info("[debug] Auto grid scan {}x{} ok={}", mapW, mapH, ok);
+        }
+
+        // With terrain coming from the .DMap files on disk, the
+        // current map id is the only thing still needed from
+        // memory. Run this once per map and intersect.
+        // Label is just a tag for the diff — NOT a map id.
+        // Nothing here depends on knowing which map you are in.
+        static int sceneLabel = 1;
+        ImGui::InputInt("Snapshot label", &sceneLabel);
+        if (ImGui::Button("Snapshot Scene")) {
+            const bool ok = DebugSnapshotScene(sceneLabel);
+            spdlog::info("[debug] Scene snapshot {} ok={}", sceneLabel, ok);
+            ++sceneLabel;
+        }
+        ImGui::TextDisabled("Snapshot in several maps; label is just a tag.");
+        ImGui::SameLine();
+        // Asks the OS which files are mapped — if the active
+        // .DMap is among them, that names the map directly.
+        if (ImGui::Button("List Mapped Files")) {
+            const bool ok = DebugListMappedFiles();
+            spdlog::info("[debug] Mapped file list ok={}", ok);
+        }
+        ImGui::Separator();
+
+        if (ImGui::Button("Scan For Map ID")) {
+            const bool ok = DebugScanForMapId(expectedMapId);
+            spdlog::info("[debug] Map-id scan for {} ok={}", expectedMapId, ok);
+        }
+        ImGui::TextDisabled("Appends to C:\\Users\\Public\\coclassic_mapid.json.");
+        ImGui::TextDisabled("Run in THREE+ maps, then intersect the hits.");
+
+        // Live readout of the resolved chain — walk between
+        // maps and this should always match where you are.
+        ImGui::Separator();
+        const OBJID liveMapId = Game::GetCurrentMapId();
+        if (liveMapId)
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                               "Current map id (live): %u", liveMapId);
+        else
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "Current map id (live): UNAVAILABLE");
+        {
+            // Show each step of the chain so a failure is
+            // attributable rather than opaque.
+            const MapIdDiag d = MapProbe_MapIdDiag();
+            ImGui::TextDisabled("  0x699560=%u   0x699564=%u  (direct u32 globals)",
+                                d.val1, d.val2);
+
+            // Terrain loaded from the client's own .DMap file
+            // for whichever map we're on.
+            if (MapGrid* g = GetCurrentMapGrid()) {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                    "Terrain: map %d  %dx%d loaded",
+                    g->GetMapId(), g->GetWidth(), g->GetHeight());
+                if (hero) {
+                    const int hx = hero->m_posMap.x, hy = hero->m_posMap.y;
+                    ImGui::TextDisabled("  hero (%d,%d) walkable=%d alt=%d",
+                        hx, hy, (int)g->IsWalkable(hx, hy), g->GetAltitude(hx, hy));
+                }
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+                                   "Terrain: not loaded");
+            }
+        }
+
+        ImGui::Separator();
+        // Ground-truth search: the pattern file is cut from the
+        // map's own .DMap on disk, so a hit proves the client
+        // holds that map data verbatim at that address.
+        if (ImGui::Button("Search DMap Pattern")) {
+            const bool ok = DebugSearchPattern();
+            spdlog::info("[debug] Pattern search ok={}", ok);
+        }
+        ImGui::TextDisabled("Uses C:\\Users\\Public\\coclassic_pattern.bin");
+
+        // The walk trace is what makes the scan decisive, so
+        // surface how much of it has been collected.
+        ImGui::Text("Walk trace: %d tiles", MapProbe_TraceCount());
+        ImGui::SameLine();
+        if (ImGui::Button("Clear trace"))
+            MapProbe_ClearTrace();
+        ImGui::SameLine();
+        // Identifies the current map empirically, by matching
+        // walked tiles against every .DMap on disk — map-name
+        // tables disagree with each other and can't be trusted.
+        if (ImGui::Button("Dump Walk Trace")) {
+            const bool ok = DebugDumpWalkTrace();
+            spdlog::info("[debug] Walk trace dump ok={}", ok);
+        }
+        ImGui::TextDisabled("Walk around a while before scanning - every tile you");
+        ImGui::TextDisabled("stand on must be walkable in the real grid.");
+
+        ImGui::Separator();
+        // Stage 3: verify a candidate grid by CONTENT. The
+        // hero is necessarily on a walkable cell, so the
+        // neighbourhood around them is the ground truth.
+        static char gridBaseHex[32] = "542C3000";
+        static int  cellStride = 12;
+        static int  cellRadius = 5;
+        ImGui::TextDisabled("Stage 3: verify a candidate cell grid around the hero.");
+        ImGui::InputText("Grid base (hex)", gridBaseHex, sizeof(gridBaseHex),
+                         ImGuiInputTextFlags_CharsHexadecimal);
+        ImGui::InputInt("Bytes per cell", &cellStride);
+        ImGui::InputInt("Radius (tiles)", &cellRadius);
+        if (ImGui::Button("Dump Cells Around Hero")) {
+            const unsigned long long b = strtoull(gridBaseHex, nullptr, 16);
+            const bool ok = DebugProbeCells(b, cellStride, mapW, mapH, cellRadius);
+            spdlog::info("[debug] Cell dump base=0x{:X} stride={} ok={}", b, cellStride, ok);
+        }
+    }
+}
+
+// Session 12: hunting whatever drives green/white/red/black
+// monster name color (a level-relative "con color" per the
+// user's explanation -- USERSTATUS_RED/BLACK were checked
+// and ruled out for monsters). Dumps every nearby monster's
+// name/ID plus raw unmapped CRole memory around the
+// already-known HP/stamina fields, so multiple presses
+// across a play session build up a correlatable dataset.
+static void RenderMiscMonsterStatScanSection(CHero* /*hero*/)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Debug: Monster Stat Scan", kSectionFlags)) {
+        ImGui::TextDisabled("Read-only. Appends to C:\\Users\\Public\\coclassic_monsterscan.json");
+        ImGui::TextDisabled("Press near any monster(s) -- name/color doesn't need to be identified now,");
+        ImGui::TextDisabled("just remember roughly when/where so it can be matched up afterward.");
+        if (ImGui::Button("Dump Nearby Monster Stats")) {
+            const int n = DumpNearbyMonsterStats();
+            spdlog::info("[debug] Monster stat scan wrote {} entries", n);
+        }
+    }
+}
+
+// Session 9: combat packet verification. AttackTarget /
+// ShootTarget / MagicAttack are all plain packet builders on
+// the proven SendMsg path (no RVAs, no VERIFIED_V1074 gate),
+// so they were expected to work as soon as entity
+// enumeration was restored — this tests one action at a
+// time rather than switching on a whole hunt loop.
+static void RenderMiscCombatTestSection(CHero* hero)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Debug: Combat Test", kSectionFlags)) {
+        CRole* nearest = nullptr;
+        float bestDist = 1e9f;
+        if (hero) {
+            for (CRole* r : Entities::Get()) {
+                if (!r || !Entities::IsAlive(r) || !r->IsMonster() || r->IsDead())
+                    continue;
+                const float d = hero->m_posMap.DistanceTo(r->m_posMap);
+                if (d < bestDist) { bestDist = d; nearest = r; }
+            }
+        }
+
+        if (!nearest) {
+            ImGui::TextDisabled("No live monster in the entity list.");
+        } else {
+            ImGui::Text("Nearest: %s  id=%u  pos=(%d,%d)  dist=%.1f",
+                        nearest->GetName(), nearest->GetID(),
+                        nearest->m_posMap.x, nearest->m_posMap.y, bestDist);
+
+            const OBJID tid = nearest->GetID();
+            const Position tpos = nearest->m_posMap;
+
+            if (ImGui::Button("Shoot (ranged)")) {
+                spdlog::info("[debug] Combat: ShootTarget id={}", tid);
+                hero->ShootTarget(tid);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Attack (melee)")) {
+                spdlog::info("[debug] Combat: AttackTarget id={}", tid);
+                hero->AttackTarget(tid, tpos);
+            }
+
+            static int magicId = 0;
+            ImGui::InputInt("Magic/skill ID", &magicId);
+            if (ImGui::Button("Cast magic at target")) {
+                spdlog::info("[debug] Combat: MagicAttack magic={} id={}", magicId, tid);
+                hero->MagicAttack((OBJID)magicId, tid, tpos);
+            }
+            ImGui::TextDisabled("Scatter is a magic ID — see the Skills list for yours.");
+        }
+    }
+}
+
+static void RenderMiscLootDropNotificationsSection(CHero* /*hero*/)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Loot Drop Notifications", kSectionFlags)) {
+        MiscSettings& misc = GetMiscSettings();
+        ImGui::Checkbox("Notify on Loot Drop", &misc.lootDropNotifyEnabled);
+        ImGui::TextDisabled("Sends a Discord notification when an item drops from your kill.");
+    }
+}
+
+static void RenderMiscItemNotificationsSection(CHero* /*hero*/)
+{
+    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    if (ImGui::CollapsingHeader("Item Notifications", kSectionFlags)) {
+        MiscSettings& misc = GetMiscSettings();
+        ImGui::Checkbox("Enable Item Notifications", &misc.itemNotifyEnabled);
+        ImGui::TextDisabled("Sends a Discord notification when a tracked item enters your inventory.");
+
+        if (ImGui::SmallButton("Clear Notify Items"))
+            misc.notifyItemIds.clear();
+        ImGui::SameLine();
+        ImGui::Text("Tracked: %d", (int)misc.notifyItemIds.size());
+
+        static char notifyItemSearch[128] = "";
+        ImGui::InputText("Search##notifyitem", notifyItemSearch, sizeof(notifyItemSearch));
+
+        std::string searchLower;
+        for (const char* p = notifyItemSearch; *p; ++p)
+            searchLower.push_back((char)std::tolower((unsigned char)*p));
+
+        ImGui::BeginChild("##notifyitembrowser", ImVec2(0, 260.0f), ImGuiChildFlags_Borders);
+        if (ImGui::BeginTable("##notifyitemtable", 4,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+                ImVec2(0, 0))) {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableSetupColumn("Notify", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableSetupColumn("Mention", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableHeadersRow();
+
+            int shown = 0;
+            for (const ItemTypeInfo* info : GetAllItemTypes()) {
+                if (!info)
+                    continue;
+
+                if (!searchLower.empty()) {
+                    std::string nameLower;
+                    for (char c : info->name)
+                        nameLower.push_back((char)std::tolower((unsigned char)c));
+                    if (nameLower.find(searchLower) == std::string::npos
+                        && std::to_string(info->id).find(notifyItemSearch) == std::string::npos)
+                        continue;
+                }
+
+                const bool isNotify = std::find(misc.notifyItemIds.begin(),
+                    misc.notifyItemIds.end(), info->id) != misc.notifyItemIds.end();
+                const bool isMention = std::find(misc.mentionItemIds.begin(),
+                    misc.mentionItemIds.end(), info->id) != misc.mentionItemIds.end();
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", info->name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("%u", info->id);
+
+                ImGui::TableNextColumn();
+                {
+                    char btnId[64];
+                    snprintf(btnId, sizeof(btnId), "%s##miscnotify%u",
+                             isNotify ? "Remove" : "Add", info->id);
+                    if (ImGui::SmallButton(btnId)) {
+                        if (isNotify) {
+                            misc.notifyItemIds.erase(
+                                std::remove(misc.notifyItemIds.begin(),
+                                            misc.notifyItemIds.end(), info->id),
+                                misc.notifyItemIds.end());
+                            misc.mentionItemIds.erase(
+                                std::remove(misc.mentionItemIds.begin(),
+                                            misc.mentionItemIds.end(), info->id),
+                                misc.mentionItemIds.end());
+                        } else {
+                            misc.notifyItemIds.push_back(info->id);
+                        }
+                    }
+                }
+
+                ImGui::TableNextColumn();
+                if (isNotify) {
+                    char btnId[64];
+                    snprintf(btnId, sizeof(btnId), "%s##miscmention%u",
+                             isMention ? "Remove" : "Add", info->id);
+                    if (ImGui::SmallButton(btnId)) {
+                        if (isMention)
+                            misc.mentionItemIds.erase(
+                                std::remove(misc.mentionItemIds.begin(),
+                                            misc.mentionItemIds.end(), info->id),
+                                misc.mentionItemIds.end());
+                        else
+                            misc.mentionItemIds.push_back(info->id);
+                    }
+                }
+
+                if (searchLower.empty() && ++shown >= 250)
+                    break;
+            }
+
+            ImGui::EndTable();
+        }
+        ImGui::EndChild();
+    }
+}
+
 static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync, UINT flags)
 {
     // ── Lazy init (first call only) ──
@@ -1584,702 +2338,19 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
 
                 // ── Misc tab ──
                 if (ImGui::BeginTabItem("Misc")) {
-                    constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
-
-                    if (ImGui::CollapsingHeader("Discord Webhook", kSectionFlags)) {
-                        DiscordSettings& discord = GetDiscordSettings();
-                        ImGui::Checkbox("Enable Discord Webhook", &discord.webhookEnabled);
-                        // Session 12: masked -- a webhook URL is a bearer credential
-                        // (anyone with it can post to the channel), same as a password.
-                        ImGui::InputText("Webhook URL##discord", discord.webhookUrl, IM_ARRAYSIZE(discord.webhookUrl),
-                            ImGuiInputTextFlags_Password);
-                        ImGui::InputText("Mention User ID##discord", discord.mentionUserId, IM_ARRAYSIZE(discord.mentionUserId));
-                        if (ImGui::Button("Test Webhook")) {
-                            if (discord.webhookUrl[0] != '\0') {
-                                CHero* heroTest = Game::GetHero();
-                                char msg[256];
-                                if (heroTest)
-                                    snprintf(msg, sizeof(msg), "[%s] Discord webhook test.", heroTest->GetName());
-                                else
-                                    snprintf(msg, sizeof(msg), "[coclassic] Discord webhook test.");
-                                std::string payload = BuildDiscordWebhookPayload(msg, discord.mentionUserId);
-                                SendDiscordWebhookPayloadAsync(discord.webhookUrl, std::move(payload));
-                            }
-                        }
-                        ImGui::TextDisabled("Shared webhook used by all notification features.");
-                    }
-
-                    if (ImGui::CollapsingHeader("Whisper Notifications", kSectionFlags)) {
-                        MiscSettings& misc = GetMiscSettings();
-                        ImGui::Checkbox("Notify on Whisper", &misc.whisperNotifyEnabled);
-                        ImGui::TextDisabled("Sends a Discord notification when another player whispers you.");
-                    }
-
-                    if (ImGui::CollapsingHeader("Logging & Diagnostics", kSectionFlags)) {
-                        MiscSettings& misc = GetMiscSettings();
-                        static const char* kLevelNames[] = {
-                            "Trace (very verbose)", "Debug", "Info", "Warning", "Error", "Critical", "Off"
-                        };
-                        int levelIdx = std::clamp(misc.logLevel, 0, 6);
-                        if (ImGui::Combo("Log Level", &levelIdx, kLevelNames, IM_ARRAYSIZE(kLevelNames))) {
-                            misc.logLevel = levelIdx;
-                            Log::SetLevel(levelIdx);
-                        }
-                        ImGui::TextDisabled("Trace generates tens of thousands of lines in a few minutes of "
-                            "play. Info or Warning is enough for normal use; turn Trace/Debug back on only "
-                            "when actively diagnosing something.");
-
-                        const std::string& logPath = Log::GetLogPath();
-                        ImGui::Text("Log file:");
-                        ImGui::SameLine();
-                        ImGui::TextWrapped("%s", logPath.empty() ? "(file logging unavailable)" : logPath.c_str());
-                        if (!logPath.empty() && ImGui::Button("Copy Log Path"))
-                            ImGui::SetClipboardText(logPath.c_str());
-
-                        ImGui::Separator();
-                        const MemStats mem = GetCurrentMemoryStats();
-                        if (mem.valid) {
-                            ImGui::Text("Working Set: %zu MB", mem.workingSetKb / 1024);
-                            ImGui::SameLine();
-                            ImGui::Text("| Private: %zu MB", mem.privateKb / 1024);
-                            ImGui::SameLine();
-                            ImGui::Text("| Peak: %zu MB", mem.peakWorkingSetKb / 1024);
-                        } else {
-                            ImGui::TextDisabled("Memory stats unavailable.");
-                        }
-                    }
-
-                    if (ImGui::CollapsingHeader("Debug: Native Pickup Test", kSectionFlags)) {
-                        static int testItemId = 0;
-                        static int testX = 0;
-                        static int testY = 0;
-                        ImGui::TextDisabled("Session 5: tests CHero::PickupItem's new native call path");
-                        ImGui::TextDisabled("(GameRva::CNETCLIENT_SEND_MAPITEM_MSG). SEH-guarded.");
-                        ImGui::InputInt("Item ID", &testItemId);
-                        ImGui::InputInt("X", &testX);
-                        ImGui::InputInt("Y", &testY);
-                        if (ImGui::Button("Test Native Pickup") && testItemId != 0) {
-                            CMapItem testItem = {};
-                            testItem.m_id = static_cast<OBJID>(testItemId);
-                            testItem.m_idType = 1000000; // Stancher, only used if plus lookup needed
-                            testItem.m_pos = Position(testX, testY);
-                            testItem.m_pInfo = nullptr; // GetPlus() safely returns 0 when null
-                            spdlog::info("[debug] Test Native Pickup: id={} x={} y={}", testItemId, testX, testY);
-                            DebugTestNativePickup(testItem);
-                        }
-                    }
-
-                    if (ImGui::CollapsingHeader("Debug: Native Jump Test", kSectionFlags)) {
-                        static int jumpX = 0;
-                        static int jumpY = 0;
-                        // Session 9: defaults ON now. This used to drive the
-                        // CCommand/SetCommand prediction path (which crashed
-                        // the game repeatedly and defaulted OFF for safety);
-                        // it now drives CRole::SyncClientPosition(), which is
-                        // three plain data writes and live-verified safe.
-                        static bool jumpApplyPrediction = true;
-                        ImGui::TextDisabled("Sends the move packet, then syncs the client's own position");
-                        ImGui::TextDisabled("fields (start/dest/world). Live-verified; no SetCommand involved.");
-                        ImGui::InputInt("Dest X", &jumpX);
-                        ImGui::InputInt("Dest Y", &jumpY);
-                        ImGui::Checkbox("Sync client position after move", &jumpApplyPrediction);
-                        if (ImGui::Button("Test Native Jump")) {
-                            spdlog::info("[debug] Test Native Jump: x={} y={} predict={}", jumpX, jumpY, jumpApplyPrediction);
-                            DebugTestJump(jumpX, jumpY, jumpApplyPrediction);
-                        }
-                    }
-
-                    if (ImGui::CollapsingHeader("Debug: Native Walk Test", kSectionFlags)) {
-                        static int walkX = 0;
-                        static int walkY = 0;
-                        ImGui::TextDisabled("Sends the walk packet, then CRole::SetCommand(iType=15).");
-                        ImGui::TextDisabled("Use a destination 1-2 tiles from your current position.");
-                        ImGui::InputInt("Walk Dest X", &walkX);
-                        ImGui::InputInt("Walk Dest Y", &walkY);
-                        if (hero) {
-                            ImGui::SameLine();
-                            if (ImGui::SmallButton("Use +1,+0##walk"))
-                                { walkX = hero->m_posMap.x + 1; walkY = hero->m_posMap.y; }
-                        }
-                        if (ImGui::Button("Test Native Walk")) {
-                            spdlog::info("[debug] Test Native Walk: x={} y={}", walkX, walkY);
-                            DebugTestWalk(walkX, walkY);
-                        }
-                    }
-
-                    // Session 10: recorded patrol routes. A route is a guide,
-                    // not a cage — see hunt_settings.h. Walk the patrol you
-                    // want, name it, and the raw trail is collapsed to corner
-                    // waypoints via SimplifyPath.
-                    if (ImGui::CollapsingHeader("Hunt Routes", kSectionFlags)) {
-                        AutoHuntSettings& rs = GetAutoHuntSettings();
-                        const OBJID curMap = Game::GetCurrentMapId();
-                        static char routeName[64] = "route1";
-
-                        ImGui::Text("Current map: %u", curMap);
-                        ImGui::InputText("Route name", routeName, sizeof(routeName));
-
-                        if (!RouteRecordIsActive()) {
-                            if (ImGui::Button("Start Recording")) {
-                                RouteRecordStart();
-                                spdlog::info("[route] recording started on map {}", curMap);
-                            }
-                        } else {
-                            ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1),
-                                "RECORDING - %d tiles walked", RouteRecordSampleCount());
-                            if (ImGui::Button("Stop && Save")) {
-                                const bool ok = RouteRecordStop(rs, curMap, routeName);
-                                spdlog::info("[route] recording stopped, saved={}", ok);
-                            }
-                        }
-
-                        ImGui::Separator();
-                        ImGui::Text("Saved routes:");
-                        for (const HuntRoute& r : rs.routes) {
-                            const bool active = (r.name == rs.activeRouteName);
-                            ImGui::Text("  %s%s  map=%u  %d waypoints",
-                                        active ? "* " : "  ", r.name.c_str(),
-                                        r.mapId, (int)r.waypoints.size());
-                            if (r.mapId == curMap) {
-                                ImGui::SameLine();
-                                ImGui::PushID(r.name.c_str());
-                                if (ImGui::SmallButton("Use")) {
-                                    rs.activeRouteName = r.name;
-                                    rs.zoneMapId = r.mapId;
-                                    rs.zoneMode = AutoHuntZoneMode::Route;
-                                }
-                                ImGui::PopID();
-                            }
-                        }
-
-                        ImGui::Separator();
-                        // The corridor IS the leash: the bot's body may leave
-                        // the line by this much and no more.
-                        ImGui::TextDisabled("Corridor (leash): %d tiles%s",
-                            GetRouteCorridor(rs),
-                            rs.routeCorridorOverride > 0 ? " (override)" : " (from attack range)");
-                        ImGui::InputInt("Corridor override (0=auto)", &rs.routeCorridorOverride);
-                        ImGui::InputInt("Waypoint tolerance", &rs.routeWaypointTolerance);
-
-                        int linger = (int)rs.lingerMode;
-                        ImGui::Combo("Linger", &linger, "Auto\0Move on\0Stay and clear\0");
-                        rs.lingerMode = (AutoHuntLingerMode)linger;
-                        ImGui::TextDisabled("Auto: derived from measured time-to-kill.");
-                    }
-
-                    // Session 10: hunt diagnostics. The loop already records a
-                    // state + reason every frame; without showing it, "the bot
-                    // isn't attacking" is impossible to diagnose from the UI.
-                    // Also surfaces the two silent early-outs that stop an
-                    // archer dead: no right-hand weapon (ShootTarget returns
-                    // immediately) and no targets passing the filters.
-                    if (ImGui::CollapsingHeader("Hunt Diagnostics", kSectionFlags)) {
-                        BaseHuntPlugin* hunt = nullptr;
-                        if (auto* a = PluginManager::Get().GetPlugin<ArcherHuntPlugin>(); a && a->m_enabled)
-                            hunt = a;
-                        else if (auto* m = PluginManager::Get().GetPlugin<MeleeHuntPlugin>(); m && m->m_enabled)
-                            hunt = m;
-
-                        if (!hunt) {
-                            ImGui::TextDisabled("No hunt plugin enabled.");
-                        } else {
-                            ImGui::Text("State:  %s", hunt->GetStateNamePublic());
-                            ImGui::TextWrapped("Reason: %s", hunt->GetStatusText());
-
-                            // Effective vs actual position. A mismatch means
-                            // every range check AND every scatter direction is
-                            // being computed from a tile the hero isn't on.
-                            if (hero) {
-                                const Position eff = hunt->GetEffectivePosDebug(hero);
-                                const Position act = hero->m_posMap;
-                                const DWORD pj = hunt->GetPendingJumpTick();
-                                if (eff.x != act.x || eff.y != act.y) {
-                                    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
-                                        "AIMING FROM WRONG TILE: effective (%d,%d) vs actual (%d,%d)",
-                                        eff.x, eff.y, act.x, act.y);
-                                    ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
-                                        "  pendingJumpTick=%u dest=(%d,%d) age=%ums",
-                                        pj, hunt->GetPendingJumpDest().x, hunt->GetPendingJumpDest().y,
-                                        pj ? (GetTickCount() - pj) : 0);
-                                } else {
-                                    ImGui::TextDisabled("effective pos == actual (%d,%d)%s",
-                                        act.x, act.y, pj ? "  [pendingJump set]" : "");
-                                }
-                                // Pathfinder state. "Active" doubles as
-                                // "movement is happening" throughout the hunt
-                                // loop and also gates the attack, so a path
-                                // that stops progressing freezes everything.
-                                Pathfinder& pf = Pathfinder::Get();
-                                if (pf.IsActive()) {
-                                    const Position wp = pf.GetCurrentWaypoint();
-                                    const DWORD sinceProgress = GetTickCount() - pf.GetLastProgressTick();
-                                    const bool stuck = sinceProgress > 2000;
-                                    ImGui::TextColored(stuck ? ImVec4(1, 0.3f, 0.3f, 1)
-                                                             : ImVec4(0.6f, 0.6f, 0.6f, 1),
-                                        "path ACTIVE wp %d/%d -> (%d,%d)  noProgress=%ums%s",
-                                        (int)pf.GetCurrentIndex(), (int)pf.GetWaypoints().size(),
-                                        wp.x, wp.y, sinceProgress,
-                                        stuck ? "  <-- STUCK, blocks attacks" : "");
-                                } else {
-                                    ImGui::TextDisabled("path idle");
-                                }
-                            }
-                        }
-
-                        ImGui::Separator();
-                        if (hero) {
-                            // ShootTarget() returns immediately with no weapon,
-                            // so an unequipped bow silently disables all ranged
-                            // attacks — exactly the failure seen after a repair
-                            // run that unequipped but never re-equipped.
-                            CItem* rw = hero->GetEquip(EquipSlot::RWEAPON);
-                            CItem* lw = hero->GetEquip(EquipSlot::LWEAPON);
-                            if (rw)
-                                ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1),
-                                    "R.Hand: typeId=%u  (ranged attacks enabled)", rw->GetTypeID());
-                            else
-                                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
-                                    "R.Hand: EMPTY -> ShootTarget() no-ops, archer cannot attack");
-                            ImGui::Text("L.Hand: %s",
-                                lw ? std::to_string(lw->GetTypeID()).c_str() : "(empty)");
-                        }
-
-                        const AutoHuntSettings& ahd = GetAutoHuntSettings();
-                        const auto targets = CollectHuntTargets(ahd);
-                        ImGui::Text("Targets passing filters: %d", (int)targets.size());
-                        if (!targets.empty() && hero) {
-                            CRole* t = targets.front();
-                            ImGui::TextDisabled("  nearest: %s id=%u (%d,%d) dist=%d",
-                                t->GetName(), t->GetID(), t->m_posMap.x, t->m_posMap.y,
-                                CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
-                                                   t->m_posMap.x, t->m_posMap.y));
-                        }
-                        ImGui::TextDisabled("zoneMapId=%u  currentMap=%u  searchRange=%d",
-                                            ahd.zoneMapId, Game::GetCurrentMapId(), ahd.mobSearchRange);
-                        // The leash applies to every zone mode, not just routes.
-                        ImGui::TextDisabled("leash=%d tiles (body may leave zone by this)",
-                                            GetHuntLeash(ahd));
-                        // IsJumping() sticking on is a silent killer: it gates
-                        // the attack and poisons the effective hero position.
-                        if (hero) {
-                            const bool jumping = hero->IsJumping() != 0;
-                            if (jumping)
-                                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
-                                    "IsJumping=TRUE -> attacks are gated off. cmd target (%d,%d) vs pos (%d,%d)",
-                                    hero->GetCommand().posTarget.x, hero->GetCommand().posTarget.y,
-                                    hero->m_posMap.x, hero->m_posMap.y);
-                            else
-                                ImGui::TextDisabled("IsJumping=false (attacks allowed)");
-                        }
-                        // Show how much of a circle zone is actually usable.
-                        if (ahd.zoneMode == AutoHuntZoneMode::Circle && ahd.zoneRadius > 0) {
-                            if (MapGrid* g = GetCurrentMapGrid()) {
-                                int total = 0, walk = 0;
-                                const int r = ahd.zoneRadius;
-                                for (int dy = -r; dy <= r; dy += 2)
-                                    for (int dx = -r; dx <= r; dx += 2) {
-                                        if (dx * dx + dy * dy > r * r) continue;
-                                        ++total;
-                                        if (g->IsWalkable(ahd.zoneCenter.x + dx, ahd.zoneCenter.y + dy))
-                                            ++walk;
-                                    }
-                                const float pct = total ? 100.0f * (float)walk / (float)total : 0.0f;
-                                if (pct < 70.0f)
-                                    ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1),
-                                        "Zone is only %.0f%% walkable - shrink or move it", pct);
-                                else
-                                    ImGui::TextDisabled("Zone walkable: %.0f%%", pct);
-                            }
-                        }
-                        ImGui::TextDisabled("engage margin=%d tiles (monsters valid this far out)",
-                                            GetHuntEngageMargin(ahd));
-                        {
-                            // Spawn memory: shows whether the bot has learned
-                            // enough about this map to steer by it yet.
-                            const OBJID mid = Game::GetCurrentMapId();
-                            const SpawnMemory::Stats sm = SpawnMemory::GetStats(mid);
-                            const bool useful = SpawnMemory::HasUsefulData(mid);
-                            ImGui::TextColored(useful ? ImVec4(0.4f, 1, 0.4f, 1)
-                                                      : ImVec4(0.6f, 0.6f, 0.6f, 1),
-                                "spawn memory: %d buckets, %d observations%s",
-                                sm.buckets, sm.observations,
-                                useful ? " (steering exploration)" : " (still learning)");
-                            ImGui::SameLine();
-                            if (ImGui::SmallButton("Clear map"))
-                                SpawnMemory::ClearMap(mid);
-                        }
-
-                        {
-                            // Ground-item scan (session 10): map->m_vecItems was
-                            // NEVER populated on v1074, so loot/potion pickup
-                            // silently found nothing all project. This is its
-                            // replacement (map_items.h) — if this reads 0 while
-                            // items are visibly on the ground, the heap-scan
-                            // signature itself needs revisiting, same as the
-                            // entity funnel counters did for monster detection.
-                            const MapItems::Stats ms2 = MapItems::GetStats();
-                            ImGui::TextColored(ms2.total > 0 ? ImVec4(0.4f, 1, 0.4f, 1)
-                                                             : ImVec4(1, 0.6f, 0.2f, 1),
-                                "ground items: %d (scan #%u, %ums)",
-                                ms2.total, ms2.scans, ms2.lastScanMs);
-                        }
-
-                        ImGui::Separator();
-                        // m_deqItem (+0xB70) is unverified and reads empty, which
-                        // is why the repair sequence never re-equips.
-                        if (hero) {
-                            const size_t bag = hero->m_deqItem.size();
-                            if (bag == 0)
-                                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
-                                    "Inventory reads 0 items -> repair can never re-equip");
-                            else
-                                ImGui::Text("Inventory: %d items", (int)bag);
-                        }
-                        if (ImGui::Button("Find Inventory Container")) {
-                            const bool ok = DebugFindInventory();
-                            spdlog::info("[debug] Inventory probe ok={}", ok);
-                        }
-
-                        // Repair sequence state. It stalls somewhere between
-                        // unequip and re-equip; this shows exactly where, and
-                        // the durability values it is comparing.
-                        if (hunt) {
-                            ImGui::Separator();
-                            const HuntTownService& ts = hunt->GetTownService();
-                            const OBJID rid = ts.GetRepairItemId();
-                            ImGui::Text("Repair phase: %s",
-                                        HuntTownService::RepairPhaseName(ts.GetRepairPhase()));
-                            ImGui::TextDisabled("  repairItemId=%u slot=%d npcId=%u",
-                                                rid, ts.GetRepairSlot(), ts.GetRepairNpcId());
-                            if (rid && hero) {
-                                // WaitRepair only advances when cur >= max, so
-                                // these two numbers say whether the NPC repair
-                                // actually took effect.
-                                CItem* bag = FindInventoryItemById(hero, rid);
-                                CItem* eq  = hero->GetEquip(ts.GetRepairSlot());
-                                if (bag)
-                                    ImGui::TextDisabled("  in bag: dur %d / %d",
-                                        bag->GetDurabilityRaw(), bag->GetMaxDurabilityRaw());
-                                else
-                                    ImGui::TextDisabled("  in bag: NOT FOUND");
-                                ImGui::TextDisabled("  in slot: %s",
-                                    eq ? (eq->GetID() == rid ? "yes (re-equipped)" : "different item")
-                                       : "empty");
-                            }
-                        }
-                    }
-
-                    // Session 10: one-shot structural probe for the active
-                    // CGameMap. Game::GetMap() is confirmed broken (its RVA
-                    // dereferences to garbage); this pins down BOTH the access
-                    // path and the field offsets before anything is changed.
-                    if (ImGui::CollapsingHeader("Debug: Map Probe", kSectionFlags)) {
-                        static int expectedMapId = 1002;   // Twin City
-                        ImGui::TextDisabled("Read-only. Writes C:\\Users\\Public\\coclassic_mapprobe.json");
-                        ImGui::TextDisabled("Set the ID of the map you're standing in, then probe.");
-                        ImGui::InputInt("Current map ID", &expectedMapId);
-                        ImGui::TextDisabled("1000 Desert  1002 Twin City  1003 Mine  1004 Market  1020 Bird Is.");
-                        if (ImGui::Button("Run Map Probe")) {
-                            const bool ok = DebugProbeGameMap(expectedMapId);
-                            spdlog::info("[debug] Map probe run, expectedMapId={} ok={}", expectedMapId, ok);
-                        }
-
-                        ImGui::Separator();
-                        // Stage 2: the vtable objects are descriptors with no
-                        // cell data, so find the live grid by its dimensions.
-                        static int mapW = 543, mapH = 772;   // Twin City
-                        ImGui::TextDisabled("Stage 2: find the live cell grid by map dimensions.");
-                        ImGui::InputInt("Map width", &mapW);
-                        ImGui::InputInt("Map height", &mapH);
-                        if (ImGui::Button("Find Map Data")) {
-                            const bool ok = DebugProbeMapData(mapW, mapH);
-                            spdlog::info("[debug] Map data probe {}x{} ok={}", mapW, mapH, ok);
-                        }
-
-                        ImGui::SameLine();
-                        if (ImGui::Button("Auto-Find Grid")) {
-                            const bool ok = DebugAutoFindGrid(mapW, mapH);
-                            spdlog::info("[debug] Auto grid scan {}x{} ok={}", mapW, mapH, ok);
-                        }
-
-                        // With terrain coming from the .DMap files on disk, the
-                        // current map id is the only thing still needed from
-                        // memory. Run this once per map and intersect.
-                        // Label is just a tag for the diff — NOT a map id.
-                        // Nothing here depends on knowing which map you are in.
-                        static int sceneLabel = 1;
-                        ImGui::InputInt("Snapshot label", &sceneLabel);
-                        if (ImGui::Button("Snapshot Scene")) {
-                            const bool ok = DebugSnapshotScene(sceneLabel);
-                            spdlog::info("[debug] Scene snapshot {} ok={}", sceneLabel, ok);
-                            ++sceneLabel;
-                        }
-                        ImGui::TextDisabled("Snapshot in several maps; label is just a tag.");
-                        ImGui::SameLine();
-                        // Asks the OS which files are mapped — if the active
-                        // .DMap is among them, that names the map directly.
-                        if (ImGui::Button("List Mapped Files")) {
-                            const bool ok = DebugListMappedFiles();
-                            spdlog::info("[debug] Mapped file list ok={}", ok);
-                        }
-                        ImGui::Separator();
-
-                        if (ImGui::Button("Scan For Map ID")) {
-                            const bool ok = DebugScanForMapId(expectedMapId);
-                            spdlog::info("[debug] Map-id scan for {} ok={}", expectedMapId, ok);
-                        }
-                        ImGui::TextDisabled("Appends to C:\\Users\\Public\\coclassic_mapid.json.");
-                        ImGui::TextDisabled("Run in THREE+ maps, then intersect the hits.");
-
-                        // Live readout of the resolved chain — walk between
-                        // maps and this should always match where you are.
-                        ImGui::Separator();
-                        const OBJID liveMapId = Game::GetCurrentMapId();
-                        if (liveMapId)
-                            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-                                               "Current map id (live): %u", liveMapId);
-                        else
-                            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
-                                               "Current map id (live): UNAVAILABLE");
-                        {
-                            // Show each step of the chain so a failure is
-                            // attributable rather than opaque.
-                            const MapIdDiag d = MapProbe_MapIdDiag();
-                            ImGui::TextDisabled("  0x699560=%u   0x699564=%u  (direct u32 globals)",
-                                                d.val1, d.val2);
-
-                            // Terrain loaded from the client's own .DMap file
-                            // for whichever map we're on.
-                            if (MapGrid* g = GetCurrentMapGrid()) {
-                                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-                                    "Terrain: map %d  %dx%d loaded",
-                                    g->GetMapId(), g->GetWidth(), g->GetHeight());
-                                if (hero) {
-                                    const int hx = hero->m_posMap.x, hy = hero->m_posMap.y;
-                                    ImGui::TextDisabled("  hero (%d,%d) walkable=%d alt=%d",
-                                        hx, hy, (int)g->IsWalkable(hx, hy), g->GetAltitude(hx, hy));
-                                }
-                            } else {
-                                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
-                                                   "Terrain: not loaded");
-                            }
-                        }
-
-                        ImGui::Separator();
-                        // Ground-truth search: the pattern file is cut from the
-                        // map's own .DMap on disk, so a hit proves the client
-                        // holds that map data verbatim at that address.
-                        if (ImGui::Button("Search DMap Pattern")) {
-                            const bool ok = DebugSearchPattern();
-                            spdlog::info("[debug] Pattern search ok={}", ok);
-                        }
-                        ImGui::TextDisabled("Uses C:\\Users\\Public\\coclassic_pattern.bin");
-
-                        // The walk trace is what makes the scan decisive, so
-                        // surface how much of it has been collected.
-                        ImGui::Text("Walk trace: %d tiles", MapProbe_TraceCount());
-                        ImGui::SameLine();
-                        if (ImGui::Button("Clear trace"))
-                            MapProbe_ClearTrace();
-                        ImGui::SameLine();
-                        // Identifies the current map empirically, by matching
-                        // walked tiles against every .DMap on disk — map-name
-                        // tables disagree with each other and can't be trusted.
-                        if (ImGui::Button("Dump Walk Trace")) {
-                            const bool ok = DebugDumpWalkTrace();
-                            spdlog::info("[debug] Walk trace dump ok={}", ok);
-                        }
-                        ImGui::TextDisabled("Walk around a while before scanning - every tile you");
-                        ImGui::TextDisabled("stand on must be walkable in the real grid.");
-
-                        ImGui::Separator();
-                        // Stage 3: verify a candidate grid by CONTENT. The
-                        // hero is necessarily on a walkable cell, so the
-                        // neighbourhood around them is the ground truth.
-                        static char gridBaseHex[32] = "542C3000";
-                        static int  cellStride = 12;
-                        static int  cellRadius = 5;
-                        ImGui::TextDisabled("Stage 3: verify a candidate cell grid around the hero.");
-                        ImGui::InputText("Grid base (hex)", gridBaseHex, sizeof(gridBaseHex),
-                                         ImGuiInputTextFlags_CharsHexadecimal);
-                        ImGui::InputInt("Bytes per cell", &cellStride);
-                        ImGui::InputInt("Radius (tiles)", &cellRadius);
-                        if (ImGui::Button("Dump Cells Around Hero")) {
-                            const unsigned long long b = strtoull(gridBaseHex, nullptr, 16);
-                            const bool ok = DebugProbeCells(b, cellStride, mapW, mapH, cellRadius);
-                            spdlog::info("[debug] Cell dump base=0x{:X} stride={} ok={}", b, cellStride, ok);
-                        }
-                    }
-
-                    // Session 12: hunting whatever drives green/white/red/black
-                    // monster name color (a level-relative "con color" per the
-                    // user's explanation -- USERSTATUS_RED/BLACK were checked
-                    // and ruled out for monsters). Dumps every nearby monster's
-                    // name/ID plus raw unmapped CRole memory around the
-                    // already-known HP/stamina fields, so multiple presses
-                    // across a play session build up a correlatable dataset.
-                    if (ImGui::CollapsingHeader("Debug: Monster Stat Scan", kSectionFlags)) {
-                        ImGui::TextDisabled("Read-only. Appends to C:\\Users\\Public\\coclassic_monsterscan.json");
-                        ImGui::TextDisabled("Press near any monster(s) -- name/color doesn't need to be identified now,");
-                        ImGui::TextDisabled("just remember roughly when/where so it can be matched up afterward.");
-                        if (ImGui::Button("Dump Nearby Monster Stats")) {
-                            const int n = DumpNearbyMonsterStats();
-                            spdlog::info("[debug] Monster stat scan wrote {} entries", n);
-                        }
-                    }
-
-                    // Session 9: combat packet verification. AttackTarget /
-                    // ShootTarget / MagicAttack are all plain packet builders on
-                    // the proven SendMsg path (no RVAs, no VERIFIED_V1074 gate),
-                    // so they were expected to work as soon as entity
-                    // enumeration was restored — this tests one action at a
-                    // time rather than switching on a whole hunt loop.
-                    if (ImGui::CollapsingHeader("Debug: Combat Test", kSectionFlags)) {
-                        CRole* nearest = nullptr;
-                        float bestDist = 1e9f;
-                        if (hero) {
-                            for (CRole* r : Entities::Get()) {
-                                if (!r || !Entities::IsAlive(r) || !r->IsMonster() || r->IsDead())
-                                    continue;
-                                const float d = hero->m_posMap.DistanceTo(r->m_posMap);
-                                if (d < bestDist) { bestDist = d; nearest = r; }
-                            }
-                        }
-
-                        if (!nearest) {
-                            ImGui::TextDisabled("No live monster in the entity list.");
-                        } else {
-                            ImGui::Text("Nearest: %s  id=%u  pos=(%d,%d)  dist=%.1f",
-                                        nearest->GetName(), nearest->GetID(),
-                                        nearest->m_posMap.x, nearest->m_posMap.y, bestDist);
-
-                            const OBJID tid = nearest->GetID();
-                            const Position tpos = nearest->m_posMap;
-
-                            if (ImGui::Button("Shoot (ranged)")) {
-                                spdlog::info("[debug] Combat: ShootTarget id={}", tid);
-                                hero->ShootTarget(tid);
-                            }
-                            ImGui::SameLine();
-                            if (ImGui::Button("Attack (melee)")) {
-                                spdlog::info("[debug] Combat: AttackTarget id={}", tid);
-                                hero->AttackTarget(tid, tpos);
-                            }
-
-                            static int magicId = 0;
-                            ImGui::InputInt("Magic/skill ID", &magicId);
-                            if (ImGui::Button("Cast magic at target")) {
-                                spdlog::info("[debug] Combat: MagicAttack magic={} id={}", magicId, tid);
-                                hero->MagicAttack((OBJID)magicId, tid, tpos);
-                            }
-                            ImGui::TextDisabled("Scatter is a magic ID — see the Skills list for yours.");
-                        }
-                    }
-
-                    if (ImGui::CollapsingHeader("Loot Drop Notifications", kSectionFlags)) {
-                        MiscSettings& misc = GetMiscSettings();
-                        ImGui::Checkbox("Notify on Loot Drop", &misc.lootDropNotifyEnabled);
-                        ImGui::TextDisabled("Sends a Discord notification when an item drops from your kill.");
-                    }
-
-                    if (ImGui::CollapsingHeader("Item Notifications", kSectionFlags)) {
-                        MiscSettings& misc = GetMiscSettings();
-                        ImGui::Checkbox("Enable Item Notifications", &misc.itemNotifyEnabled);
-                        ImGui::TextDisabled("Sends a Discord notification when a tracked item enters your inventory.");
-
-                        if (ImGui::SmallButton("Clear Notify Items"))
-                            misc.notifyItemIds.clear();
-                        ImGui::SameLine();
-                        ImGui::Text("Tracked: %d", (int)misc.notifyItemIds.size());
-
-                        static char notifyItemSearch[128] = "";
-                        ImGui::InputText("Search##notifyitem", notifyItemSearch, sizeof(notifyItemSearch));
-
-                        std::string searchLower;
-                        for (const char* p = notifyItemSearch; *p; ++p)
-                            searchLower.push_back((char)std::tolower((unsigned char)*p));
-
-                        ImGui::BeginChild("##notifyitembrowser", ImVec2(0, 260.0f), ImGuiChildFlags_Borders);
-                        if (ImGui::BeginTable("##notifyitemtable", 4,
-                                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
-                                ImVec2(0, 0))) {
-                            ImGui::TableSetupScrollFreeze(0, 1);
-                            ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch);
-                            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                            ImGui::TableSetupColumn("Notify", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                            ImGui::TableSetupColumn("Mention", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                            ImGui::TableHeadersRow();
-
-                            int shown = 0;
-                            for (const ItemTypeInfo* info : GetAllItemTypes()) {
-                                if (!info)
-                                    continue;
-
-                                if (!searchLower.empty()) {
-                                    std::string nameLower;
-                                    for (char c : info->name)
-                                        nameLower.push_back((char)std::tolower((unsigned char)c));
-                                    if (nameLower.find(searchLower) == std::string::npos
-                                        && std::to_string(info->id).find(notifyItemSearch) == std::string::npos)
-                                        continue;
-                                }
-
-                                const bool isNotify = std::find(misc.notifyItemIds.begin(),
-                                    misc.notifyItemIds.end(), info->id) != misc.notifyItemIds.end();
-                                const bool isMention = std::find(misc.mentionItemIds.begin(),
-                                    misc.mentionItemIds.end(), info->id) != misc.mentionItemIds.end();
-
-                                ImGui::TableNextRow();
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%s", info->name.c_str());
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%u", info->id);
-
-                                ImGui::TableNextColumn();
-                                {
-                                    char btnId[64];
-                                    snprintf(btnId, sizeof(btnId), "%s##miscnotify%u",
-                                             isNotify ? "Remove" : "Add", info->id);
-                                    if (ImGui::SmallButton(btnId)) {
-                                        if (isNotify) {
-                                            misc.notifyItemIds.erase(
-                                                std::remove(misc.notifyItemIds.begin(),
-                                                            misc.notifyItemIds.end(), info->id),
-                                                misc.notifyItemIds.end());
-                                            misc.mentionItemIds.erase(
-                                                std::remove(misc.mentionItemIds.begin(),
-                                                            misc.mentionItemIds.end(), info->id),
-                                                misc.mentionItemIds.end());
-                                        } else {
-                                            misc.notifyItemIds.push_back(info->id);
-                                        }
-                                    }
-                                }
-
-                                ImGui::TableNextColumn();
-                                if (isNotify) {
-                                    char btnId[64];
-                                    snprintf(btnId, sizeof(btnId), "%s##miscmention%u",
-                                             isMention ? "Remove" : "Add", info->id);
-                                    if (ImGui::SmallButton(btnId)) {
-                                        if (isMention)
-                                            misc.mentionItemIds.erase(
-                                                std::remove(misc.mentionItemIds.begin(),
-                                                            misc.mentionItemIds.end(), info->id),
-                                                misc.mentionItemIds.end());
-                                        else
-                                            misc.mentionItemIds.push_back(info->id);
-                                    }
-                                }
-
-                                if (searchLower.empty() && ++shown >= 250)
-                                    break;
-                            }
-
-                            ImGui::EndTable();
-                        }
-                        ImGui::EndChild();
-                    }
+                    RenderMiscDiscordWebhookSection(hero);
+                    RenderMiscWhisperNotificationsSection(hero);
+                    RenderMiscLoggingDiagnosticsSection(hero);
+                    RenderMiscNativePickupTestSection(hero);
+                    RenderMiscNativeJumpTestSection(hero);
+                    RenderMiscNativeWalkTestSection(hero);
+                    RenderMiscHuntRoutesSection(hero);
+                    RenderMiscHuntDiagnosticsSection(hero);
+                    RenderMiscMapProbeSection(hero);
+                    RenderMiscMonsterStatScanSection(hero);
+                    RenderMiscCombatTestSection(hero);
+                    RenderMiscLootDropNotificationsSection(hero);
+                    RenderMiscItemNotificationsSection(hero);
 
                     ImGui::EndTabItem();
                 }
