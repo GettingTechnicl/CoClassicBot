@@ -1331,110 +1331,12 @@ static void RenderMiscItemNotificationsSection(CHero* /*hero*/)
     }
 }
 
-static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync, UINT flags)
+static void RenderMapOverviewSection(CHero* hero, CGameMap* map, bool hasMap, OBJID curMapId,
+    const std::vector<Gateway>& gateways, MapSettings& ms)
 {
-    // ── Lazy init (first call only) ──
-    if (!g_initialized) {
-        g_initialized = true;
-        spdlog::info("[overlay] Present hook firing - initializing ImGui (D3D10 backend)");
-
-        // Get the game's D3D10 device from the swapchain
-        HRESULT hr = pSwapChain->GetDevice(__uuidof(ID3D10Device), (void**)&g_pDevice);
-        if (FAILED(hr) || !g_pDevice) {
-            spdlog::error("[overlay] GetDevice(ID3D10Device) failed: 0x{:08X}", (unsigned long)hr);
-            return OrigPresent(pSwapChain, sync, flags);
-        }
-
-        // Get game HWND from swapchain desc
-        DXGI_SWAP_CHAIN_DESC desc{};
-        pSwapChain->GetDesc(&desc);
-        g_hGameWnd = desc.OutputWindow;
-        spdlog::info("[overlay] D3D10 Device=0x{:X}, HWND=0x{:X}", (uintptr_t)g_pDevice, (uintptr_t)g_hGameWnd);
-
-        // Init ImGui with D3D10 backend
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGuiIO& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        ImGui::StyleColorsDark();
-
-        ImGui_ImplWin32_Init(g_hGameWnd);
-        ImGui_ImplDX10_Init(g_pDevice);
-
-        // Subclass game WndProc for input forwarding
-        g_origWndProc = (WNDPROC)SetWindowLongPtrW(g_hGameWnd, GWLP_WNDPROC, (LONG_PTR)hkWndProc);
-        spdlog::info("[overlay] Initialized (WndProc=0x{:X})", (uintptr_t)g_origWndProc);
-    }
-
-    if (!g_pDevice) return OrigPresent(pSwapChain, sync, flags);
-
-    // ── Background logic (runs every frame, even with overlay hidden) ──
-    TickBackgroundLogic();
-
-    // ── Render ImGui frame ──
-    if (g_showOverlay) {
-        // Create a fresh RTV from the current back buffer each frame
-        ID3D10Texture2D* backBuffer = nullptr;
-        HRESULT hr = pSwapChain->GetBuffer(0, __uuidof(ID3D10Texture2D), (void**)&backBuffer);
-        if (FAILED(hr) || !backBuffer)
-            return OrigPresent(pSwapChain, sync, flags);
-
-        ID3D10RenderTargetView* rtv = nullptr;
-        hr = g_pDevice->CreateRenderTargetView(backBuffer, nullptr, &rtv);
-        backBuffer->Release();
-        if (FAILED(hr) || !rtv)
-            return OrigPresent(pSwapChain, sync, flags);
-
-        ImGui_ImplDX10_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
-
-        TickOverlayRecording();
-
-        // Bot control panel
-        ImGui::SetNextWindowSize(ImVec2(420, 400), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("CoClassic Bot", &g_showOverlay)) {
-            ImGui::Text("Press INSERT to toggle overlay.");
-            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-            if (ImGui::Button("Save Settings"))
-                SaveConfig();
-            ImGui::SameLine();
-            ImGui::TextDisabled("Autosaves shortly after changes");
-            ImGui::Separator();
-
-            CHero* hero = Game::GetHero();
-            if (!hero) {
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f),
-                    "Waiting for player entity...");
-                ImGui::Text("(Log in to a character first)");
-            } else {
-                if (ImGui::BeginTabBar("##tabs")) {
-                // ── Player tab ──
-                if (ImGui::BeginTabItem("Player")) {
-                    RenderPlayerTab(hero);
-                    ImGui::EndTabItem();
-                }
-
-                // ── Map tab (minimap + travel + entity table) ──
-                if (ImGui::BeginTabItem("Map")) {
-                    CGameMap* map = Game::GetMap();
-                    // Session 9: entity source is the heap scan — see entities.h.
-                    const std::vector<CRole*>& entityList = Entities::Get();
-                    // Session 12: fetched once here and reused by both the minimap and
-                    // the table view below, instead of each doing its own independent
-                    // MapItems::Get() heap-scan copy + IsAlive() pass over the same items.
-                    const std::vector<CMapItem*>& mapItemList = MapItems::Get();
-                    bool hasMgr = !entityList.empty();
-                    bool hasMap = map && map->m_sizeMap.iWidth > 0;
-
-                    MapSettings& ms = GetMapSettings();
-                    constexpr ImGuiTreeNodeFlags kMapSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
-
-                    // ── Map info header ──
-                    OBJID curMapId = Game::GetCurrentMapId();
-                    int heroTileX = hero->m_posMap.x;
-                    int heroTileY = hero->m_posMap.y;
-                    auto& gateways = GetGateways(curMapId);
+    constexpr ImGuiTreeNodeFlags kMapSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    int heroTileX = hero->m_posMap.x;
+    int heroTileY = hero->m_posMap.y;
                     if (ImGui::CollapsingHeader("Overview", kMapSectionFlags)) {
                     ImGui::TextColored(ImVec4(0.4f, 1.0f, 1.0f, 1.0f),
                         "Map: %s  (ID: %u)", GetMapName(curMapId), curMapId);
@@ -1494,12 +1396,13 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                         }
                     }
                     }
+}
 
-                    if (auto* travel = PluginManager::Get().GetPlugin<TravelPlugin>()) {
-                        if (ImGui::CollapsingHeader("Travel", kMapSectionFlags)) {
-                            travel->RenderUI();
-                        }
-                    }
+static void RenderMinimapSection(CHero* hero, CGameMap* map,
+    const std::vector<CRole*>& entityList, const std::vector<CMapItem*>& mapItemList,
+    bool hasMgr, bool hasMap, MapSettings& ms, const std::vector<Gateway>& gateways)
+{
+    constexpr ImGuiTreeNodeFlags kMapSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
 
                     // Snapshot map state
                     CellInfo* cells   = map ? map->m_pCellInfo : nullptr;
@@ -1507,7 +1410,6 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                     int       mapH_t  = map ? map->m_sizeMap.iHeight : 0;
                     bool      mapOk   = cells && mapW_t > 0 && mapH_t > 0
                                         && mapW_t < 10000 && mapH_t < 10000;
-
                     if (ImGui::CollapsingHeader("Minimap", kMapSectionFlags)) {
                     if (mapOk) {
                         int heroX = hero->m_posMap.x;
@@ -2165,6 +2067,12 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
 
                     // ── Entity table (collapsible) ──
                     }
+}
+
+static void RenderEntitiesTableSection(CHero* hero,
+    const std::vector<CRole*>& entityList, const std::vector<CMapItem*>& mapItemList,
+    bool hasMgr, bool hasMap)
+{
                     if (ImGui::CollapsingHeader("Entities##table")) {
                         ImGui::Text("Show:");
                         ImGui::SameLine();
@@ -2327,6 +2235,119 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                             ImGui::EndTable();
                         }
                     }
+}
+
+static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync, UINT flags)
+{
+    // ── Lazy init (first call only) ──
+    if (!g_initialized) {
+        g_initialized = true;
+        spdlog::info("[overlay] Present hook firing - initializing ImGui (D3D10 backend)");
+
+        // Get the game's D3D10 device from the swapchain
+        HRESULT hr = pSwapChain->GetDevice(__uuidof(ID3D10Device), (void**)&g_pDevice);
+        if (FAILED(hr) || !g_pDevice) {
+            spdlog::error("[overlay] GetDevice(ID3D10Device) failed: 0x{:08X}", (unsigned long)hr);
+            return OrigPresent(pSwapChain, sync, flags);
+        }
+
+        // Get game HWND from swapchain desc
+        DXGI_SWAP_CHAIN_DESC desc{};
+        pSwapChain->GetDesc(&desc);
+        g_hGameWnd = desc.OutputWindow;
+        spdlog::info("[overlay] D3D10 Device=0x{:X}, HWND=0x{:X}", (uintptr_t)g_pDevice, (uintptr_t)g_hGameWnd);
+
+        // Init ImGui with D3D10 backend
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        ImGui::StyleColorsDark();
+
+        ImGui_ImplWin32_Init(g_hGameWnd);
+        ImGui_ImplDX10_Init(g_pDevice);
+
+        // Subclass game WndProc for input forwarding
+        g_origWndProc = (WNDPROC)SetWindowLongPtrW(g_hGameWnd, GWLP_WNDPROC, (LONG_PTR)hkWndProc);
+        spdlog::info("[overlay] Initialized (WndProc=0x{:X})", (uintptr_t)g_origWndProc);
+    }
+
+    if (!g_pDevice) return OrigPresent(pSwapChain, sync, flags);
+
+    // ── Background logic (runs every frame, even with overlay hidden) ──
+    TickBackgroundLogic();
+
+    // ── Render ImGui frame ──
+    if (g_showOverlay) {
+        // Create a fresh RTV from the current back buffer each frame
+        ID3D10Texture2D* backBuffer = nullptr;
+        HRESULT hr = pSwapChain->GetBuffer(0, __uuidof(ID3D10Texture2D), (void**)&backBuffer);
+        if (FAILED(hr) || !backBuffer)
+            return OrigPresent(pSwapChain, sync, flags);
+
+        ID3D10RenderTargetView* rtv = nullptr;
+        hr = g_pDevice->CreateRenderTargetView(backBuffer, nullptr, &rtv);
+        backBuffer->Release();
+        if (FAILED(hr) || !rtv)
+            return OrigPresent(pSwapChain, sync, flags);
+
+        ImGui_ImplDX10_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+        ImGui::NewFrame();
+
+        TickOverlayRecording();
+
+        // Bot control panel
+        ImGui::SetNextWindowSize(ImVec2(420, 400), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("CoClassic Bot", &g_showOverlay)) {
+            ImGui::Text("Press INSERT to toggle overlay.");
+            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+            if (ImGui::Button("Save Settings"))
+                SaveConfig();
+            ImGui::SameLine();
+            ImGui::TextDisabled("Autosaves shortly after changes");
+            ImGui::Separator();
+
+            CHero* hero = Game::GetHero();
+            if (!hero) {
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f),
+                    "Waiting for player entity...");
+                ImGui::Text("(Log in to a character first)");
+            } else {
+                if (ImGui::BeginTabBar("##tabs")) {
+                // ── Player tab ──
+                if (ImGui::BeginTabItem("Player")) {
+                    RenderPlayerTab(hero);
+                    ImGui::EndTabItem();
+                }
+
+                // ── Map tab (minimap + travel + entity table) ──
+                if (ImGui::BeginTabItem("Map")) {
+                    CGameMap* map = Game::GetMap();
+                    // Session 9: entity source is the heap scan — see entities.h.
+                    const std::vector<CRole*>& entityList = Entities::Get();
+                    // Session 12: fetched once here and reused by both the minimap and
+                    // the table view below, instead of each doing its own independent
+                    // MapItems::Get() heap-scan copy + IsAlive() pass over the same items.
+                    const std::vector<CMapItem*>& mapItemList = MapItems::Get();
+                    bool hasMgr = !entityList.empty();
+                    bool hasMap = map && map->m_sizeMap.iWidth > 0;
+
+                    MapSettings& ms = GetMapSettings();
+
+                    // ── Map info header ──
+                    OBJID curMapId = Game::GetCurrentMapId();
+                    auto& gateways = GetGateways(curMapId);
+                    RenderMapOverviewSection(hero, map, hasMap, curMapId, gateways, ms);
+
+                    if (auto* travel = PluginManager::Get().GetPlugin<TravelPlugin>()) {
+                        if (ImGui::CollapsingHeader("Travel", ImGuiTreeNodeFlags_DefaultOpen)) {
+                            travel->RenderUI();
+                        }
+                    }
+
+                    RenderMinimapSection(hero, map, entityList, mapItemList, hasMgr, hasMap, ms, gateways);
+                    RenderEntitiesTableSection(hero, entityList, mapItemList, hasMgr, hasMap);
                     ImGui::EndTabItem();
                 }
 
