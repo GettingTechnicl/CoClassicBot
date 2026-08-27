@@ -56,6 +56,23 @@ namespace AutoLogin {
 // the same time (the multi-account manager) — without it, a plain
 // title-only window search would nondeterministically grab whichever
 // process's login window happens to match first.
-bool PerformLogin(const AutoLoginRequest& request, uint32_t targetPid, uint32_t timeoutMs = 30000);
+//
+// isReconnect: true when this is an in-place reconnect after a detected
+// in-game disconnect (as opposed to the initial post-launch login) —
+// live-reported, reconnecting shows an "Error: Connection with the server
+// is interrupted. Please re-login." banner first, which needs an
+// Enter/Space to dismiss before the form is usable. Only sent on this
+// path; sending it unconditionally on a fresh login could submit the
+// form prematurely.
+bool PerformLogin(const AutoLoginRequest& request, uint32_t targetPid, uint32_t timeoutMs = 30000,
+                   bool isReconnect = false);
+
+// One-shot check (no waiting): is the login window currently open for the
+// process identified by targetPid? Multi-account manager support — used
+// to detect an in-game disconnect (network hiccup, manual "Disconnect")
+// that drops back to the login screen WITHOUT the game process itself
+// exiting, which nothing else (process handle, stop event) would notice.
+// See RunAccountSupervisionLoop's use of this in injector/main.cpp.
+bool IsAtLoginScreen(uint32_t targetPid);
 
 }  // namespace AutoLogin

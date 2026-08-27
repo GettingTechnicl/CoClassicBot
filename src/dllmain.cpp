@@ -58,6 +58,36 @@ bool ConsumeResumeHuntMarker()
     return true;
 }
 
+// Multi-account manager support: the launcher's own login-window-closed
+// heuristic (see injector/auto_login.cpp) is a weak signal — the login
+// window can stay technically alive (hidden/reparented) well after a real
+// login completes, which left the manager UI's status stuck on "Logging
+// in..." indefinitely even though the character was already in-game. This
+// writes the SAME kind of PID-keyed marker file resume_hunt uses, but in
+// the other direction: the DLL telling the launcher "the hero pointer is
+// now valid" the instant it actually knows that (right where InitThread
+// already polls for it below) — ground truth, not a guess based on window
+// lifetime. The launcher polls for this file's existence/deletes it; see
+// RunAccountSupervisionLoop's use of it in injector/main.cpp.
+std::string LoggedInMarkerPath()
+{
+    char buf[MAX_PATH];
+    GetModuleFileNameA(g_hModule, buf, MAX_PATH);
+    std::string path = buf;
+    const auto pos = path.find_last_of("\\/");
+    if (pos != std::string::npos)
+        path = path.substr(0, pos + 1);
+    path += "logged_in_" + std::to_string(GetCurrentProcessId()) + ".flag";
+    return path;
+}
+
+void WriteLoggedInMarker()
+{
+    FILE* f = nullptr;
+    if (fopen_s(&f, LoggedInMarkerPath().c_str(), "w") == 0 && f)
+        fclose(f);
+}
+
 }  // namespace
 
 static DWORD WINAPI InitThread(LPVOID)
@@ -69,13 +99,16 @@ static DWORD WINAPI InitThread(LPVOID)
     // Strategy: sit quietly until the hero pointer becomes valid (= logged in),
     // then do all initialization.
 
-    AllocConsole();
-    FILE* dummy = nullptr;
-    freopen_s(&dummy, "CONOUT$", "w", stdout);
-    freopen_s(&dummy, "CONOUT$", "w", stderr);
-
+    // Multi-account manager support: this used to AllocConsole() here for a
+    // visible bot-log window per game process -- with several accounts
+    // running at once that meant one extra black window per account, on
+    // top of the launcher's own (now also removed, see injector/main.cpp's
+    // WinMain). Log::Init() already writes everything to coclassic.log
+    // (a rotating file sink, independent of any console) regardless of
+    // whether a console exists, so dropping this loses no diagnostics --
+    // spdlog's console sink just silently no-ops against a detached stdout.
     Log::Init();
-    spdlog::info("[init] Console attached, logger ready");
+    spdlog::info("[init] Logger ready");
 
     // Install HWID spoof hooks early — before the game collects hardware
     // identifiers for the login packet.  These hook Windows system DLLs
@@ -100,6 +133,8 @@ static DWORD WINAPI InitThread(LPVOID)
             break;
         Sleep(500);
     }
+    WriteLoggedInMarker();
+    spdlog::info("[init] Wrote login-confirmed marker: {}", LoggedInMarkerPath());
 
     // Player is logged in - safe to initialize everything now.
     spdlog::info("[init] DLL attached (post-login init)");

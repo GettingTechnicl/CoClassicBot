@@ -2,6 +2,7 @@
 #include <Windows.h>
 #include <WinSock2.h>
 #include <Ws2tcpip.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <atomic>
@@ -57,26 +58,6 @@ struct LaunchOptions
 
 // Forward declarations for dialog function
 static bool ParseEndpoint(const std::string& text, Endpoint* endpoint);
-
-// SOCKS5 configuration dialog data
-struct Socks5DialogData
-{
-    char host[256] = "";
-    char port[8] = "1080";
-    char username[128] = "";
-    char password[128] = "";
-    bool useAuth = false;
-    bool confirmed = false;
-    bool packetLog = false;
-    bool killSwitch = true;
-};
-
-enum class Socks5PromptResult
-{
-    Disabled,
-    Configured,
-    Aborted
-};
 
 // Simple input box using Windows API - returns true if user clicked OK
 static bool InputBox(HWND parent, const char* title, const char* prompt, char* buffer, size_t bufferSize,
@@ -193,344 +174,6 @@ static bool InputBox(HWND parent, const char* title, const char* prompt, char* b
     return confirmed;
 }
 
-namespace {
-constexpr int kAccountListId = 3001;
-constexpr int kAccountAddId = 3002;
-constexpr int kAccountRemoveId = 3003;
-}  // namespace
-
-// Character-select screen: lists saved accounts (DPAPI-encrypted locally,
-// see credentials.h), lets the user pick one to auto-login with, add a new
-// one, or remove one. Returns false if the user cancels/skips — the caller
-// falls back to the old single-shot manual-login flow in that case, so
-// nothing about existing usage breaks for someone who never saves an account.
-static bool ShowAccountPickerDialog(AccountProfile* outProfile)
-{
-    static std::vector<AccountProfile> s_profiles;
-    static HWND s_listBox = nullptr;
-    static bool s_confirmed = false;
-    static int s_selectedIndex = -1;
-
-    s_profiles = Credentials::LoadAll();
-    s_confirmed = false;
-    s_selectedIndex = -1;
-
-    // static: referenced from the non-capturing WndProc lambda below, which
-    // (like InputBox's WndProc above it) can only see static-storage-duration
-    // locals, never ordinary captured ones — a WNDPROC must stay a plain
-    // function pointer.
-    static auto refreshList = [](HWND listBox) {
-        SendMessageA(listBox, LB_RESETCONTENT, 0, 0);
-        for (const auto& profile : s_profiles) {
-            char line[512];
-            snprintf(line, sizeof(line), "%s  (%s)", profile.label.c_str(), profile.username.c_str());
-            SendMessageA(listBox, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(line));
-        }
-    };
-
-    static bool classRegistered = false;
-    if (!classRegistered) {
-        WNDCLASSA wc = {};
-        wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) -> LRESULT {
-            switch (msg) {
-            case WM_COMMAND:
-                switch (LOWORD(wParam)) {
-                case IDOK: {
-                    const LRESULT sel = SendMessageA(s_listBox, LB_GETCURSEL, 0, 0);
-                    if (sel == LB_ERR) {
-                        MessageBoxA(hwnd, "Select an account first, or click Add New.", "coclassic", MB_OK | MB_ICONWARNING | MB_TOPMOST);
-                        return 0;
-                    }
-                    s_selectedIndex = static_cast<int>(sel);
-                    s_confirmed = true;
-                    DestroyWindow(hwnd);
-                    return 0;
-                }
-                case IDCANCEL:
-                    s_confirmed = false;
-                    DestroyWindow(hwnd);
-                    return 0;
-                case kAccountAddId: {
-                    // Session 12: several early `return 0;` paths below leave
-                    // this scope without reaching the end of the block — an
-                    // RAII scrubber guarantees the stack buffer is zeroed on
-                    // every exit instead of needing a SecureZeroMemory call
-                    // placed before each individual return.
-                    struct ScrubOnExit {
-                        char* buf; size_t len;
-                        ~ScrubOnExit() { SecureZeroMemory(buf, len); }
-                    };
-                    char label[128] = "", username[128] = "", password[128] = "", server[128] = "Classic (US)";
-                    ScrubOnExit scrubPassword{password, sizeof(password)};
-                    if (!InputBox(hwnd, "Add Account - Label", "Label (e.g. \"Main\"):", label, sizeof(label)))
-                        return 0;
-                    if (!InputBox(hwnd, "Add Account - Username", "Username:", username, sizeof(username)))
-                        return 0;
-                    if (!InputBox(hwnd, "Add Account - Password", "Password:", password, sizeof(password), "", true))
-                        return 0;
-                    if (!InputBox(hwnd, "Add Account - Server", "Server (as shown in the login screen's dropdown):", server, sizeof(server), server))
-                        return 0;
-
-                    AccountProfile profile;
-                    profile.label = label;
-                    profile.username = username;
-                    profile.password = password;
-                    profile.server = server;
-
-                    // Saved here so selecting this account later skips the
-                    // interactive SOCKS5 dialog entirely — see main()'s use
-                    // of haveProfile/selectedProfile.useProxy.
-                    const int useProxy = MessageBoxA(hwnd,
-                        "Use a SOCKS5 proxy for this account?\n\n"
-                        "Select YES to save a proxy for this account (skips the proxy setup "
-                        "dialog on future launches). Select NO to always connect directly.",
-                        "Add Account - Proxy", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
-                    if (useProxy == IDYES) {
-                        char hostPort[128] = "", proxyUser[128] = "", proxyPassword[128] = "";
-                        ScrubOnExit scrubProxyPassword{proxyPassword, sizeof(proxyPassword)};
-                        if (!InputBox(hwnd, "Add Account - Proxy Address", "Proxy host:port (e.g. 127.0.0.1:1080):",
-                                hostPort, sizeof(hostPort)))
-                            return 0;
-                        const int useAuth = MessageBoxA(hwnd, "Does this proxy require a username/password?",
-                            "Add Account - Proxy Auth", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
-                        if (useAuth == IDYES) {
-                            if (!InputBox(hwnd, "Add Account - Proxy Username", "Proxy username:", proxyUser, sizeof(proxyUser)))
-                                return 0;
-                            if (!InputBox(hwnd, "Add Account - Proxy Password", "Proxy password:", proxyPassword, sizeof(proxyPassword), "", true))
-                                return 0;
-                        }
-                        profile.useProxy = true;
-                        profile.proxyHostPort = hostPort;
-                        profile.proxyUser = proxyUser;
-                        profile.proxyPassword = proxyPassword;
-                    }
-
-                    s_profiles.push_back(std::move(profile));
-                    Credentials::SaveAll(s_profiles);
-                    refreshList(s_listBox);
-                    return 0;
-                }
-                case kAccountRemoveId: {
-                    const LRESULT sel = SendMessageA(s_listBox, LB_GETCURSEL, 0, 0);
-                    if (sel == LB_ERR)
-                        return 0;
-                    if (MessageBoxA(hwnd, "Remove the selected account?", "coclassic",
-                            MB_YESNO | MB_ICONQUESTION | MB_TOPMOST) != IDYES)
-                        return 0;
-                    s_profiles.erase(s_profiles.begin() + sel);
-                    Credentials::SaveAll(s_profiles);
-                    refreshList(s_listBox);
-                    return 0;
-                }
-                }
-                return 0;
-            case WM_CLOSE:
-                s_confirmed = false;
-                DestroyWindow(hwnd);
-                return 0;
-            }
-            return DefWindowProcA(hwnd, msg, wParam, lParam);
-        };
-        wc.hInstance = GetModuleHandleA(nullptr);
-        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.lpszClassName = "AccountPickerDlg";
-        RegisterClassA(&wc);
-        classRegistered = true;
-    }
-
-    // The w/h passed to CreateWindowExA are OUTER window dimensions
-    // (including title bar + borders), not client-area size — using the
-    // desired client size directly clipped the bottom row of buttons under
-    // the title bar. AdjustWindowRectEx computes the correct outer size for
-    // a given client area, style, and exstyle (title bar height varies with
-    // Windows theme/DPI, so a hardcoded fudge factor isn't reliable).
-    constexpr DWORD kStyle = WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE;
-    constexpr DWORD kExStyle = WS_EX_DLGMODALFRAME | WS_EX_TOPMOST;
-    RECT clientRect{0, 0, 420, 310};
-    AdjustWindowRectEx(&clientRect, kStyle, FALSE, kExStyle);
-    const int w = clientRect.right - clientRect.left;
-    const int h = clientRect.bottom - clientRect.top;
-
-    const int screenW = GetSystemMetrics(SM_CXSCREEN);
-    const int screenH = GetSystemMetrics(SM_CYSCREEN);
-    const int x = (screenW - w) / 2, y = (screenH - h) / 2;
-
-    HWND dlg = CreateWindowExA(
-        kExStyle,
-        "AccountPickerDlg",
-        "coclassic - Select Account",
-        kStyle,
-        x, y, w, h,
-        nullptr, nullptr, GetModuleHandleA(nullptr), nullptr);
-    if (!dlg)
-        return false;
-
-    CreateWindowA("STATIC", "Saved accounts (auto-login fills these in on the game's own login screen):",
-        WS_CHILD | WS_VISIBLE | SS_LEFT, 10, 10, 390, 20, dlg, nullptr, GetModuleHandleA(nullptr), nullptr);
-
-    s_listBox = CreateWindowA("LISTBOX", "",
-        WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
-        10, 35, 390, 180, dlg, reinterpret_cast<HMENU>(kAccountListId), GetModuleHandleA(nullptr), nullptr);
-    refreshList(s_listBox);
-
-    CreateWindowA("BUTTON", "Add New", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        10, 225, 120, 30, dlg, reinterpret_cast<HMENU>(kAccountAddId), GetModuleHandleA(nullptr), nullptr);
-    CreateWindowA("BUTTON", "Remove Selected", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        140, 225, 120, 30, dlg, reinterpret_cast<HMENU>(kAccountRemoveId), GetModuleHandleA(nullptr), nullptr);
-
-    CreateWindowA("BUTTON", "Login", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-        90, 270, 110, 30, dlg, reinterpret_cast<HMENU>(IDOK), GetModuleHandleA(nullptr), nullptr);
-    CreateWindowA("BUTTON", "Skip (manual login)", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        210, 270, 150, 30, dlg, reinterpret_cast<HMENU>(IDCANCEL), GetModuleHandleA(nullptr), nullptr);
-
-    MSG msg;
-    while (IsWindow(dlg)) {
-        if (GetMessageA(&msg, nullptr, 0, 0)) {
-            if (!IsDialogMessage(dlg, &msg)) {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }
-        }
-    }
-
-    if (s_confirmed && s_selectedIndex >= 0 && s_selectedIndex < static_cast<int>(s_profiles.size())) {
-        *outProfile = s_profiles[s_selectedIndex];
-        return true;
-    }
-    return false;
-}
-
-static Socks5PromptResult ShowSocks5ConfigDialog(LaunchOptions* options)
-{
-    if (!options)
-        return Socks5PromptResult::Aborted;
-
-    // First ask if they want to use SOCKS5 at all
-    int useProxy = MessageBoxA(nullptr,
-        "Do you want to use a SOCKS5 proxy to hide your real IP address?\n\n"
-        "Select YES to configure proxy settings.\n"
-        "Select NO to connect directly (your real IP will be visible).",
-        "coclassic - SOCKS5 Proxy Setup",
-        MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
-
-    if (useProxy != IDYES) {
-        return Socks5PromptResult::Disabled;
-    }
-
-    // Load saved settings
-    Socks5DialogData data;
-    char exePath[MAX_PATH];
-    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-    fs::path savePath = fs::path(exePath).parent_path() / "socks5_config.txt";
-    
-    if (fs::exists(savePath)) {
-        std::ifstream file(savePath);
-        if (file) {
-            std::string line;
-            if (std::getline(file, line)) strncpy_s(data.host, line.c_str(), sizeof(data.host) - 1);
-            if (std::getline(file, line)) strncpy_s(data.port, line.c_str(), sizeof(data.port) - 1);
-            if (std::getline(file, line)) data.useAuth = (line == "1");
-            if (std::getline(file, line)) strncpy_s(data.username, line.c_str(), sizeof(data.username) - 1);
-            if (std::getline(file, line)) data.packetLog = (line == "1");
-            if (std::getline(file, line)) data.killSwitch = (line != "0");
-        }
-    }
-
-    // Defaults
-    if (data.host[0] == '\0') strncpy_s(data.host, "127.0.0.1", sizeof(data.host));
-    if (data.port[0] == '\0') strncpy_s(data.port, "1080", sizeof(data.port));
-
-    // Ask for proxy host:port
-    char hostPort[300];
-    snprintf(hostPort, sizeof(hostPort), "%s:%s", data.host, data.port);
-    
-    if (!InputBox(nullptr, "SOCKS5 Proxy - Host:Port",
-        "Enter proxy address (e.g., 127.0.0.1:1080 or proxy.example.com:1080):",
-        hostPort, sizeof(hostPort), hostPort)) {
-        return Socks5PromptResult::Aborted;
-    }
-
-    // Parse host:port
-    Endpoint proxy;
-    if (!ParseEndpoint(hostPort, &proxy)) {
-        MessageBoxA(nullptr, "Invalid proxy address format.\nExpected: host:port (e.g., 127.0.0.1:1080)",
-            "Configuration Error", MB_OK | MB_ICONERROR | MB_TOPMOST);
-        return Socks5PromptResult::Aborted;
-    }
-    strncpy_s(data.host, proxy.host.c_str(), sizeof(data.host) - 1);
-    snprintf(data.port, sizeof(data.port), "%u", proxy.port);
-
-    // Ask about authentication
-    int useAuth = MessageBoxA(nullptr,
-        "Does your SOCKS5 proxy require username/password authentication?",
-        "SOCKS5 Authentication",
-        MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
-    data.useAuth = (useAuth == IDYES);
-
-    if (data.useAuth) {
-        if (!InputBox(nullptr, "SOCKS5 Proxy - Username",
-            "Enter SOCKS5 username:",
-            data.username, sizeof(data.username), data.username)) {
-            return Socks5PromptResult::Aborted;
-        }
-
-        if (!InputBox(nullptr, "SOCKS5 Proxy - Password",
-            "Enter SOCKS5 password:",
-            data.password, sizeof(data.password), "", true)) {
-            return Socks5PromptResult::Aborted;
-        }
-    }
-
-    int packetLog = MessageBoxA(nullptr,
-        "Enable packet logging?\n\nThis writes outbound client TCP chunks to relay_packets.log.\nLeave this OFF unless you are debugging.",
-        "SOCKS5 Packet Logging",
-        MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
-    data.packetLog = (packetLog == IDYES);
-
-    int killSwitch = MessageBoxA(nullptr,
-        "Enable kill-switch?\n\nIf the proxied game connection closes while the game is still running, the launcher will terminate the game process.",
-        "SOCKS5 Kill-Switch",
-        MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
-    data.killSwitch = (killSwitch == IDYES);
-
-    // Populate options
-    options->m_proxy = proxy;
-    options->m_packetLog = data.packetLog;
-    options->m_killSwitch = data.killSwitch;
-    if (data.useAuth) {
-        options->m_proxyUser = data.username;
-        options->m_proxyPassword = data.password;
-    }
-
-    // Save settings for next time
-    std::ofstream saveFile(savePath);
-    if (saveFile) {
-        saveFile << data.host << "\n";
-        saveFile << data.port << "\n";
-        saveFile << (data.useAuth ? "1" : "0") << "\n";
-        saveFile << data.username << "\n";
-        saveFile << (data.packetLog ? "1" : "0") << "\n";
-        saveFile << (data.killSwitch ? "1" : "0") << "\n";
-    }
-
-    // Confirmation message
-    char confirmMsg[512];
-    snprintf(confirmMsg, sizeof(confirmMsg),
-        "SOCKS5 proxy configured:\n\n"
-        "Proxy: %s:%s\n"
-        "Auth: %s\n"
-        "Packet logging: %s\n"
-        "Kill-switch: %s\n\n"
-        "Game traffic will be routed through this proxy while the relay is active.",
-        data.host, data.port,
-        data.useAuth ? "Yes (username set)" : "No",
-        data.packetLog ? "Enabled" : "Disabled",
-        data.killSwitch ? "Enabled" : "Disabled");
-    MessageBoxA(nullptr, confirmMsg, "SOCKS5 Proxy Ready", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
-
-    return Socks5PromptResult::Configured;
-}
-
 struct ManagedSocket
 {
     explicit ManagedSocket(SOCKET value) : m_socket(value) {}
@@ -544,38 +187,6 @@ using ManagedSocketPtr = std::shared_ptr<ManagedSocket>;
 static std::string EndpointToString(const Endpoint& endpoint)
 {
     return endpoint.host + ":" + std::to_string(endpoint.port);
-}
-
-static void PrintUsage()
-{
-    printf("Usage:\n");
-    printf("  launcher.exe\n");
-    printf("  launcher.exe --proxy <host:port> [--proxy-user <user>] [--proxy-pass <pass>]\n");
-    printf("              [--relay-port <port>] [--target <host:port>] [--packet-log] [--no-kill-switch]\n");
-    printf("  launcher.exe --no-prompt\n\n");
-    printf("Examples:\n");
-    printf("  launcher.exe                                    (shows SOCKS5 setup dialog)\n");
-    printf("  launcher.exe --proxy 127.0.0.1:1080\n");
-    printf("  launcher.exe --proxy my-socks.example:1080 --proxy-user alice --proxy-pass secret\n");
-    printf("  launcher.exe --no-prompt                          (skip dialog, no proxy)\n\n");
-    printf("Options:\n");
-    printf("  --proxy <host:port>     SOCKS5 proxy server (e.g., 127.0.0.1:1080)\n");
-    printf("  --proxy-user <user>     SOCKS5 username (optional)\n");
-    printf("  --proxy-pass <pass>     SOCKS5 password (optional)\n");
-    printf("  --relay-port <port>     Local relay port (default: same as target port)\n");
-    printf("  --target <host:port>    Override game server endpoint\n");
-    printf("  --no-prompt             Skip SOCKS5 setup dialog, run without proxy\n\n");
-    printf("  --packet-log            Log outbound client TCP chunks to relay_packets.log\n");
-    printf("  --no-kill-switch        Do not terminate game when the proxied connection closes\n\n");
-    printf("Notes:\n");
-    printf("  - Running without --proxy shows a GUI dialog asking if you want SOCKS5.\n");
-    printf("  - Proxy host, port, and username are saved to socks5_config.txt; password is not saved.\n");
-    printf("  - Proxy mode temporarily rewrites %s to %s:<relay-port> while the launched game is running.\n",
-           SERVER_CONFIG_NAME, LOCAL_RELAY_HOST);
-    printf("  - The launcher stays open in proxy mode to keep the local relay alive and restores %s on exit.\n",
-           SERVER_CONFIG_NAME);
-    printf("  - Packet logging is off by default and only enabled with --packet-log or the prompt.\n");
-    printf("  - Without --proxy, the launcher will show a setup dialog or connect directly.\n");
 }
 
 static bool ParseUInt16(const std::string& text, uint16_t* value)
@@ -620,94 +231,6 @@ static bool ParseEndpoint(const std::string& text, Endpoint* endpoint)
 
     endpoint->host = std::move(host);
     endpoint->port = port;
-    return true;
-}
-
-static bool ParseArgs(int argc, char** argv, LaunchOptions* options)
-{
-    if (!options)
-        return false;
-
-    auto requireValue = [&](int index, const char* flag) -> const char* {
-        if (index + 1 >= argc) {
-            printf("[!] Missing value for %s\n", flag);
-            return nullptr;
-        }
-        return argv[index + 1];
-    };
-
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-
-        if (arg == "--help" || arg == "-h") {
-            options->m_showHelp = true;
-        } else if (arg == "--proxy") {
-            const char* value = requireValue(i, "--proxy");
-            if (!value)
-                return false;
-
-            Endpoint endpoint;
-            if (!ParseEndpoint(value, &endpoint)) {
-                printf("[!] Invalid --proxy value: %s\n", value);
-                return false;
-            }
-
-            options->m_proxy = std::move(endpoint);
-            ++i;
-        } else if (arg == "--proxy-user") {
-            const char* value = requireValue(i, "--proxy-user");
-            if (!value)
-                return false;
-            options->m_proxyUser = value;
-            ++i;
-        } else if (arg == "--proxy-pass") {
-            const char* value = requireValue(i, "--proxy-pass");
-            if (!value)
-                return false;
-            options->m_proxyPassword = value;
-            ++i;
-        } else if (arg == "--relay-port") {
-            const char* value = requireValue(i, "--relay-port");
-            if (!value)
-                return false;
-
-            if (!ParseUInt16(value, &options->m_relayPort)) {
-                printf("[!] Invalid --relay-port value: %s\n", value);
-                return false;
-            }
-            ++i;
-        } else if (arg == "--target") {
-            const char* value = requireValue(i, "--target");
-            if (!value)
-                return false;
-
-            Endpoint endpoint;
-            if (!ParseEndpoint(value, &endpoint)) {
-                printf("[!] Invalid --target value: %s\n", value);
-                return false;
-            }
-
-            options->m_targetOverride = std::move(endpoint);
-            ++i;
-        } else if (arg == "--no-prompt") {
-            options->m_noPrompt = true;
-        } else if (arg == "--packet-log") {
-            options->m_packetLog = true;
-        } else if (arg == "--no-kill-switch") {
-            options->m_killSwitch = false;
-        } else {
-            printf("[!] Unknown argument: %s\n", arg.c_str());
-            return false;
-        }
-    }
-
-    if (!options->m_proxy && (!options->m_proxyUser.empty() || !options->m_proxyPassword.empty() ||
-                              options->m_relayPort != 0 || options->m_targetOverride.has_value() ||
-                              options->m_packetLog || !options->m_killSwitch)) {
-        printf("[!] --proxy-user, --proxy-pass, --relay-port, --target, --packet-log, and --no-kill-switch require --proxy.\n");
-        return false;
-    }
-
     return true;
 }
 
@@ -1576,50 +1099,14 @@ private:
     std::vector<std::thread> m_sessionThreads;
 };
 
-struct RuntimeContext
-{
-    ServerConfigPatch* m_patch = nullptr;
-    Socks5Relay* m_relay = nullptr;
-    RelayLogger* m_logger = nullptr;
-};
-
-static RuntimeContext* g_runtimeContext = nullptr;
-
-// Signaled by Ctrl+C/Ctrl+Break so the supervision loop (see main()) can
-// stop relaunching cleanly without killing the game itself — distinct from
-// the game process exiting on its own, which IS a relaunch trigger.
-static HANDLE g_stopSupervisingEvent = nullptr;
-
-static BOOL WINAPI ConsoleCtrlHandler(DWORD ctrlType)
-{
-    switch (ctrlType) {
-    case CTRL_C_EVENT:
-    case CTRL_BREAK_EVENT:
-        // CTRL_CLOSE/LOGOFF/SHUTDOWN give the process only a few seconds
-        // before Windows force-terminates it regardless of return value, so
-        // there's no reliable window to let the supervision loop notice and
-        // exit cleanly — only Ctrl+C/Break (which impose no such deadline)
-        // get the "handled, keep running long enough to stop gracefully"
-        // treatment.
-        if (g_stopSupervisingEvent)
-            SetEvent(g_stopSupervisingEvent);
-        return TRUE;
-    case CTRL_CLOSE_EVENT:
-    case CTRL_LOGOFF_EVENT:
-    case CTRL_SHUTDOWN_EVENT:
-        if (g_runtimeContext) {
-            if (g_runtimeContext->m_relay)
-                g_runtimeContext->m_relay->Stop();
-            if (g_runtimeContext->m_patch)
-                g_runtimeContext->m_patch->Restore();
-            if (g_runtimeContext->m_logger)
-                g_runtimeContext->m_logger->Stop();
-        }
-        return FALSE;
-    default:
-        return FALSE;
-    }
-}
+// Guards the span from patching servers.json for a proxy-mode account
+// through that account's game process having had a chance to read it
+// (see RunAccountSupervisionLoop's use of this) — prevents two accounts'
+// proxy launches from clobbering each other's rewrite of the same shared
+// file mid-startup. Only ever taken by a session's own worker thread, and
+// only for the FIRST launch of a proxy-mode session (relaunches never
+// re-Apply() the patch, so there's nothing new to protect there).
+static std::mutex g_serverConfigMutex;
 
 static bool Inject(DWORD pid, const char* dllPath)
 {
@@ -1732,6 +1219,78 @@ struct SupervisionParams
     RelayLogger* activeLogger = nullptr;       // non-null only when proxyMode && packet logging is on
 };
 
+// Sends auto-login keystrokes for `pid`, then waits (bounded) for
+// confirmation that login actually completed, before returning. Two
+// different confirmation signals depending on which call site this is:
+//
+// - Initial post-launch login (isReconnect=false): waits for the DLL's
+//   ground-truth "hero pointer valid" marker (dllmain.cpp's
+//   WriteLoggedInMarker()) — live-confirmed fast and reliable (3-5s).
+// - Reconnect after a detected disconnect (isReconnect=true): waits for
+//   AutoLogin::IsAtLoginScreen(pid) to become false instead. Live-tested:
+//   the marker approach does NOT work here — a mere in-game "Disconnect"
+//   almost certainly never actually invalidates the hero pointer
+//   client-side (it just drops the connection and shows the login
+//   overlay on top of the still-alive hero object), so
+//   ConnectionMonitorThread's invalid->valid edge detection never fires
+//   on reconnect, and the wait always ran the full 60s timeout before
+//   falling back. The login window closing is a signal this file already
+//   trusts elsewhere (IsAtLoginScreen IS the disconnect detector one
+//   level up in RunAccountSupervisionLoop) and needs no DLL cooperation.
+//
+// Returns whether confirmation was actually seen, so callers can bound
+// retries instead of treating every attempt as having silently succeeded.
+static bool PerformLoginAndWaitForConfirmation(AccountSession* session, const SupervisionParams& params, DWORD pid,
+                                                bool isReconnect)
+{
+    AutoLoginRequest loginReq{session->profile.username, session->profile.password, session->profile.server};
+    // PerformLogin's own wait is shortened to 8s since the confirmation
+    // wait below is the real, authoritative detector -- this call's
+    // return value is only used for a diagnostic printf, not gated on.
+    if (!AutoLogin::PerformLogin(loginReq, pid, 8000, isReconnect))
+        printf("[!] Auto-login window-close check timed out (informational only, not a failure by itself) — pid=%lu\n", pid);
+
+    const DWORD waitStart = GetTickCount();
+    bool confirmed = false;
+
+    if (isReconnect) {
+        constexpr DWORD kReconnectConfirmTimeoutMs = 30000;
+        printf("[*] Waiting for the login window to close (reconnect confirmation)...\n");
+        while (GetTickCount() - waitStart < kReconnectConfirmTimeoutMs) {
+            if (!AutoLogin::IsAtLoginScreen(pid)) {
+                confirmed = true;
+                break;
+            }
+            if (session->stopEvent && WaitForSingleObject(session->stopEvent, 0) == WAIT_OBJECT_0) {
+                printf("[*] Reconnect-confirmation wait interrupted by stop request.\n");
+                break;
+            }
+            Sleep(500);
+        }
+    } else {
+        const fs::path loggedInMarker = fs::path(params.exePath).parent_path() /
+            ("logged_in_" + std::to_string(pid) + ".flag");
+        printf("[*] Waiting for login-confirmed marker: %s\n", loggedInMarker.string().c_str());
+        while (GetTickCount() - waitStart < 60000) {
+            if (fs::exists(loggedInMarker)) {
+                fs::remove(loggedInMarker);
+                confirmed = true;
+                break;
+            }
+            if (session->stopEvent && WaitForSingleObject(session->stopEvent, 0) == WAIT_OBJECT_0) {
+                printf("[*] Login-marker wait interrupted by stop request.\n");
+                break;
+            }
+            Sleep(500);
+        }
+    }
+
+    printf(confirmed ? "[+] Login confirmed after %lums.\n"
+                      : "[!] Login NOT confirmed within timeout (%lums) — proceeding anyway.\n",
+        GetTickCount() - waitStart);
+    return confirmed;
+}
+
 // The extracted, per-session version of what used to be main()'s own
 // for(;;) loop: launch -> inject -> auto-login -> supervise/relanuch,
 // writing all mutable state to `session` instead of main()-local variables
@@ -1742,7 +1301,16 @@ struct SupervisionParams
 // synchronously, from main() below — this only proves the extraction is
 // behavior-preserving before Phase 3 wraps it in a worker thread per
 // account. See ~/.claude/plans/zazzy-wondering-diffie.md.
-static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionParams& params)
+// configLock: held by the CALLER (the same worker thread this function
+// runs on — never a different thread, std::mutex requires that) across
+// the proxy servers.json patch/apply that already happened before this
+// call, for a proxy-mode FIRST launch. Released here, right after the
+// first CreateProcessA's settle-wait (WaitForInputIdle+Sleep) — the exact
+// point the game process has had a chance to read the file — so it's a
+// no-op (owns_lock() false) for every non-proxy session and for every
+// relaunch after the first. See g_serverConfigMutex's own comment.
+static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionParams& params,
+                                      std::unique_lock<std::mutex>& configLock)
 {
     bool injectionSucceeded = false;
 
@@ -1777,8 +1345,8 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
                 if (params.activeLogger)
                     params.activeLogger->Stop();
             }
+            session->SetStatus("CreateProcess failed");
             session->state = SessionState::Failed;
-            system("pause");
             return 1;
         }
 
@@ -1802,6 +1370,14 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
         }
 
         Sleep(1000);
+
+        // The game process has now had its chance to read servers.json —
+        // safe to let another account's proxy launch patch it. See
+        // g_serverConfigMutex's comment and this function's own header
+        // comment for why this is a no-op past the first iteration.
+        if (configLock.owns_lock())
+            configLock.unlock();
+
         printf("[*] Injecting...\n");
         session->state = SessionState::Injecting;
         injectionSucceeded = Inject(pid, params.dllStr.c_str());
@@ -1812,8 +1388,8 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
             if (!params.proxyMode && !params.haveProfile) {
                 CloseHandle(pi.hThread);
                 CloseHandle(pi.hProcess);
+                session->SetStatus("Injection failed");
                 session->state = SessionState::Failed;
-                system("pause");
                 return 1;
             }
             printf("[*] Keeping the game running despite the injection failure.\n");
@@ -1827,9 +1403,7 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
         // game keeps running and the user can finish logging in by hand.
         if (params.haveProfile) {
             session->state = SessionState::LoggingIn;
-            AutoLoginRequest loginReq{session->profile.username, session->profile.password, session->profile.server};
-            if (!AutoLogin::PerformLogin(loginReq, pid))
-                printf("[!] Auto-login did not complete cleanly — you may need to finish logging in manually this time.\n");
+            PerformLoginAndWaitForConfirmation(session, params, pid, /*isReconnect=*/false);
         }
 
         // Original single-shot proxy flow (no saved account): restore
@@ -1852,7 +1426,57 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
             waitHandles[2] = params.relay->GetFailClosedEvent();
             handleCount = 3;
         }
-        const DWORD wait = WaitForMultipleObjects(handleCount, waitHandles, FALSE, INFINITE);
+        DWORD wait;
+        if (params.haveProfile) {
+            // Multi-account manager support: a network hiccup or manual
+            // "Disconnect" in-game drops back to the login screen WITHOUT
+            // the game process itself exiting -- nothing above (process
+            // handle, stop event, kill-switch) reacts to that on its own,
+            // so the account would just sit at the login screen forever
+            // with no way back short of the user noticing and clicking
+            // Login again from the manager (which would launch a SECOND,
+            // wrong game process). Poll on a bounded interval instead of
+            // waiting INFINITE, and treat "the login window reappeared
+            // for this PID" as an in-place reconnect trigger, reusing the
+            // exact same mechanism the initial launch used.
+            constexpr DWORD kReconnectCheckIntervalMs = 5000;
+            // Bounded, matching this project's existing "don't retry
+            // forever" philosophy (see kMaxFastCrashes below) — a
+            // reconnect attempt that keeps failing (live-reported: the
+            // disconnect banner interfering, or a genuinely bad
+            // credential/network state) shouldn't hammer the same
+            // possibly-stuck login screen indefinitely.
+            constexpr int kMaxConsecutiveFailedReconnects = 5;
+            int consecutiveFailedReconnects = 0;
+            for (;;) {
+                wait = WaitForMultipleObjects(handleCount, waitHandles, FALSE, kReconnectCheckIntervalMs);
+                if (wait != WAIT_TIMEOUT)
+                    break;  // process exited, stop requested, or kill-switch fired
+
+                if (AutoLogin::IsAtLoginScreen(pid)) {
+                    printf("[*] Detected a disconnect (login screen reappeared) — reconnecting (attempt %d/%d)...\n",
+                        consecutiveFailedReconnects + 1, kMaxConsecutiveFailedReconnects);
+                    session->state = SessionState::LoggingIn;
+                    session->SetStatus("Reconnecting...");
+                    const bool reconnected = PerformLoginAndWaitForConfirmation(session, params, pid, /*isReconnect=*/true);
+                    session->SetStatus("");
+                    session->state = SessionState::Running;
+
+                    if (reconnected) {
+                        consecutiveFailedReconnects = 0;
+                    } else if (++consecutiveFailedReconnects >= kMaxConsecutiveFailedReconnects) {
+                        printf("[!] Reconnect failed %d times in a row — giving up and forcing a full relaunch "
+                            "instead of retrying keystrokes against a possibly-stuck login screen.\n",
+                            consecutiveFailedReconnects);
+                        session->SetStatus("Reconnect failed repeatedly — relaunching");
+                        TerminateProcess(pi.hProcess, 0);
+                        break;  // falls through to the crash-relaunch path below, same as a real crash
+                    }
+                }
+            }
+        } else {
+            wait = WaitForMultipleObjects(handleCount, waitHandles, FALSE, INFINITE);
+        }
         const bool killSwitchFired = killSwitchArmed && wait == WAIT_OBJECT_0 + 2;
         const bool stoppedByUser = wait == WAIT_OBJECT_0 + 1;
 
@@ -1864,11 +1488,23 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
 
         // Per-account "Exit" (as opposed to "Exit Manager") also closes the
         // game itself, not just supervision — see AccountSession::
-        // killGameOnStop's own comment.
+        // killGameOnStop's own comment. Deliberately does NOT wait to
+        // confirm the process has actually exited: live-reported, a
+        // Themida-packed target mid-autohunt (heavy packet I/O, in-flight
+        // SendInput) can take 30s-60s+ for TerminateProcess to actually
+        // finish tearing the process down at the OS level -- ahead of this
+        // fix, the manager's own WaitForSingleObject(..., 10000) after it
+        // meant the UI/row stayed stuck showing the account as busy for
+        // that whole span too. "Exit" is meant to be a hard stop that
+        // takes priority over everything -- the launcher's own
+        // bookkeeping (row flips to Login, thread reaped) now happens the
+        // instant termination is REQUESTED, not once the OS confirms it,
+        // exactly like the kill-switch path a few lines above already
+        // implicitly assumes for its own book-keeping (it just doesn't
+        // matter there since a kill-switch trip never relaunches).
         if (stoppedByUser && session->killGameOnStop.load()) {
             printf("[*] Exit requested — terminating game process.\n");
             TerminateProcess(pi.hProcess, 0);
-            WaitForSingleObject(pi.hProcess, 10000);
         }
 
         CloseHandle(pi.hThread);
@@ -1932,216 +1568,579 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
         if (params.activeLogger)
             params.activeLogger->Stop();
         params.serverPatch->Restore();  // no-op if the !haveProfile path above already restored it
-        g_runtimeContext = nullptr;
     }
 
     return injectionSucceeded ? 0 : 1;
 }
 
-int main(int argc, char** argv)
+// =====================================================================
+// Multi-account manager window (Phase 3).
+//
+// Replaces the old one-shot console flow (CLI args, modal account-picker
+// dialog, modal SOCKS5 dialog) with a single persistent GUI window that
+// can run several accounts at once, each on its own worker thread driving
+// RunAccountSupervisionLoop(). See account_session.h and
+// ~/.claude/plans/zazzy-wondering-diffie.md for the full design.
+// =====================================================================
+
+namespace {
+
+constexpr UINT kWmTrayIcon = WM_APP + 1;
+constexpr UINT_PTR kRowRefreshTimerId = 1;
+constexpr UINT_PTR kExitPollTimerId = 2;
+constexpr UINT kRowRefreshIntervalMs = 500;
+constexpr UINT kExitPollIntervalMs = 200;
+
+constexpr int kIdAddAccount = 4001;
+constexpr int kIdTrayShow = 4002;
+constexpr int kIdTrayExit = 4003;
+// Per-row controls: kId*Base + row index. 1000 apart so a reasonable
+// number of saved accounts can never make one row's ID range collide
+// with the next control-kind's base.
+constexpr int kIdRowActionBase = 5000;
+constexpr int kIdRowRemoveBase = 6000;
+constexpr int kIdRowStatusBase = 7000;
+
+constexpr int kRowHeight = 36;
+constexpr int kRowTopMargin = 10;
+constexpr int kWindowClientWidth = 560;
+constexpr int kBottomBarHeight = 46;
+
+std::vector<std::unique_ptr<AccountSession>> g_sessions;  // UI-thread-only, see account_session.h
+std::vector<HWND> g_rowChildWindows;
+NOTIFYICONDATAA g_trayIcon{};
+bool g_exiting = false;
+
+// "Busy" = there's a worker thread that hasn't been reaped yet — covers
+// every state from Launching through Crashed (mid-relaunch). A session
+// that was added but never logged in, or one that already finished and
+// was reaped, is not busy.
+bool IsSessionBusy(const AccountSession& session)
 {
-    printf("=== coclassic launcher ===\n\n");
+    return session.worker.joinable();
+}
 
-    LaunchOptions options;
-    if (!ParseArgs(argc, argv, &options)) {
-        PrintUsage();
-        system("pause");
-        return 1;
+const char* StateLabel(SessionState state)
+{
+    switch (state) {
+    case SessionState::Idle: return "Idle";
+    case SessionState::Launching: return "Launching...";
+    case SessionState::Injecting: return "Injecting...";
+    case SessionState::LoggingIn: return "Logging in...";
+    case SessionState::Running: return "Running";
+    case SessionState::Stopping: return "Stopping...";
+    case SessionState::Crashed: return "Relaunching...";
+    case SessionState::Failed: return "Failed";
+    }
+    return "?";
+}
+
+// Joins a worker thread that has already finished (session->finished),
+// so the row's button can flip back to "Login" without the UI thread
+// ever blocking on join() itself. Safe to call every timer tick — a
+// still-running session is left untouched.
+void ReapFinishedSession(AccountSession& session)
+{
+    if (session.worker.joinable() && session.finished.load()) {
+        session.worker.join();
+        session.killGameOnStop = false;
+    }
+}
+
+void SaveSessionsToCredentials()
+{
+    std::vector<AccountProfile> profiles;
+    profiles.reserve(g_sessions.size());
+    for (auto& s : g_sessions)
+        profiles.push_back(s->profile);
+    Credentials::SaveAll(profiles);
+}
+
+void DestroyRowControls()
+{
+    for (HWND h : g_rowChildWindows)
+        if (h && IsWindow(h))
+            DestroyWindow(h);
+    g_rowChildWindows.clear();
+}
+
+// Tears down and recreates every per-account row's child controls, then
+// resizes the window to fit and repositions the fixed "Add Account"
+// button beneath them. Only called when the account LIST changes (add/
+// remove) — per-tick status/button-caption updates go through
+// RefreshRows() instead, which mutates the existing controls in place.
+void RebuildRows(HWND hwnd)
+{
+    DestroyRowControls();
+
+    HINSTANCE hInst = GetModuleHandleA(nullptr);
+    int y = kRowTopMargin;
+    for (size_t i = 0; i < g_sessions.size(); ++i) {
+        AccountSession& session = *g_sessions[i];
+        char labelText[300];
+        snprintf(labelText, sizeof(labelText), "%s  (%s)",
+            session.profile.label.c_str(), session.profile.username.c_str());
+
+        HWND label = CreateWindowA("STATIC", labelText, WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS,
+            10, y + 8, 260, 20, hwnd, nullptr, hInst, nullptr);
+        HWND status = CreateWindowA("STATIC", StateLabel(session.state.load()), WS_CHILD | WS_VISIBLE | SS_LEFT,
+            280, y + 8, 140, 20, hwnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowStatusBase + static_cast<int>(i))), hInst, nullptr);
+        const bool busy = IsSessionBusy(session);
+        HWND actionBtn = CreateWindowA("BUTTON", busy ? "Exit" : "Login", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            430, y, 60, 28, hwnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowActionBase + static_cast<int>(i))), hInst, nullptr);
+        HWND removeBtn = CreateWindowA("BUTTON", "Remove",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | (busy ? WS_DISABLED : 0), 495, y, 60, 28, hwnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowRemoveBase + static_cast<int>(i))), hInst, nullptr);
+
+        g_rowChildWindows.push_back(label);
+        g_rowChildWindows.push_back(status);
+        g_rowChildWindows.push_back(actionBtn);
+        g_rowChildWindows.push_back(removeBtn);
+        y += kRowHeight;
     }
 
-    if (options.m_showHelp) {
-        PrintUsage();
-        return 0;
+    if (g_sessions.empty()) {
+        HWND empty = CreateWindowA("STATIC", "No saved accounts yet - click \"Add Account\" to get started.",
+            WS_CHILD | WS_VISIBLE | SS_LEFT, 10, y + 8, 540, 20, hwnd, nullptr, hInst, nullptr);
+        g_rowChildWindows.push_back(empty);
+        y += kRowHeight;
     }
 
-    // Character-select screen — the primary launch flow. Skipped with
-    // --no-prompt (same flag that also skips the SOCKS5 dialog below,
-    // consistent "don't show interactive dialogs" semantics). Declining/
-    // cancelling it (no saved accounts yet, or "Skip") falls back to the
-    // original manual-login flow below entirely unchanged, and the
-    // supervise-and-auto-relaunch loop only activates when a profile WAS
-    // selected — existing proxy-only / no-account usage keeps working
-    // exactly as before.
-    AccountProfile selectedProfile;
-    bool haveProfile = false;
-    if (!options.m_noPrompt)
-        haveProfile = ShowAccountPickerDialog(&selectedProfile);
-    if (haveProfile)
-        printf("[+] Account selected: %s (%s)\n", selectedProfile.label.c_str(), selectedProfile.username.c_str());
-    else
-        printf("[*] No account selected — you'll need to log in manually this session.\n");
+    const int clientHeight = y + kBottomBarHeight;
+    RECT clientRect{0, 0, kWindowClientWidth, clientHeight};
+    constexpr DWORD kStyle = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    AdjustWindowRect(&clientRect, kStyle, FALSE);
+    SetWindowPos(hwnd, nullptr, 0, 0,
+        clientRect.right - clientRect.left, clientRect.bottom - clientRect.top,
+        SWP_NOMOVE | SWP_NOZORDER);
 
-    // A selected account carries its own saved proxy choice (see
-    // AccountProfile::useProxy in credentials.h) — bypass the interactive
-    // SOCKS5 dialog entirely in that case, whichever way it was saved.
-    // Otherwise fall back to the original interactive flow, shown if:
-    // 1. --proxy was not provided via command line
-    // 2. --no-prompt was not specified
-    if (haveProfile) {
-        if (selectedProfile.useProxy) {
-            Endpoint proxyEndpoint;
-            if (ParseEndpoint(selectedProfile.proxyHostPort, &proxyEndpoint)) {
-                options.m_proxy = proxyEndpoint;
-                options.m_proxyUser = selectedProfile.proxyUser;
-                options.m_proxyPassword = selectedProfile.proxyPassword;
-                printf("[+] Using saved proxy for this account: %s\n", selectedProfile.proxyHostPort.c_str());
-            } else {
-                printf("[!] Saved proxy address \"%s\" is invalid — connecting directly instead.\n",
-                    selectedProfile.proxyHostPort.c_str());
-            }
-        } else {
-            printf("[*] This account is configured to connect directly (no proxy).\n");
-        }
-    } else if (!options.m_noPrompt && !options.m_proxy.has_value()) {
-        Socks5PromptResult promptResult = ShowSocks5ConfigDialog(&options);
-        if (promptResult == Socks5PromptResult::Configured) {
-            printf("[+] SOCKS5 proxy configured via dialog.\n");
-        } else if (promptResult == Socks5PromptResult::Disabled) {
-            printf("[*] SOCKS5 proxy not configured. Connecting directly (real IP visible).\n");
-        } else {
-            printf("[!] SOCKS5 setup was cancelled or invalid. Aborting before game launch.\n");
-            system("pause");
-            return 1;
-        }
+    if (HWND addBtn = GetDlgItem(hwnd, kIdAddAccount))
+        SetWindowPos(addBtn, nullptr, 10, y + 6, 140, 30, SWP_NOZORDER);
+}
+
+// Per-tick refresh: updates existing controls in place (no
+// destroy/recreate — that's RebuildRows()'s job, only needed when the
+// account list itself changes) and reaps any worker thread that finished
+// since the last tick.
+void RefreshRows(HWND hwnd)
+{
+    for (auto& s : g_sessions)
+        ReapFinishedSession(*s);
+
+    for (size_t i = 0; i < g_sessions.size(); ++i) {
+        AccountSession& session = *g_sessions[i];
+        HWND statusCtrl = GetDlgItem(hwnd, kIdRowStatusBase + static_cast<int>(i));
+        HWND actionCtrl = GetDlgItem(hwnd, kIdRowActionBase + static_cast<int>(i));
+        HWND removeCtrl = GetDlgItem(hwnd, kIdRowRemoveBase + static_cast<int>(i));
+        if (!statusCtrl || !actionCtrl)
+            continue;
+
+        std::string statusText = session.GetStatus();
+        if (statusText.empty())
+            statusText = StateLabel(session.state.load());
+        SetWindowTextA(statusCtrl, statusText.c_str());
+
+        const bool busy = IsSessionBusy(session);
+        SetWindowTextA(actionCtrl, busy ? "Exit" : "Login");
+        if (removeCtrl)
+            EnableWindow(removeCtrl, !busy);
     }
+}
 
-    const bool proxyMode = options.m_proxy.has_value();
+// Redirects stdio to a log file next to launcher.exe. The manager is a
+// GUI-subsystem app with no console at all (that's the whole point —
+// see the plan's "zero visible console windows" requirement), so the
+// launch/inject/login/proxy diagnostics this file already prints via
+// printf() would otherwise vanish into a detached stdout instead of
+// being lost outright, this keeps them readable after the fact.
+void RedirectStdioToLogFile()
+{
+    char exePathBuf[MAX_PATH];
+    GetModuleFileNameA(nullptr, exePathBuf, MAX_PATH);
+    const fs::path logPath = fs::path(exePathBuf).parent_path() / "launcher.log";
+    FILE* f = nullptr;
+    freopen_s(&f, logPath.string().c_str(), "a", stdout);
+    freopen_s(&f, logPath.string().c_str(), "a", stderr);
+    setvbuf(stdout, nullptr, _IONBF, 0);
+}
 
-    char exePath[MAX_PATH];
-    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-    fs::path dllPath = fs::path(exePath).parent_path() / DLL_NAME;
+// The "Login" click handler. Resolves the DLL/game paths fresh (matches
+// what main() used to do once at startup — now done per-launch, since
+// accounts can be started/stopped/restarted repeatedly across the
+// manager's lifetime), does synchronous proxy setup INSIDE the new
+// worker thread if this account uses one (so the mutex critical section
+// below never has to cross an OS thread boundary — see
+// RunAccountSupervisionLoop's own comment on configLock), then spawns
+// the worker thread that runs RunAccountSupervisionLoop for real.
+void HandleLoginClick(AccountSession* session)
+{
+    if (IsSessionBusy(*session))
+        return;  // shouldn't be reachable (button would read "Exit"), guard anyway
+
+    if (!session->stopEvent)
+        session->stopEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+    ResetEvent(session->stopEvent);
+    session->killGameOnStop = false;
+    session->finished = false;
+    session->consecutiveFastCrashes = 0;
+    session->pendingResumeMarker = false;
+    session->state = SessionState::Launching;
+    // Clears any error message left over from a previous failed run (e.g.
+    // "Proxy setup failed") -- the live state (StateLabel(), read in
+    // RefreshRows) already conveys "starting" via SessionState::Launching,
+    // so there's no separate sticky message to set here. See RefreshRows'
+    // own comment for why statusText is error-only, not a running commentary.
+    session->SetStatus("");
+
+    char exePathBuf[MAX_PATH];
+    GetModuleFileNameA(nullptr, exePathBuf, MAX_PATH);
+    const std::string exePath = exePathBuf;
+    const fs::path dllPath = fs::path(exePath).parent_path() / DLL_NAME;
 
     if (!fs::exists(dllPath)) {
-        printf("[!] DLL not found: %s\n", dllPath.string().c_str());
-        printf("    Build the coclassic project first.\n");
-        system("pause");
-        return 1;
+        session->SetStatus("coclassic.dll not found next to launcher.exe -- build it first");
+        session->state = SessionState::Failed;
+        return;
     }
-
-    printf("[+] DLL: %s\n", dllPath.string().c_str());
 
     const std::string gameDir = ResolveGameDir();
     const std::string gamePathStr = (fs::path(gameDir) / "bin" / "64" / GAME_EXE).string();
-
     if (!fs::exists(gamePathStr)) {
-        printf("[!] Game not found at: %s\n", gamePathStr.c_str());
-        printf("    Set COCLASSIC_GAME_DIR or create game_dir.txt next to launcher.exe.\n");
-        system("pause");
-        return 1;
+        session->SetStatus("Game not found -- set COCLASSIC_GAME_DIR or game_dir.txt");
+        session->state = SessionState::Failed;
+        return;
     }
-    printf("[+] Game dir: %s\n", gameDir.c_str());
-
-    WinsockSession winsock;
-    ServerConfigPatch serverPatch(fs::path(gameDir) / SERVER_CONFIG_NAME);
-    Socks5Relay relay;
-    RelayLogger relayLogger;
-    RelayLogger* activeLogger = nullptr;
-    RuntimeContext runtimeContext;
-
-    if (!SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE))
-        printf("[!] Failed to install console control handler (0x%08lX)\n", GetLastError());
-
-    g_stopSupervisingEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
-
-    if (proxyMode) {
-        if (!winsock.Start()) {
-            system("pause");
-            return 1;
-        }
-
-        if (options.m_packetLog) {
-            fs::path logPath = fs::path(exePath).parent_path() / RELAY_LOG_NAME;
-            if (!relayLogger.Start(logPath)) {
-                printf("[!] Failed to open relay log: %s\n", logPath.string().c_str());
-                system("pause");
-                return 1;
-            }
-            activeLogger = &relayLogger;
-        }
-
-        if (!serverPatch.Load()) {
-            if (activeLogger)
-                relayLogger.Stop();
-            system("pause");
-            return 1;
-        }
-
-        std::optional<Endpoint> target = SelectTargetEndpoint(serverPatch, options);
-        if (!target) {
-            if (activeLogger)
-                relayLogger.Stop();
-            system("pause");
-            return 1;
-        }
-
-        printf("[proxy] ================= PROXY MODE ACTIVE =================\n");
-        printf("[proxy] SOCKS5 proxy: %s\n", EndpointToString(*options.m_proxy).c_str());
-        printf("[proxy] Target server: %s\n", EndpointToString(*target).c_str());
-        printf("[proxy] Packet logging: %s\n", options.m_packetLog ? "ON" : "OFF");
-        printf("[proxy] Kill-switch: %s\n", options.m_killSwitch ? "ON" : "OFF");
-
-        if (!TestSocks5Proxy(*options.m_proxy, *target, options.m_proxyUser, options.m_proxyPassword)) {
-            printf("[!] SOCKS5 pre-launch test failed. Game will not be launched.\n");
-            if (activeLogger)
-                relayLogger.Stop();
-            system("pause");
-            return 1;
-        }
-
-        Endpoint listen{LOCAL_RELAY_HOST, options.m_relayPort != 0 ? options.m_relayPort : target->port};
-
-        if (!relay.Start(listen, *options.m_proxy, *target,
-                         options.m_proxyUser, options.m_proxyPassword, activeLogger)) {
-            if (activeLogger)
-                relayLogger.Stop();
-            system("pause");
-            return 1;
-        }
-
-        if (!serverPatch.Apply(listen.host, relay.GetListenPort())) {
-            relay.Stop();
-            if (activeLogger)
-                relayLogger.Stop();
-            system("pause");
-            return 1;
-        }
-
-        runtimeContext.m_patch = &serverPatch;
-        runtimeContext.m_relay = &relay;
-        runtimeContext.m_logger = activeLogger;
-        g_runtimeContext = &runtimeContext;
-
-        printf("[proxy] Patched %s to %s:%d\n", SERVER_CONFIG_NAME, listen.host.c_str(), relay.GetListenPort());
-        printf("[proxy] Upstream target: %s\n", EndpointToString(*target).c_str());
-        if (activeLogger)
-            printf("[proxy] Logging outbound client TCP chunks to %s\n", relayLogger.Path().string().c_str());
-    }
-
-    std::string dllStr = dllPath.string();
-
-    // Multi-account manager support, Phase 2: wire up exactly one
-    // AccountSession/SupervisionParams and run it synchronously through
-    // RunAccountSupervisionLoop(), instead of the loop that used to be
-    // inline here. session.stopEvent reuses the SAME event Ctrl+C already
-    // signals (g_stopSupervisingEvent) — there's still only one session and
-    // one console control handler at this point, so this is behaviorally
-    // identical to before. Phase 3 gives each session its own independent
-    // stopEvent once the manager can run more than one at a time.
-    AccountSession session;
-    session.profile = selectedProfile;
-    session.stopEvent = g_stopSupervisingEvent;
 
     SupervisionParams params;
-    params.options = options;
-    params.haveProfile = haveProfile;
+    params.haveProfile = true;
+    params.exePath = exePath;
     params.gamePathStr = gamePathStr;
     params.gameDir = gameDir;
-    params.dllStr = dllStr;
-    params.exePath = exePath;
-    params.proxyMode = proxyMode;
-    params.serverPatch = proxyMode ? &serverPatch : nullptr;
-    params.relay = proxyMode ? &relay : nullptr;
-    params.activeLogger = activeLogger;
+    params.dllStr = dllPath.string();
+    params.options.m_killSwitch = true;
 
-    return RunAccountSupervisionLoop(&session, params);
+    AccountProfile profileCopy = session->profile;
+
+    session->worker = std::thread([session, params, profileCopy]() mutable {
+        // Lives for this thread's whole lifetime — RunAccountSupervisionLoop
+        // holds pointers into these for as long as proxy mode is active.
+        ServerConfigPatch patch(fs::path(params.gameDir) / SERVER_CONFIG_NAME);
+        Socks5Relay relay;
+        std::unique_lock<std::mutex> configLock(g_serverConfigMutex, std::defer_lock);
+
+        if (profileCopy.useProxy) {
+            Endpoint proxyEndpoint;
+            if (!ParseEndpoint(profileCopy.proxyHostPort, &proxyEndpoint)) {
+                session->SetStatus("Saved proxy address invalid -- connecting directly");
+            } else {
+                configLock.lock();
+                bool proxyOk = patch.Load();
+
+                std::optional<Endpoint> target;
+                if (proxyOk) {
+                    LaunchOptions proxyOpts;
+                    proxyOpts.m_proxy = proxyEndpoint;
+                    target = SelectTargetEndpoint(patch, proxyOpts);
+                    proxyOk = target.has_value();
+                }
+                if (proxyOk) {
+                    proxyOk = TestSocks5Proxy(proxyEndpoint, *target,
+                        profileCopy.proxyUser, profileCopy.proxyPassword);
+                }
+
+                Endpoint listen{LOCAL_RELAY_HOST, target ? target->port : static_cast<uint16_t>(0)};
+                if (proxyOk) {
+                    proxyOk = relay.Start(listen, proxyEndpoint, *target,
+                        profileCopy.proxyUser, profileCopy.proxyPassword, nullptr);
+                }
+                if (proxyOk && !patch.Apply(listen.host, relay.GetListenPort())) {
+                    relay.Stop();
+                    proxyOk = false;
+                }
+
+                if (!proxyOk) {
+                    configLock.unlock();
+                    session->SetStatus("Proxy setup failed -- see launcher.log");
+                    session->state = SessionState::Failed;
+                    session->finished = true;
+                    return;
+                }
+
+                params.proxyMode = true;
+                params.serverPatch = &patch;
+                params.relay = &relay;
+            }
+        }
+
+        RunAccountSupervisionLoop(session, params, configLock);
+        session->finished = true;
+    });
+}
+
+// The "Exit" click handler — stops supervision AND closes the game
+// (killGameOnStop=true). Distinct from the manager-wide "Exit Manager"
+// path (BeginManagerExit below), which never kills games.
+void HandleExitClick(AccountSession* session)
+{
+    if (!IsSessionBusy(*session))
+        return;
+    session->killGameOnStop = true;
+    if (session->stopEvent)
+        SetEvent(session->stopEvent);
+    // Written directly rather than via SetStatus() -- StateLabel() already
+    // maps this to "Stopping...", and RunAccountSupervisionLoop will move
+    // it on to Idle/Failed itself once the worker thread actually notices
+    // the stop event and unwinds, same as every other state transition.
+    session->state = SessionState::Stopping;
+}
+
+void HandleRemoveClick(HWND hwnd, size_t index)
+{
+    if (index >= g_sessions.size())
+        return;
+    AccountSession& session = *g_sessions[index];
+    if (IsSessionBusy(session)) {
+        MessageBoxA(hwnd, "Exit this account first.", "coclassic", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+        return;
+    }
+    if (MessageBoxA(hwnd, "Remove this saved account?", "coclassic",
+            MB_YESNO | MB_ICONQUESTION | MB_TOPMOST) != IDYES)
+        return;
+
+    if (session.stopEvent)
+        CloseHandle(session.stopEvent);
+    g_sessions.erase(g_sessions.begin() + static_cast<long>(index));
+    SaveSessionsToCredentials();
+    RebuildRows(hwnd);
+}
+
+// Mirrors the field-by-field InputBox() sequence the old modal
+// account-picker dialog used for "Add New" — see this file's git history
+// for the version this replaced.
+void HandleAddAccountClick(HWND hwnd)
+{
+    struct ScrubOnExit {
+        char* buf; size_t len;
+        ~ScrubOnExit() { SecureZeroMemory(buf, len); }
+    };
+    char label[128] = "", username[128] = "", password[128] = "", server[128] = "Classic (US)";
+    ScrubOnExit scrubPassword{password, sizeof(password)};
+    if (!InputBox(hwnd, "Add Account - Label", "Label (e.g. \"Main\"):", label, sizeof(label)))
+        return;
+    if (!InputBox(hwnd, "Add Account - Username", "Username:", username, sizeof(username)))
+        return;
+    if (!InputBox(hwnd, "Add Account - Password", "Password:", password, sizeof(password), "", true))
+        return;
+    if (!InputBox(hwnd, "Add Account - Server", "Server (as shown in the login screen's dropdown):",
+            server, sizeof(server), server))
+        return;
+
+    AccountProfile profile;
+    profile.label = label;
+    profile.username = username;
+    profile.password = password;
+    profile.server = server;
+
+    const int useProxy = MessageBoxA(hwnd,
+        "Use a SOCKS5 proxy for this account?\n\n"
+        "Select YES to save a proxy for this account (skips proxy setup "
+        "prompts on future logins). Select NO to always connect directly.",
+        "Add Account - Proxy", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
+    if (useProxy == IDYES) {
+        char hostPort[128] = "", proxyUser[128] = "", proxyPassword[128] = "";
+        ScrubOnExit scrubProxyPassword{proxyPassword, sizeof(proxyPassword)};
+        if (!InputBox(hwnd, "Add Account - Proxy Address", "Proxy host:port (e.g. 127.0.0.1:1080):",
+                hostPort, sizeof(hostPort)))
+            return;
+        const int useAuth = MessageBoxA(hwnd, "Does this proxy require a username/password?",
+            "Add Account - Proxy Auth", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
+        if (useAuth == IDYES) {
+            if (!InputBox(hwnd, "Add Account - Proxy Username", "Proxy username:", proxyUser, sizeof(proxyUser)))
+                return;
+            if (!InputBox(hwnd, "Add Account - Proxy Password", "Proxy password:",
+                    proxyPassword, sizeof(proxyPassword), "", true))
+                return;
+        }
+        profile.useProxy = true;
+        profile.proxyHostPort = hostPort;
+        profile.proxyUser = proxyUser;
+        profile.proxyPassword = proxyPassword;
+    }
+
+    auto session = std::make_unique<AccountSession>();
+    session->profile = std::move(profile);
+    session->stopEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+    g_sessions.push_back(std::move(session));
+    SaveSessionsToCredentials();
+    RebuildRows(hwnd);
+}
+
+// Real "Exit Manager" quit path — stops supervision for every running
+// account (never kills the games themselves, matching this project's
+// previous CTRL_CLOSE_EVENT behavior, now an explicit action instead of
+// an accidental side effect of closing the wrong window). Non-blocking:
+// a worker could be mid-Inject() or mid-login-wait (up to tens of
+// seconds) when this is requested, so the UI thread polls for every
+// session to actually finish instead of joining synchronously here.
+void BeginManagerExit(HWND hwnd)
+{
+    g_exiting = true;
+    for (auto& s : g_sessions) {
+        if (s->worker.joinable()) {
+            s->killGameOnStop = false;
+            if (s->stopEvent)
+                SetEvent(s->stopEvent);
+        }
+    }
+    ShowWindow(hwnd, SW_HIDE);
+    SetTimer(hwnd, kExitPollTimerId, kExitPollIntervalMs, nullptr);
+}
+
+LRESULT CALLBACK ManagerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg) {
+    case WM_CREATE: {
+        HINSTANCE hInst = GetModuleHandleA(nullptr);
+        CreateWindowA("BUTTON", "Add Account", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            10, 10, 140, 30, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAddAccount)), hInst, nullptr);
+        return 0;
+    }
+    case WM_COMMAND: {
+        const int id = LOWORD(wParam);
+        if (id == kIdAddAccount) {
+            HandleAddAccountClick(hwnd);
+        } else if (id == kIdTrayShow) {
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
+        } else if (id == kIdTrayExit) {
+            BeginManagerExit(hwnd);
+        } else if (id >= kIdRowActionBase && id < kIdRowActionBase + static_cast<int>(g_sessions.size())) {
+            AccountSession& session = *g_sessions[static_cast<size_t>(id - kIdRowActionBase)];
+            if (IsSessionBusy(session))
+                HandleExitClick(&session);
+            else
+                HandleLoginClick(&session);
+            RefreshRows(hwnd);
+        } else if (id >= kIdRowRemoveBase && id < kIdRowRemoveBase + static_cast<int>(g_sessions.size())) {
+            HandleRemoveClick(hwnd, static_cast<size_t>(id - kIdRowRemoveBase));
+        }
+        return 0;
+    }
+    case WM_TIMER:
+        if (wParam == kRowRefreshTimerId) {
+            RefreshRows(hwnd);
+        } else if (wParam == kExitPollTimerId) {
+            const bool allDone = std::all_of(g_sessions.begin(), g_sessions.end(),
+                [](const std::unique_ptr<AccountSession>& s) { return !s->worker.joinable() || s->finished.load(); });
+            if (allDone) {
+                KillTimer(hwnd, kExitPollTimerId);
+                for (auto& s : g_sessions)
+                    if (s->worker.joinable())
+                        s->worker.join();
+                Shell_NotifyIconA(NIM_DELETE, &g_trayIcon);
+                DestroyWindow(hwnd);
+            }
+        }
+        return 0;
+    case kWmTrayIcon: {
+        const UINT mouseMsg = static_cast<UINT>(lParam);
+        if (mouseMsg == WM_LBUTTONUP || mouseMsg == WM_LBUTTONDBLCLK) {
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
+        } else if (mouseMsg == WM_RBUTTONUP) {
+            POINT pt;
+            GetCursorPos(&pt);
+            HMENU menu = CreatePopupMenu();
+            AppendMenuA(menu, MF_STRING, kIdTrayShow, "Show Account Manager");
+            AppendMenuA(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuA(menu, MF_STRING, kIdTrayExit, "Exit Manager (stop all supervision)");
+            SetForegroundWindow(hwnd);
+            TrackPopupMenu(menu, TPM_RIGHTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, 0, hwnd, nullptr);
+            DestroyMenu(menu);
+        }
+        return 0;
+    }
+    case WM_CLOSE:
+        // Never destroy on the X button — this is what makes "closing the
+        // manager window doesn't break auto-relogin for running accounts"
+        // unconditional. Only BeginManagerExit() (tray menu) really quits.
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcA(hwnd, msg, wParam, lParam);
+}
+
+}  // namespace
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
+{
+    RedirectStdioToLogFile();
+    printf("=== coclassic account manager starting ===\n");
+
+    // Winsock init is process-wide (refcounted by the OS), not per-thread —
+    // one Start() here covers every account's proxy relay for the whole
+    // app lifetime. Harmless to call even if no account ever uses a proxy.
+    WinsockSession winsock;
+    if (!winsock.Start())
+        printf("[!] WSAStartup failed -- proxy-mode accounts will not be able to connect.\n");
+
+    for (const AccountProfile& profile : Credentials::LoadAll()) {
+        auto session = std::make_unique<AccountSession>();
+        session->profile = profile;
+        session->stopEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+        g_sessions.push_back(std::move(session));
+    }
+
+    WNDCLASSA wc{};
+    wc.lpfnWndProc = ManagerWndProc;
+    wc.hInstance = hInstance;
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconA(hInstance, MAKEINTRESOURCEA(100));  // launcher.rc's icon
+    wc.lpszClassName = "CoClassicManagerWnd";
+    RegisterClassA(&wc);
+
+    constexpr DWORD kStyle = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    RECT clientRect{0, 0, kWindowClientWidth, 200};
+    AdjustWindowRect(&clientRect, kStyle, FALSE);
+    const int screenW = GetSystemMetrics(SM_CXSCREEN);
+    const int screenH = GetSystemMetrics(SM_CYSCREEN);
+    const int w = clientRect.right - clientRect.left;
+    const int h = clientRect.bottom - clientRect.top;
+
+    HWND hwnd = CreateWindowExA(0, "CoClassicManagerWnd", "CoClassic Account Manager", kStyle,
+        (screenW - w) / 2, (screenH - h) / 2, w, h, nullptr, nullptr, hInstance, nullptr);
+    if (!hwnd) {
+        MessageBoxA(nullptr, "Failed to create the account manager window.", "coclassic",
+            MB_OK | MB_ICONERROR | MB_TOPMOST);
+        return 1;
+    }
+
+    RebuildRows(hwnd);
+    RefreshRows(hwnd);
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
+
+    g_trayIcon.cbSize = sizeof(g_trayIcon);
+    g_trayIcon.hWnd = hwnd;
+    g_trayIcon.uID = 1;
+    g_trayIcon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    g_trayIcon.uCallbackMessage = kWmTrayIcon;
+    g_trayIcon.hIcon = wc.hIcon;
+    strncpy_s(g_trayIcon.szTip, "CoClassic Account Manager", _TRUNCATE);
+    Shell_NotifyIconA(NIM_ADD, &g_trayIcon);
+
+    SetTimer(hwnd, kRowRefreshTimerId, kRowRefreshIntervalMs, nullptr);
+
+    MSG msg;
+    while (GetMessageA(&msg, nullptr, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    return static_cast<int>(msg.wParam);
 }

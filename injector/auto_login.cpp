@@ -93,14 +93,22 @@ BOOL CALLBACK EnumLoginWindowProc(HWND hwnd, LPARAM lParam)
     return TRUE;
 }
 
+// Single EnumWindows pass, no waiting. Shared by FindLoginWindow's
+// bounded-wait loop below and by IsAtLoginScreen's one-shot reconnect
+// check (AutoLogin::IsAtLoginScreen).
+HWND FindLoginWindowOnce(DWORD targetPid)
+{
+    FindLoginWindowContext ctx{targetPid, nullptr};
+    EnumWindows(EnumLoginWindowProc, reinterpret_cast<LPARAM>(&ctx));
+    return ctx.found;
+}
+
 HWND FindLoginWindow(DWORD targetPid, uint32_t timeoutMs)
 {
     const DWORD start = GetTickCount();
     while (GetTickCount() - start < timeoutMs) {
-        FindLoginWindowContext ctx{targetPid, nullptr};
-        EnumWindows(EnumLoginWindowProc, reinterpret_cast<LPARAM>(&ctx));
-        if (ctx.found)
-            return ctx.found;
+        if (HWND hwnd = FindLoginWindowOnce(targetPid))
+            return hwnd;
         Sleep(250);
     }
     return nullptr;
@@ -199,10 +207,23 @@ void SendKey(WORD vk)
 // foreground onto, so this skips ForceForegroundWindow entirely and posts
 // straight to the window handle — see PostText above for why that doesn't
 // need it. Same Tab-only navigation as PerformLoginViaSendInput below.
-bool PerformLoginViaMessages(HWND loginWnd, const AutoLoginRequest& request, uint32_t timeoutMs)
+bool PerformLoginViaMessages(HWND loginWnd, const AutoLoginRequest& request, uint32_t timeoutMs, bool isReconnect)
 {
     printf("[auto-login] Session is locked — driving login via posted window messages "
         "(SendInput cannot reach the input desktop in this state).\n");
+
+    // Multi-account manager support: reconnecting after an in-game
+    // disconnect shows an "Error: Connection with the server is
+    // interrupted. Please re-login." banner FIRST, live-reported —
+    // dismissed with Enter/Space before the form is usable, unlike a
+    // fresh post-launch login which has no such banner. Only sent on the
+    // reconnect path; an unconditional stray Enter on a fresh login could
+    // submit the form prematurely.
+    if (isReconnect) {
+        PostKey(loginWnd, VK_RETURN);
+        Sleep(500);
+        printf("[auto-login] Reconnect: dismissed disconnect banner.\n");
+    }
 
     PostKey(loginWnd, VK_TAB);
     Sleep(1000);
@@ -233,7 +254,7 @@ bool PerformLoginViaMessages(HWND loginWnd, const AutoLoginRequest& request, uin
     return true;
 }
 
-bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, uint32_t timeoutMs)
+bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, uint32_t timeoutMs, bool isReconnect)
 {
     if (ForceForegroundWindow(loginWnd))
         printf("[auto-login] Login window confirmed foreground.\n");
@@ -241,6 +262,19 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
         printf("[auto-login] WARNING: login window did NOT become foreground — "
             "keystrokes will likely go to the wrong window.\n");
     Sleep(200);
+
+    // Multi-account manager support: reconnecting after an in-game
+    // disconnect shows an "Error: Connection with the server is
+    // interrupted. Please re-login." banner FIRST, live-reported —
+    // dismissed with Enter/Space before the form is usable, unlike a
+    // fresh post-launch login which has no such banner. Only sent on the
+    // reconnect path; an unconditional stray Enter on a fresh login could
+    // submit the form prematurely.
+    if (isReconnect) {
+        SendKey(VK_RETURN);
+        Sleep(500);
+        printf("[auto-login] Reconnect: dismissed disconnect banner.\n");
+    }
 
     // Session 13: live-confirmed — no click needed. The window's default
     // post-launch focus state responds directly to Tab: first Tab reaches
@@ -291,7 +325,7 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
 
 namespace AutoLogin {
 
-bool PerformLogin(const AutoLoginRequest& request, uint32_t targetPid, uint32_t timeoutMs)
+bool PerformLogin(const AutoLoginRequest& request, uint32_t targetPid, uint32_t timeoutMs, bool isReconnect)
 {
     printf("[auto-login] Waiting for login window (\"%s\") for pid=%u...\n", kLoginWindowTitle, targetPid);
     HWND loginWnd = FindLoginWindow(static_cast<DWORD>(targetPid), timeoutMs);
@@ -308,8 +342,13 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t targetPid, uint32_t 
     // wrong hypothesis about RDP needing the message-posting path for any
     // reason other than a genuinely locked desktop.
     if (IsInputDesktopLocked())
-        return PerformLoginViaMessages(loginWnd, request, timeoutMs);
-    return PerformLoginViaSendInput(loginWnd, request, timeoutMs);
+        return PerformLoginViaMessages(loginWnd, request, timeoutMs, isReconnect);
+    return PerformLoginViaSendInput(loginWnd, request, timeoutMs, isReconnect);
+}
+
+bool IsAtLoginScreen(uint32_t targetPid)
+{
+    return FindLoginWindowOnce(static_cast<DWORD>(targetPid)) != nullptr;
 }
 
 }  // namespace AutoLogin

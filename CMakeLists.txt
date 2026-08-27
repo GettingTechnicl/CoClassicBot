@@ -125,7 +125,7 @@ set_target_properties(coclassic PROPERTIES
 target_compile_options(coclassic PRIVATE $<$<CONFIG:Release>:/Zi>)
 target_link_options(coclassic PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
 
-add_executable(launcher
+add_executable(launcher WIN32
     injector/main.cpp
     injector/credentials.cpp
     injector/auto_login.cpp
@@ -137,6 +137,7 @@ target_include_directories(launcher PRIVATE
 target_link_libraries(launcher PRIVATE
     ws2_32
     crypt32
+    shell32
 )
 set_target_properties(launcher PROPERTIES
     OUTPUT_NAME "launcher"
