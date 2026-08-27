@@ -25,14 +25,19 @@ constexpr const char* kLoginWindowTitle = "[ClassicConquer]";
 // would be wrong for a fixed-size panel, and not the outer window rect,
 // since the game's own D3D render target is the client area — the title
 // bar is separate OS chrome it never draws into). Measured directly off a
-// live screenshot at a 1536x1112 window: field centers at y=672 (Username)
-// /710 (Password)/793 (Login button), all x=767; client area top-left in
-// that same capture was ~(0,31) with height ~1081, giving a client center
-// of (768,571) and these offsets.
+// live screenshot at a 1536x1112 window: username field center at y=672,
+// x=767; client area top-left in that same capture was ~(0,31) with
+// height ~1081, giving a client center of (768,571) and this offset.
+//
+// Session 13: the password field and Login button used to have their own
+// offsets here too (y=710/793), but a live RDP session showed that gap —
+// only 38px between username and password — isn't reliably preserved
+// across different client-area sizes/DPI scales, causing the password
+// click to land back on the username field. Only ONE click target
+// (username) is needed now; password focus and submission are driven by
+// Tab/Enter instead of further pixel math — see PerformLoginViaSendInput.
 struct FieldOffset { long dx; long dy; };
 constexpr FieldOffset kUsernameField{-1, 101};
-constexpr FieldOffset kPasswordField{-1, 139};
-constexpr FieldOffset kLoginButton{-1, 222};
 
 // SetForegroundWindow alone is unreliable when called from a background
 // process — Windows deliberately restricts which processes may steal
@@ -135,6 +140,15 @@ void PostText(HWND wnd, const std::string& text)
     }
 }
 
+// Posts a Tab/Enter key press to the window's message queue -- same
+// locked-session rationale as PostClick/PostText above.
+void PostKey(HWND wnd, WORD vk)
+{
+    SendMessageTimeoutA(wnd, WM_KEYDOWN, vk, 0, SMTO_NORMAL, 500, nullptr);
+    Sleep(20);
+    SendMessageTimeoutA(wnd, WM_KEYUP, vk, 0, SMTO_NORMAL, 500, nullptr);
+}
+
 POINT ResolveScreenPoint(HWND wnd, FieldOffset offset)
 {
     RECT clientRect{};
@@ -199,6 +213,22 @@ void SendText(const std::string& text)
     }
 }
 
+// Sends a real (non-text) virtual-key press, e.g. Tab/Enter for form
+// navigation — deliberately NOT KEYEVENTF_UNICODE, since that path is for
+// typing literal characters, not triggering focus-traversal/submit keys.
+void SendKey(WORD vk)
+{
+    INPUT down = {};
+    down.type = INPUT_KEYBOARD;
+    down.ki.wVk = vk;
+
+    INPUT up = down;
+    up.ki.dwFlags = KEYEVENTF_KEYUP;
+
+    INPUT batch[2] = {down, up};
+    SendInput(2, batch, sizeof(INPUT));
+}
+
 // Locked-session path: no real input desktop attachment exists to force
 // foreground onto, so this skips ForceForegroundWindow entirely and posts
 // straight to the window handle — see PostClick/PostText above for why that
@@ -216,18 +246,17 @@ bool PerformLoginViaMessages(HWND loginWnd, const AutoLoginRequest& request, uin
     PostText(loginWnd, request.username);
     printf("[auto-login] Username posted.\n");
 
-    const POINT passwordPt = ResolveClientPoint(loginWnd, kPasswordField);
-    printf("[auto-login] Posting click to password field at client (%ld,%ld)\n", passwordPt.x, passwordPt.y);
-    PostClick(loginWnd, passwordPt);
+    // Session 13: same Tab-navigation fix as the SendInput path below — see
+    // its comment for the full rationale (RDP-observed coordinate/DPI drift
+    // making the password field's click land back on the username field).
+    PostKey(loginWnd, VK_TAB);
     Sleep(150);
     PostText(loginWnd, request.password);
     printf("[auto-login] Password posted.\n");
 
     Sleep(200);
-    const POINT loginBtnPt = ResolveClientPoint(loginWnd, kLoginButton);
-    printf("[auto-login] Posting click to Login button at client (%ld,%ld)\n", loginBtnPt.x, loginBtnPt.y);
-    PostClick(loginWnd, loginBtnPt);
-    printf("[auto-login] Login posted.\n");
+    PostKey(loginWnd, VK_RETURN);
+    printf("[auto-login] Login submitted via Enter.\n");
 
     const DWORD waitStart = GetTickCount();
     while (IsWindow(loginWnd) && GetTickCount() - waitStart < timeoutMs)
@@ -281,9 +310,23 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
     SendText(request.username);
     printf("[auto-login] Username typed.\n");
 
-    const POINT passwordPt = ResolveScreenPoint(loginWnd, kPasswordField);
-    printf("[auto-login] Clicking password field at (%ld,%ld)\n", passwordPt.x, passwordPt.y);
-    SendClick(passwordPt);
+    // Session 13: user reported that, ever since RDP'ing into this PC, the
+    // password ends up typed into the USERNAME field instead of the
+    // password field. Root cause: kUsernameField/kPasswordField are only
+    // 38px apart (dy=101 vs dy=139), calibrated once at a 1536x1112
+    // session. RDP sessions can present a different effective client-area
+    // size or DPI scale than that calibration (already flagged as a known,
+    // unfixed risk from an earlier live RDP test — see PerformLogin's
+    // comment below) — enough drift and the SECOND click (meant for the
+    // password field) lands back inside the username field's hit-test
+    // area instead, leaving the *first* field still focused when the
+    // password text is typed. Rather than trying to perfect pixel math
+    // across arbitrary resolutions/DPI, remove the second and third
+    // click targets entirely: click ONLY the username field (the one
+    // click whose accuracy still matters), then use Tab to move focus to
+    // the password field and Enter to submit — both are near-universal
+    // UI conventions and don't depend on any further coordinate math.
+    SendKey(VK_TAB);
     Sleep(150);
     SendText(request.password);
     printf("[auto-login] Password typed.\n");
@@ -294,10 +337,8 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
     // multi-server support is actually needed.
 
     Sleep(200);
-    const POINT loginBtnPt = ResolveScreenPoint(loginWnd, kLoginButton);
-    printf("[auto-login] Clicking Login button at (%ld,%ld)\n", loginBtnPt.x, loginBtnPt.y);
-    SendClick(loginBtnPt);
-    printf("[auto-login] Login clicked.\n");
+    SendKey(VK_RETURN);
+    printf("[auto-login] Login submitted via Enter.\n");
 
     const DWORD waitStart = GetTickCount();
     while (IsWindow(loginWnd) && GetTickCount() - waitStart < timeoutMs)
