@@ -90,6 +90,10 @@ bool HasValidHuntZone(const AutoHuntSettings& settings)
     if (settings.zoneMapId == 0)
         return false;
 
+    // Map-wide has no shape to validate — any non-zero target map suffices.
+    if (settings.zoneMode == AutoHuntZoneMode::MapWide)
+        return true;
+
     if (settings.zoneMode == AutoHuntZoneMode::Route)
         return GetActiveRoute(settings, settings.zoneMapId) != nullptr;
 
@@ -103,6 +107,11 @@ bool IsPointInHuntZone(const AutoHuntSettings& settings, OBJID mapId, const Posi
 {
     if (mapId != settings.zoneMapId)
         return false;
+
+    // Map-wide: every point on the target map counts as "in zone" — that's
+    // the entire point of the mode.
+    if (settings.zoneMode == AutoHuntZoneMode::MapWide)
+        return true;
 
     if (settings.zoneMode == AutoHuntZoneMode::Route) {
         // "Inside the zone" for a route means inside the corridor — the band
@@ -224,6 +233,9 @@ bool IsPointNearHuntZone(const AutoHuntSettings& settings, OBJID mapId, const Po
 {
     if (mapId != settings.zoneMapId)
         return false;
+    // Map-wide has no boundary to be "near" — every point is already inside.
+    if (settings.zoneMode == AutoHuntZoneMode::MapWide)
+        return true;
     if (margin <= 0)
         return IsPointInHuntZone(settings, mapId, pos);
 
@@ -253,6 +265,14 @@ bool IsPointNearHuntZone(const AutoHuntSettings& settings, OBJID mapId, const Po
 
 Position GetHuntZoneAnchor(const AutoHuntSettings& settings)
 {
+    // Map-wide has no fixed center — anchor on wherever the hero currently
+    // is, since "return to zone" for this mode just means "stay on the
+    // target map," not walk back to any particular point on it.
+    if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
+        if (CHero* hero = Game::GetHero())
+            return hero->m_posMap;
+        return {};
+    }
     if (settings.zoneMode == AutoHuntZoneMode::Route) {
         // Anchor on the waypoint nearest the hero rather than the route's
         // centroid: callers use the anchor as "where the hunt is", and for a

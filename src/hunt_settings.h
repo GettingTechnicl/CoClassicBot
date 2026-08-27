@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include "base.h"
+#include "CRole.h"      // MonsterDangerTier — see AutoHuntSettings::maxDangerTier
 #include <cstdint>
 #include <vector>
 
@@ -8,6 +9,25 @@ enum class AutoHuntZoneMode {
     Circle = 0,
     Polygon = 1,
     Route = 2,      // recorded patrol path — see HuntRoute
+    // Session 13: the whole current map counts as "in zone" — no drawn
+    // shape at all. Built for AutoLevel/AutoHunt's map-wide design (see
+    // AutoHuntGoal below): SpawnMemory is already keyed per-map, not
+    // per-zone, so this just removes the artificial shape restriction on
+    // top of data that was already map-wide.
+    MapWide = 3,
+};
+
+// Session 13: what the hunt is FOR, not just where it happens.
+//   Farm  — today's behaviour: maximize kill/loot efficiency, no monster-
+//           danger gating at all (the character is presumed strong enough
+//           for wherever it's set to hunt).
+//   Level — gate engagement by MonsterDangerTier (see maxDangerTier below),
+//           relative to the hero's OWN current level (CRole::GetDangerTier),
+//           since a fixed absolute level means nothing as the hero grows —
+//           the tier boundary is what stays meaningful.
+enum class AutoHuntGoal {
+    Farm = 0,
+    Level = 1,
 };
 
 // How long to stay and fight before advancing along a route.
@@ -214,6 +234,14 @@ struct AutoHuntSettings
     OBJID zoneMapId = 0;
     AutoHuntCombatMode combatMode = AutoHuntCombatMode::Melee;
     AutoHuntZoneMode zoneMode = AutoHuntZoneMode::Circle;
+
+    // Session 13: see AutoHuntGoal's comment. maxDangerTier is the slider —
+    // deliberately per-character rather than a hardcoded avoid-Red/Black
+    // rule, since a tanky, well-geared class (e.g. Warrior) can reasonably
+    // level through Black-name areas where a squishier class shouldn't.
+    // Only consulted when huntGoal == Level; Farm mode ignores it entirely.
+    AutoHuntGoal huntGoal = AutoHuntGoal::Farm;
+    MonsterDangerTier maxDangerTier = MonsterDangerTier::White;
     Position zoneCenter = {0, 0};
     int zoneRadius = 12;
     std::vector<Position> zonePolygon;

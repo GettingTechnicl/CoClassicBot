@@ -368,7 +368,15 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     for (int attempt = 0; attempt < 40; ++attempt) {
         Position candidate{};
 
-        if (settings.zoneMode == AutoHuntZoneMode::Route) {
+        if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
+            // Uniform over the map's full tile extent. Same sampling shape as
+            // Polygon's bounding-box sample below, just sized to the whole
+            // map instead of a drawn shape's bounds.
+            if (map->m_sizeMap.iWidth <= 0 || map->m_sizeMap.iHeight <= 0)
+                return false;
+            candidate.x = (int)(NextRandom32() % (uint32_t)map->m_sizeMap.iWidth);
+            candidate.y = (int)(NextRandom32() % (uint32_t)map->m_sizeMap.iHeight);
+        } else if (settings.zoneMode == AutoHuntZoneMode::Route) {
             const HuntRoute* r = GetActiveRoute(settings, settings.zoneMapId);
             if (!r || r->waypoints.empty())
                 return false;
@@ -2018,11 +2026,52 @@ void BaseHuntPlugin::RenderSkillPriorityUI(AutoHuntSettings& settings)
 
 void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
 {
-    static const char* kZoneModes[] = { "Circle", "Polygon", "Route" };
+    // Session 13: what the hunt is FOR, gates everything below it (see
+    // AutoHuntGoal's comment in hunt_settings.h). Placed first since Level
+    // mode is what makes Map-Wide actually useful — a hand-drawn zone stays
+    // fine for Farm, but Level wants the whole map so it can keep finding
+    // appropriately-tiered monsters as the hero's level (and therefore the
+    // tier boundaries) drifts.
+    int huntGoal = static_cast<int>(settings.huntGoal);
+    if (ImGui::Combo("Hunt Goal", &huntGoal, "Farm (efficiency, no danger gating)\0Level (gate by monster danger tier)\0"))
+        settings.huntGoal = static_cast<AutoHuntGoal>(huntGoal);
+    HelpMarkerOnSameLine("Farm: kill whatever is efficient, no color/tier gating at all.\n"
+                         "Level: only engage monsters at or below the Max Danger Tier "
+                         "below, relative to your CURRENT level — the same green/white/"
+                         "red/black name-color system the game itself shows.");
+
+    if (settings.huntGoal == AutoHuntGoal::Level) {
+        int tier = static_cast<int>(settings.maxDangerTier);
+        if (ImGui::SliderInt("Max Danger Tier", &tier, 0, 3,
+                tier == 0 ? "Green only" : tier == 1 ? "White (default)" : tier == 2 ? "Red" : "Black"))
+            settings.maxDangerTier = static_cast<MonsterDangerTier>(tier);
+        HelpMarkerOnSameLine("Highest name-color tier this character will engage. Raise "
+                             "this for a tanky, well-geared class that can safely fight "
+                             "above its own level (e.g. a Warrior surviving Black-name "
+                             "areas); leave it lower for a squishier class.");
+    }
+
+    static const char* kZoneModes[] = { "Circle", "Polygon", "Route", "Map-Wide" };
     int zoneMode = static_cast<int>(settings.zoneMode);
     if (ImGui::Combo("Zone Shape", &zoneMode, kZoneModes, IM_ARRAYSIZE(kZoneModes))) {
         settings.zoneMode = static_cast<AutoHuntZoneMode>(zoneMode);
         m_zoneCaptureMode = ZoneCaptureMode::None;
+    }
+
+    if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
+        ImGui::Text("Zone Map: %u", settings.zoneMapId);
+        HelpMarkerOnSameLine("The bot may go anywhere on this map — no drawn shape. "
+                             "Use \"Use Hero Position\" below to set which map.");
+        if (hero && ImGui::Button("Use Hero Position")) {
+            settings.zoneMapId = Game::GetCurrentMapId();
+        }
+        // The leash/anchor text further down still applies and is shown
+        // unconditionally, so nothing else to render for this mode.
+        ImGui::TextDisabled("Leash: %d tiles out of zone / engage %d tiles out%s",
+                            GetHuntLeash(settings), GetHuntEngageMargin(settings),
+                            settings.routeCorridorOverride > 0 ? " (override)" : " (from attack range)");
+        ImGui::InputInt("Leash override (0=auto)", &settings.routeCorridorOverride);
+        return;
     }
 
     ImGui::Text("Zone Map: %u", settings.zoneMapId);

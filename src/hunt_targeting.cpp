@@ -217,6 +217,14 @@ std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool pr
             continue;
         if (!NameMatchesFilters(role->GetName(), includeFilters))
             continue;
+        // Session 13 [AutoLevel]: gate by monster-danger tier relative to the
+        // hero's CURRENT level, not a fixed rule — see AutoHuntGoal's
+        // comment in hunt_settings.h. Farm mode (the default) never gates
+        // on this at all; only Level mode does, and only up to whatever the
+        // user's maxDangerTier slider allows for their class/gear.
+        if (hero && settings.huntGoal == AutoHuntGoal::Level
+            && role->GetDangerTier(hero->GetLevel()) > settings.maxDangerTier)
+            continue;
         if (preferredOnly && !preferFilters.empty() && !NameMatchesFilters(role->GetName(), preferFilters))
             continue;
 

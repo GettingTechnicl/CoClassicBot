@@ -504,6 +504,8 @@ static std::string BuildCurrentConfigSnapshot()
     AppendIntSnapshot(snapshot, "autoDropMinKeepPrice", autoHunt.autoDropMinKeepPrice);
     AppendIntSnapshot(snapshot, "zoneMapId", autoHunt.zoneMapId);
     AppendIntSnapshot(snapshot, "combatMode", static_cast<int>(autoHunt.combatMode));
+    AppendIntSnapshot(snapshot, "huntGoal", static_cast<int>(autoHunt.huntGoal));
+    AppendIntSnapshot(snapshot, "maxDangerTier", static_cast<int>(autoHunt.maxDangerTier));
     AppendIntSnapshot(snapshot, "zoneMode", static_cast<int>(autoHunt.zoneMode));
     AppendIntSnapshot(snapshot, "zoneCenterX", autoHunt.zoneCenter.x);
     AppendIntSnapshot(snapshot, "zoneCenterY", autoHunt.zoneCenter.y);
@@ -705,6 +707,8 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "autoDropMinKeepPrice", autoHunt.autoDropMinKeepPrice);
     WriteInt(file, section, "zoneMapId", autoHunt.zoneMapId);
     WriteInt(file, section, "combatMode", static_cast<int>(autoHunt.combatMode));
+    WriteInt(file, section, "huntGoal", static_cast<int>(autoHunt.huntGoal));
+    WriteInt(file, section, "maxDangerTier", static_cast<int>(autoHunt.maxDangerTier));
     WriteInt(file, section, "zoneMode", static_cast<int>(autoHunt.zoneMode));
     WriteInt(file, section, "zoneCenterX", autoHunt.zoneCenter.x);
     WriteInt(file, section, "zoneCenterY", autoHunt.zoneCenter.y);
@@ -873,6 +877,14 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     autoHunt.combatMode = combatMode == static_cast<int>(AutoHuntCombatMode::Archer)
         ? AutoHuntCombatMode::Archer
         : AutoHuntCombatMode::Melee;
+    const int huntGoal = ReadInt(file, section, "huntGoal", static_cast<int>(AutoHuntGoal::Farm));
+    autoHunt.huntGoal = huntGoal == static_cast<int>(AutoHuntGoal::Level)
+        ? AutoHuntGoal::Level
+        : AutoHuntGoal::Farm;
+    int maxDangerTier = ReadInt(file, section, "maxDangerTier", static_cast<int>(MonsterDangerTier::White));
+    if (maxDangerTier < 0) maxDangerTier = 0;
+    if (maxDangerTier > 3) maxDangerTier = 3;
+    autoHunt.maxDangerTier = static_cast<MonsterDangerTier>(maxDangerTier);
     autoHunt.lootRange = ReadInt(file, section, "lootRange", 5);
     if (autoHunt.lootRange < 0)
         autoHunt.lootRange = 0;
