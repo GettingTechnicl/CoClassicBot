@@ -13,6 +13,7 @@
 #include "travel_plugin.h"
 #include "game.h"
 #include "spawn_memory.h"
+#include "hunt_contest.h"
 #include "hooks.h"
 #include "gateway.h"
 #include "CHero.h"
@@ -432,6 +433,16 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
         if (!map->IsWalkable(candidate.x, candidate.y))
             continue;
         if (CGameMap::TileDist(heroPos.x, heroPos.y, candidate.x, candidate.y) < minTravel)
+            continue;
+
+        // Session 13 [Paranoia camping-detection]: don't let the bot walk
+        // onto a bucket another player has been camping — distinct from
+        // ordinary Paranoia evasion above, which reacts to whoever is
+        // NEAREST right now. This specifically remembers a player who has
+        // been sitting on THIS bucket continuously, so a genuinely camped
+        // spot stays avoided even between exploration decisions where no
+        // player happens to be the single closest threat. See hunt_contest.h.
+        if (settings.paranoiaEnabled && HuntContest::IsBucketContested(mapId, candidate, settings))
             continue;
 
         if (paranoiaEvading) {
@@ -2446,6 +2457,19 @@ void BaseHuntPlugin::RenderSafetySection()
         "and the zone leash loosens so normal zone-return logic doesn't pull the hero back toward the player. "
         "Does not apply to town runs or mining. There's no way to know what's actually on another player's "
         "screen (no facing/camera data is readable) - this is positioning-based avoidance, not true stealth.");
+
+    if (settings.paranoiaEnabled) {
+        const HuntContest::Stats stats = HuntContest::GetStats(Game::GetCurrentMapId());
+        ImGui::TextDisabled("Bucket camping-avoidance: %d spot(s) currently avoided, %d being watched",
+                            stats.contestedBuckets, stats.trackedBuckets);
+        HelpMarkerOnSameLine(
+            "Separate from the distance-based evasion above: this remembers a specific spot "
+            "(SpawnMemory bucket) a player has been sitting on continuously for a while, so "
+            "the bot stops trying to walk onto it during exploration even between decisions "
+            "where that player isn't the single nearest threat. A spot is only avoided after "
+            "continuous presence, not a single sighting - someone just passing through isn't "
+            "affected. Rechecked periodically, so a spot comes back once they've actually left.");
+    }
 }
 
 void BaseHuntPlugin::RenderAdvancedSection()

@@ -58,6 +58,7 @@ add_library(coclassic SHARED
     src/hunt_settings.cpp
     src/hunt_stats.cpp
     src/hunt_targeting.cpp
+    src/hunt_contest.cpp
     src/hunt_town.cpp
     src/hunt_buffs.cpp
     src/hunt_loot.cpp

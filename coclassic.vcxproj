@@ -112,6 +112,7 @@
     <ClCompile Include="src\mem_stats.cpp" />
     <ClCompile Include="src\map_probe.cpp" />
     <ClCompile Include="src\monster_scan.cpp" />
+    <ClCompile Include="src\hunt_contest.cpp" />
     <!-- Detours (vendor) -->
     <ClCompile Include="vendor\Detours\src\detours.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="vendor\Detours\src\modules.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
@@ -186,6 +187,7 @@
     <ClInclude Include="src\mem_stats.h" />
     <ClInclude Include="src\map_probe.h" />
     <ClInclude Include="src\monster_scan.h" />
+    <ClInclude Include="src\hunt_contest.h" />
     <ClInclude Include="src\jitter.h" />
     <ClInclude Include="src\hunt_intervals.h" />
   </ItemGroup>
