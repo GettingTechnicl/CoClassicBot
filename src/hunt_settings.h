@@ -242,6 +242,14 @@ struct AutoHuntSettings
     // Only consulted when huntGoal == Level; Farm mode ignores it entirely.
     AutoHuntGoal huntGoal = AutoHuntGoal::Farm;
     MonsterDangerTier maxDangerTier = MonsterDangerTier::White;
+
+    // Session 13: percent chance, per exploration decision (once SpawnMemory
+    // has useful data), to deliberately walk toward the LOWEST-scoring
+    // sampled candidate instead of the highest — without this, a hot bucket
+    // found early dominates every future exploration decision forever, and
+    // the rest of the map/zone never gets (re-)scanned. 0 disables it
+    // (today's pure-exploit behavior). See BaseHuntPlugin::FindZoneExplorePosition.
+    int explorationChancePercent = 0;
     Position zoneCenter = {0, 0};
     int zoneRadius = 12;
     std::vector<Position> zonePolygon;

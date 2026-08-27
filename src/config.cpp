@@ -506,6 +506,7 @@ static std::string BuildCurrentConfigSnapshot()
     AppendIntSnapshot(snapshot, "combatMode", static_cast<int>(autoHunt.combatMode));
     AppendIntSnapshot(snapshot, "huntGoal", static_cast<int>(autoHunt.huntGoal));
     AppendIntSnapshot(snapshot, "maxDangerTier", static_cast<int>(autoHunt.maxDangerTier));
+    AppendIntSnapshot(snapshot, "explorationChancePercent", autoHunt.explorationChancePercent);
     AppendIntSnapshot(snapshot, "zoneMode", static_cast<int>(autoHunt.zoneMode));
     AppendIntSnapshot(snapshot, "zoneCenterX", autoHunt.zoneCenter.x);
     AppendIntSnapshot(snapshot, "zoneCenterY", autoHunt.zoneCenter.y);
@@ -709,6 +710,7 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "combatMode", static_cast<int>(autoHunt.combatMode));
     WriteInt(file, section, "huntGoal", static_cast<int>(autoHunt.huntGoal));
     WriteInt(file, section, "maxDangerTier", static_cast<int>(autoHunt.maxDangerTier));
+    WriteInt(file, section, "explorationChancePercent", autoHunt.explorationChancePercent);
     WriteInt(file, section, "zoneMode", static_cast<int>(autoHunt.zoneMode));
     WriteInt(file, section, "zoneCenterX", autoHunt.zoneCenter.x);
     WriteInt(file, section, "zoneCenterY", autoHunt.zoneCenter.y);
@@ -885,6 +887,9 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     if (maxDangerTier < 0) maxDangerTier = 0;
     if (maxDangerTier > 3) maxDangerTier = 3;
     autoHunt.maxDangerTier = static_cast<MonsterDangerTier>(maxDangerTier);
+    autoHunt.explorationChancePercent = ReadInt(file, section, "explorationChancePercent", 0);
+    if (autoHunt.explorationChancePercent < 0) autoHunt.explorationChancePercent = 0;
+    if (autoHunt.explorationChancePercent > 100) autoHunt.explorationChancePercent = 100;
     autoHunt.lootRange = ReadInt(file, section, "lootRange", 5);
     if (autoHunt.lootRange < 0)
         autoHunt.lootRange = 0;

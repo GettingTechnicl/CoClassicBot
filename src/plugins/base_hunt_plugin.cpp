@@ -356,6 +356,22 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     Position bestScored{};
     float    bestScore = -1.0f;
 
+    // Session 13 [AutoHunt exploration incentive]: without this, exploration
+    // is a pure argmax over whatever's sampled — a hot bucket found early
+    // dominates every future decision (it's near-guaranteed to be among the
+    // 40 samples and near-guaranteed to score highest), so nothing ever
+    // pulls the bot toward genuinely uncharted territory to fill out the
+    // rest of the map's density picture. Rolled once per call: on an
+    // "explore" roll, keep the LOWEST-scoring candidate instead of the
+    // highest, biasing toward buckets SpawnMemory hasn't observed (or
+    // hasn't observed recently). 0 = disabled (today's pure-exploit
+    // behavior); only meaningful once useHeatmap is true — before that,
+    // sampling is already uniform/first-valid.
+    const bool exploring = useHeatmap && settings.explorationChancePercent > 0
+        && (int)(NextRandom32() % 100u) < settings.explorationChancePercent;
+    Position worstScored{};
+    float    worstScore = (std::numeric_limits<float>::max)();
+
     // Session 11 [Paranoia Mode]: while a threat is detected, evasion takes
     // priority over normal exploration (heatmap-guided or first-valid) —
     // sample every candidate and keep the one farthest from the threat
@@ -442,11 +458,22 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
             bestScore = score;
             bestScored = candidate;
         }
+        if (score < worstScore) {
+            worstScore = score;
+            worstScored = candidate;
+        }
     }
 
     if (paranoiaEvading && bestThreatDist >= 0.0f && !IsZeroPos(bestAwayFromThreat)) {
         out = JitterDestination(map, bestAwayFromThreat, GetJitterRadius(settings));
         spdlog::trace("[hunt] Explore (paranoia) -> ({},{}) threatDist={:.1f}", out.x, out.y, bestThreatDist);
+        return true;
+    }
+
+    if (exploring && worstScore < (std::numeric_limits<float>::max)() && !IsZeroPos(worstScored)) {
+        out = JitterDestination(map, worstScored, GetJitterRadius(settings));
+        spdlog::trace("[hunt] Explore (exploration roll) -> ({},{}) spawnScore={:.1f}/{:.1f}",
+                      out.x, out.y, worstScore, maxScore);
         return true;
     }
 
@@ -2024,6 +2051,18 @@ void BaseHuntPlugin::RenderSkillPriorityUI(AutoHuntSettings& settings)
         settings.SyncSkillBoolsFromPriorities();
 }
 
+// Session 13: shared by every zone mode (see FindZoneExplorePosition's
+// exploration-roll comment) — factored out since it's shown from both the
+// Map-Wide branch and the shared leash section below for Circle/Polygon/Route.
+void RenderExplorationBiasUI(AutoHuntSettings& settings)
+{
+    ImGui::SliderInt("Exploration Chance %", &settings.explorationChancePercent, 0, 100);
+    HelpMarkerOnSameLine("Chance, each exploration decision, to deliberately walk toward "
+                         "an unscanned/low-density spot instead of the best-known one. "
+                         "0 = always exploit the best-known spot (can get stuck on the "
+                         "first hot spot found and never map the rest of the zone).");
+}
+
 void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
 {
     // Session 13: what the hunt is FOR, gates everything below it (see
@@ -2071,6 +2110,7 @@ void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
                             GetHuntLeash(settings), GetHuntEngageMargin(settings),
                             settings.routeCorridorOverride > 0 ? " (override)" : " (from attack range)");
         ImGui::InputInt("Leash override (0=auto)", &settings.routeCorridorOverride);
+        RenderExplorationBiasUI(settings);
         return;
     }
 
@@ -2140,6 +2180,7 @@ void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
     ImGui::InputInt("Leash override (0=auto)", &settings.routeCorridorOverride);
     HelpMarkerOnSameLine("How far the bot's body may leave the zone. It still only "
                          "attacks what is within striking range from where it stands.");
+    RenderExplorationBiasUI(settings);
 
     if (hero && ImGui::Button("Use Hero Position")) {
         // Session 10 [FIXED]: this used m_lastMapId, which is only refreshed
