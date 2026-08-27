@@ -216,6 +216,8 @@ constexpr int kMinItemActionIntervalMs = 100;
 constexpr int kMaxItemActionIntervalMs = 5000;
 inline DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return WithActionJitter(kMinItemActionIntervalMs);
     return WithActionJitter(ClampMs(settings.itemActionIntervalMs, kMinItemActionIntervalMs, kMaxItemActionIntervalMs));
 }
 
@@ -230,6 +232,8 @@ constexpr int kMinSelfCastIntervalMs = 100;
 constexpr int kMaxSelfCastIntervalMs = 5000;
 inline DWORD GetSelfCastIntervalMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return WithActionJitter(kMinSelfCastIntervalMs);
     return WithActionJitter(ClampMs(settings.selfCastIntervalMs, kMinSelfCastIntervalMs, kMaxSelfCastIntervalMs));
 }
 
@@ -237,6 +241,8 @@ constexpr int kMinNpcActionIntervalMs = 100;
 constexpr int kMaxNpcActionIntervalMs = 2000;
 inline DWORD GetNpcActionIntervalMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return WithActionJitter(kMinNpcActionIntervalMs);
     return WithActionJitter(ClampMs(settings.npcActionIntervalMs, kMinNpcActionIntervalMs, kMaxNpcActionIntervalMs));
 }
 
@@ -244,5 +250,7 @@ constexpr int kMinReviveRetryIntervalMs = 100;
 constexpr int kMaxReviveRetryIntervalMs = 10000;
 inline DWORD GetReviveRetryIntervalMs(const AutoHuntSettings& settings)
 {
+    if (ShouldUseAggressiveSpeeds(settings))
+        return WithActionJitter(kMinReviveRetryIntervalMs);
     return WithActionJitter(ClampMs(settings.reviveRetryIntervalMs, kMinReviveRetryIntervalMs, kMaxReviveRetryIntervalMs));
 }
