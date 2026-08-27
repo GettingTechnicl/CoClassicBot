@@ -19,9 +19,9 @@ All dependencies are vendored — no package manager needed.
 
 1. Open `coclassic.sln`
 2. Select **Release | x64**
-3. Build the solution
+3. Build the solution (builds both the main DLL and `launcher.exe` — `coclassic.sln` has projects for both, see Project Structure)
 
-> **Note:** `coclassic.sln`/`coclassic.vcxproj` only builds the main DLL — there is currently no Visual Studio project for `launcher.exe`. Use CMake (below) to build the launcher, or to build everything in one step.
+> **Note:** on at least one dev machine, command-line `MSBuild.exe` against `coclassic.sln` fails outright with `MSB8020` (`PlatformToolset=v143` not found) because the installed Visual Studio Build Tools version doesn't include that exact toolset — a pre-existing environment mismatch, not a project-file bug. If you hit this, either install the v143 toolset component, or retarget the solution (Project menu → Retarget Solution) to whatever toolset is actually installed. CMake (below) sidesteps this entirely by auto-detecting a working toolset.
 
 ### CMake
 
@@ -47,7 +47,7 @@ CMake auto-detects whatever Visual Studio toolset is installed (add `-G "Visual 
 1. Build the solution (see above)
 2. Run `launcher.exe` **as Administrator** (the game itself requires elevation, and the launcher auto-requests it). A character-select dialog appears first:
    - Pick a saved account to log in automatically, add a new one (label, username, password, server, optional per-account proxy — credentials are DPAPI-encrypted, tied to the current Windows user account, stored in `accounts.dat` next to `launcher.exe`), or skip to fall through to a manual/proxy-only launch.
-   - If an account is selected, the launcher starts the game, injects the DLL, and drives the login screen itself (the login window is custom-rendered with no real Win32 controls, so this is coordinate-based synthetic input, not `WM_SETTEXT`) — no manual login needed.
+   - If an account is selected, the launcher starts the game, injects the DLL, and drives the login screen itself (the login window is custom-rendered with no real Win32 controls, so this is synthetic mouse/keyboard input, not `WM_SETTEXT` — one click on the username field, then Tab/Enter for the rest, deliberately avoiding hardcoded pixel coordinates for anything past that first click) — no manual login needed.
    - The launcher then supervises the game process. If it crashes, it automatically relaunches and re-logs in with the same account, and any plugin that was enabled before the crash (autohunt, mining, etc.) resumes automatically — this resume-on-relaunch behavior is one-shot and only fires after a crash, never on a fresh manual login.
    - Skipping the account picker falls back to the previous behavior: inject into a fresh or already-running game process, log in manually, no auto-relaunch.
 3. Press **Insert** to toggle the overlay
@@ -122,8 +122,9 @@ In VPN mode the game connects normally through the system network stack. The lau
 |-----|-------------|
 | **Player** | Hero stats, inventory, equipment |
 | **Map** | Map info, tools, and the Travel section |
-| **Plugins** | Per-plugin settings and controls |
+| **Plugins** | Per-plugin settings and controls (hunt plugins share one "Hunting" entry with sub-tabs) |
 | **Packets** | Live packet logger |
+| **Misc** | Discord webhook/notification settings, hunt routes/diagnostics, and standalone debug tools (map probe, combat test, monster stat scan, etc.) |
 
 ## Features
 
@@ -133,7 +134,7 @@ Plugins are C++ classes implementing the `IPlugin` interface. They are compiled 
 
 | Plugin                       | Description |
 |------------------------------|-------------|
-| **Melee Hunt** / **Archer Hunt** | Hunting automation with zone selection, combat, loot, town runs, and Player Safety/Paranoia Mode player-avoidance |
+| **Melee Hunt** / **Archer Hunt** | Hunting automation with zone selection (Circle/Polygon/Route/Map-Wide), combat, loot, town runs, an AutoHunt (farm) / AutoLevel (gate engagement by monster danger tier relative to hero level, per-character slider) goal toggle, spawn-density-weighted exploration with a tunable explore-vs-exploit bias, and Player Safety/Paranoia Mode player-avoidance |
 | **Mining**                   | Mine-travel automation with warehouse storage and mule trading |
 | **Mule**                     | Market trade helper that accepts trades from whitelisted players |
 | **Travel**                   | Cross-map travel via portals, NPCs, and VIP teleport gateways |
@@ -152,9 +153,10 @@ Plugins are C++ classes implementing the `IPlugin` interface. They are compiled 
 - **Config** — Per-character INI persistence with autosave
 - **Packet Logger** — Hooks `CNetClient::SendMsg` to log outbound packets
 - **Discord Webhooks** — Whisper notification forwarding
-- **Auto-Login / Crash-Recovery Supervision** (`injector/`) — DPAPI-encrypted multi-account credential store, coordinate-based synthetic-input login automation, and a supervisor loop that auto-relaunches and re-logs-in after a crash, resuming any plugin that was enabled beforehand
-- **Player Safety / Paranoia Mode** — detects nearby non-whitelisted players and either fully retreats to Market and idles (Player Safety) or biases normal hunting decisions — target choice, idle-exploration destination, zone-leash tolerance — away from the detected player while continuing to hunt (Paranoia Mode); both are positioning/distance-based only, no facing/camera data is available for other players
-- **Spawn Memory** — a per-map heatmap of observed monster positions that biases idle-exploration destinations toward historically monster-dense areas
+- **Auto-Login / Crash-Recovery Supervision** (`injector/`) — DPAPI-encrypted multi-account credential store, Tab/Enter-driven login automation (a single click on the username field, then keyboard-only navigation — no coordinate math past that), and a supervisor loop that auto-relaunches and re-logs-in after a crash, resuming any plugin that was enabled beforehand
+- **Player Safety / Paranoia Mode** — detects nearby non-whitelisted players. Player Safety fully retreats to Market and idles once a player has lingered too long. Paranoia Mode instead actively interrupts hunting (skips engaging a target and skips ordinary loot, walking toward a threat-biased destination instead) for as long as a threat is detected, plus a separate bucket-level "camping" detector (distinct from the per-tick threat check) that specifically avoids a spot another player has occupied continuously for a while, with an escalating recheck backoff, rather than reacting to someone just passing through. Both Player Safety and Paranoia are positioning/distance-based only — no facing/camera data is available for other players.
+- **Monster/Hero Level & Danger Tier** — `CRole::GetLevel()`/`GetDangerTier()` expose the green/white/red/black name-color tier (relative to the hero's own level) for any entity, monster or player — the basis for AutoLevel's engagement gate above
+- **Spawn Memory** — a per-map heatmap of observed monster positions that biases idle-exploration destinations toward historically monster-dense areas, with a tunable chance to deliberately favor unscanned areas instead
 
 ## Project Structure
 
@@ -177,7 +179,8 @@ coclassic/
 ├── injector/               # Standalone launcher executable
 │   ├── main.cpp             # Entry point, account picker, proxy/relay, crash-recovery supervision loop
 │   ├── credentials.cpp/h    # DPAPI-encrypted multi-account credential store (accounts.dat)
-│   └── auto_login.cpp/h     # Coordinate-based synthetic-input login automation
+│   ├── auto_login.cpp/h     # Tab/Enter-driven login automation
+│   └── launcher.vcxproj     # VS project for this executable (kept in sync with CMakeLists.txt by hand, see Build Notes)
 ├── tests/                  # Unit tests
 │   └── map_tests.cpp
 ├── tools/                  # Standalone diagnostic scripts (not part of the build)
@@ -189,7 +192,7 @@ coclassic/
 │   ├── imgui/              # Dear ImGui (D3D10 + Win32 backends)
 │   ├── json/               # nlohmann/json
 │   └── spdlog/             # spdlog logging
-├── coclassic.sln           # Visual Studio solution (main DLL only, see Building)
+├── coclassic.sln           # Visual Studio solution (main DLL + launcher + tests, see Building)
 ├── coclassic.vcxproj       # Main DLL project
 └── CMakeLists.txt          # CMake build configuration (main DLL, launcher, tests, and diagnostic targets)
 ```
