@@ -14,6 +14,7 @@
 #include "game.h"
 #include "spawn_memory.h"
 #include "hunt_contest.h"
+#include "map_probe.h"
 #include "hooks.h"
 #include "gateway.h"
 #include "CHero.h"
@@ -2220,6 +2221,8 @@ void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
             settings.lingerMode = (AutoHuntLingerMode)linger;
         HelpMarkerOnSameLine("Auto derives it from measured time-to-kill: one-shot "
                              "mobs = move on, slow kills = stay and clear.");
+        ImGui::InputInt("Waypoint tolerance", &settings.routeWaypointTolerance);
+        HelpMarkerOnSameLine("How close to a waypoint counts as \"arrived\" before advancing to the next one.");
     }
 
     // The leash governs every zone shape, so show it regardless of mode.
@@ -2550,13 +2553,198 @@ void BaseHuntPlugin::RenderAdvancedSection()
         "value (never subtracted), so the actual cadence is never perfectly periodic. 0 disables it.");
 }
 
+// Session 13: merged in Misc tab's former "Hunt Diagnostics" section (was a
+// near-triplicate of the State/Reason text already shown here and on Ready
+// Check, plus a bunch of genuinely useful diagnostics — pathfinder stuck
+// detection, weapon-equip status, spawn memory, ground items, zone
+// walkability, repair phase — that had no other home). This is now the one
+// place for deep hunt-loop diagnostics; Ready Check stays a simpler
+// at-a-glance summary.
 void BaseHuntPlugin::RenderDebugSection()
 {
     AutoHuntSettings& settings = GetAutoHuntSettings();
-    ImGui::Text("Current State: %s", GetStateName());
-    ImGui::TextWrapped("Current Reason: %s", m_statusText);
-    ImGui::Text("Map / Position: %u @ (%d, %d)", m_lastMapId, m_lastHeroPos.x, m_lastHeroPos.y);
+    CHero* hero = Game::GetHero();
+
+    ImGui::Text("State:  %s", GetStateName());
+    ImGui::TextWrapped("Reason: %s", m_statusText);
     ImGui::Text("Last Target: %u", m_targetId);
+
+    // Effective vs actual position. A mismatch means every range check AND
+    // every scatter direction is being computed from a tile the hero isn't
+    // on.
+    if (hero) {
+        const Position eff = GetEffectivePosDebug(hero);
+        const Position act = hero->m_posMap;
+        const DWORD pj = GetPendingJumpTick();
+        if (eff.x != act.x || eff.y != act.y) {
+            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                "AIMING FROM WRONG TILE: effective (%d,%d) vs actual (%d,%d)",
+                eff.x, eff.y, act.x, act.y);
+            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                "  pendingJumpTick=%u dest=(%d,%d) age=%ums",
+                pj, GetPendingJumpDest().x, GetPendingJumpDest().y,
+                pj ? (GetTickCount() - pj) : 0);
+        } else {
+            ImGui::TextDisabled("effective pos == actual (%d,%d)%s",
+                act.x, act.y, pj ? "  [pendingJump set]" : "");
+        }
+        // Pathfinder state. "Active" doubles as "movement is happening"
+        // throughout the hunt loop and also gates the attack, so a path
+        // that stops progressing freezes everything.
+        Pathfinder& pf = Pathfinder::Get();
+        if (pf.IsActive()) {
+            const Position wp = pf.GetCurrentWaypoint();
+            const DWORD sinceProgress = GetTickCount() - pf.GetLastProgressTick();
+            const bool stuck = sinceProgress > 2000;
+            ImGui::TextColored(stuck ? ImVec4(1, 0.3f, 0.3f, 1)
+                                     : ImVec4(0.6f, 0.6f, 0.6f, 1),
+                "path ACTIVE wp %d/%d -> (%d,%d)  noProgress=%ums%s",
+                (int)pf.GetCurrentIndex(), (int)pf.GetWaypoints().size(),
+                wp.x, wp.y, sinceProgress,
+                stuck ? "  <-- STUCK, blocks attacks" : "");
+        } else {
+            ImGui::TextDisabled("path idle");
+        }
+    }
+
+    ImGui::Separator();
+    if (hero) {
+        // ShootTarget() returns immediately with no weapon, so an
+        // unequipped bow silently disables all ranged attacks — exactly
+        // the failure seen after a repair run that unequipped but never
+        // re-equipped.
+        CItem* rw = hero->GetEquip(EquipSlot::RWEAPON);
+        CItem* lw = hero->GetEquip(EquipSlot::LWEAPON);
+        if (rw)
+            ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1),
+                "R.Hand: typeId=%u  (ranged attacks enabled)", rw->GetTypeID());
+        else
+            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                "R.Hand: EMPTY -> ShootTarget() no-ops, archer cannot attack");
+        ImGui::Text("L.Hand: %s",
+            lw ? std::to_string(lw->GetTypeID()).c_str() : "(empty)");
+    }
+
+    const auto targets = CollectHuntTargets(settings);
+    ImGui::Text("Targets passing filters: %d", (int)targets.size());
+    if (!targets.empty() && hero) {
+        CRole* t = targets.front();
+        ImGui::TextDisabled("  nearest: %s id=%u (%d,%d) dist=%d",
+            t->GetName(), t->GetID(), t->m_posMap.x, t->m_posMap.y,
+            CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
+                               t->m_posMap.x, t->m_posMap.y));
+    }
+    ImGui::TextDisabled("zoneMapId=%u  currentMap=%u  searchRange=%d",
+                        settings.zoneMapId, Game::GetCurrentMapId(), settings.mobSearchRange);
+    // The leash applies to every zone mode, not just routes.
+    ImGui::TextDisabled("leash=%d tiles (body may leave zone by this)",
+                        GetHuntLeash(settings));
+    // IsJumping() sticking on is a silent killer: it gates the attack and
+    // poisons the effective hero position.
+    if (hero) {
+        const bool jumping = hero->IsJumping() != 0;
+        if (jumping)
+            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                "IsJumping=TRUE -> attacks are gated off. cmd target (%d,%d) vs pos (%d,%d)",
+                hero->GetCommand().posTarget.x, hero->GetCommand().posTarget.y,
+                hero->m_posMap.x, hero->m_posMap.y);
+        else
+            ImGui::TextDisabled("IsJumping=false (attacks allowed)");
+    }
+    // Show how much of a circle zone is actually usable.
+    if (settings.zoneMode == AutoHuntZoneMode::Circle && settings.zoneRadius > 0) {
+        if (MapGrid* g = GetCurrentMapGrid()) {
+            int total = 0, walk = 0;
+            const int r = settings.zoneRadius;
+            for (int dy = -r; dy <= r; dy += 2)
+                for (int dx = -r; dx <= r; dx += 2) {
+                    if (dx * dx + dy * dy > r * r) continue;
+                    ++total;
+                    if (g->IsWalkable(settings.zoneCenter.x + dx, settings.zoneCenter.y + dy))
+                        ++walk;
+                }
+            const float pct = total ? 100.0f * (float)walk / (float)total : 0.0f;
+            if (pct < 70.0f)
+                ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1),
+                    "Zone is only %.0f%% walkable - shrink or move it", pct);
+            else
+                ImGui::TextDisabled("Zone walkable: %.0f%%", pct);
+        }
+    }
+    ImGui::TextDisabled("engage margin=%d tiles (monsters valid this far out)",
+                        GetHuntEngageMargin(settings));
+    {
+        // Spawn memory: shows whether the bot has learned enough about
+        // this map to steer by it yet.
+        const OBJID mid = Game::GetCurrentMapId();
+        const SpawnMemory::Stats sm = SpawnMemory::GetStats(mid);
+        const bool useful = SpawnMemory::HasUsefulData(mid);
+        ImGui::TextColored(useful ? ImVec4(0.4f, 1, 0.4f, 1)
+                                  : ImVec4(0.6f, 0.6f, 0.6f, 1),
+            "spawn memory: %d buckets, %d observations%s",
+            sm.buckets, sm.observations,
+            useful ? " (steering exploration)" : " (still learning)");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear map"))
+            SpawnMemory::ClearMap(mid);
+    }
+    {
+        // Ground-item scan (session 10): map->m_vecItems was NEVER
+        // populated on v1074, so loot/potion pickup silently found
+        // nothing all project. This is its replacement (map_items.h) —
+        // if this reads 0 while items are visibly on the ground, the
+        // heap-scan signature itself needs revisiting, same as the
+        // entity funnel counters did for monster detection.
+        const MapItems::Stats ms2 = MapItems::GetStats();
+        ImGui::TextColored(ms2.total > 0 ? ImVec4(0.4f, 1, 0.4f, 1)
+                                         : ImVec4(1, 0.6f, 0.2f, 1),
+            "ground items: %d (scan #%u, %ums)",
+            ms2.total, ms2.scans, ms2.lastScanMs);
+    }
+
+    ImGui::Separator();
+    // m_deqItem (+0xB70) is unverified and reads empty, which is why the
+    // repair sequence never re-equips.
+    if (hero) {
+        const size_t bag = hero->m_deqItem.size();
+        if (bag == 0)
+            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                "Inventory reads 0 items -> repair can never re-equip");
+        else
+            ImGui::Text("Inventory: %d items", (int)bag);
+    }
+    if (ImGui::Button("Find Inventory Container")) {
+        const bool ok = DebugFindInventory();
+        spdlog::info("[debug] Inventory probe ok={}", ok);
+    }
+
+    // Repair sequence state. It stalls somewhere between unequip and
+    // re-equip; this shows exactly where, and the durability values it is
+    // comparing.
+    {
+        ImGui::Separator();
+        const HuntTownService& ts = GetTownService();
+        const OBJID rid = ts.GetRepairItemId();
+        ImGui::Text("Repair phase: %s",
+                    HuntTownService::RepairPhaseName(ts.GetRepairPhase()));
+        ImGui::TextDisabled("  repairItemId=%u slot=%d npcId=%u",
+                            rid, ts.GetRepairSlot(), ts.GetRepairNpcId());
+        if (rid && hero) {
+            // WaitRepair only advances when cur >= max, so these two
+            // numbers say whether the NPC repair actually took effect.
+            CItem* bag = FindInventoryItemById(hero, rid);
+            CItem* eq  = hero->GetEquip(ts.GetRepairSlot());
+            if (bag)
+                ImGui::TextDisabled("  in bag: dur %d / %d",
+                    bag->GetDurabilityRaw(), bag->GetMaxDurabilityRaw());
+            else
+                ImGui::TextDisabled("  in bag: NOT FOUND");
+            ImGui::TextDisabled("  in slot: %s",
+                eq ? (eq->GetID() == rid ? "yes (re-equipped)" : "different item")
+                   : "empty");
+        }
+    }
+
     ImGui::SeparatorText("Overlay Toggles");
     ImGui::Checkbox("Show Action Radius", &settings.debugShowActionRadius);
     ImGui::Checkbox("Show Clump Radius", &settings.debugShowClumpRadius);
