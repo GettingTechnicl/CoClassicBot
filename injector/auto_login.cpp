@@ -15,29 +15,21 @@ constexpr const char* kLoginWindowTitle = "[ClassicConquer]";
 // Session 10: EnumChildWindows found ZERO child controls on this window —
 // confirmed live. The login form is custom-rendered (like the modern-
 // styled launcher window), not built from real Win32 Edit/Button/ComboBox
-// controls, so WM_SETTEXT/BM_CLICK have nothing to target. Falls back to
-// coordinate-based synthetic input instead: real mouse clicks + keystrokes.
+// controls, so WM_SETTEXT/BM_CLICK have nothing to target.
 //
-// The login panel is a small FIXED-SIZE box that stays centered in the
-// window regardless of window size (confirmed live — this window is
-// resizable) — so positions are anchored as constant PIXEL offsets from
-// the window's CLIENT AREA center (not a fraction of window size, which
-// would be wrong for a fixed-size panel, and not the outer window rect,
-// since the game's own D3D render target is the client area — the title
-// bar is separate OS chrome it never draws into). Measured directly off a
-// live screenshot at a 1536x1112 window: username field center at y=672,
-// x=767; client area top-left in that same capture was ~(0,31) with
-// height ~1081, giving a client center of (768,571) and this offset.
+// Sessions 12-13 tried driving it with coordinate-based synthetic clicks
+// (fixed pixel offsets from the client-area center, measured once at a
+// 1536x1112 window). That broke as soon as the window's actual size/DPI
+// diverged from that one calibration — first over RDP (window ~1380x890),
+// then even sitting locally at the PC (cause unconfirmed, but the click
+// landed on the password field instead of username both times), each
+// time in a different, hard-to-predict way.
 //
-// Session 13: the password field and Login button used to have their own
-// offsets here too (y=710/793), but a live RDP session showed that gap —
-// only 38px between username and password — isn't reliably preserved
-// across different client-area sizes/DPI scales, causing the password
-// click to land back on the username field. Only ONE click target
-// (username) is needed now; password focus and submission are driven by
-// Tab/Enter instead of further pixel math — see PerformLoginViaSendInput.
-struct FieldOffset { long dx; long dy; };
-constexpr FieldOffset kUsernameField{-1, 101};
+// Session 13 fix (live-confirmed by the user): NO mouse click is needed
+// at all. The login window's default post-launch focus state responds to
+// plain Tab-navigation — one Tab reaches the username field, a second
+// Tab reaches the password field — which sidesteps the coordinate/DPI
+// problem entirely instead of chasing another pixel recalibration.
 
 // SetForegroundWindow alone is unreliable when called from a background
 // process — Windows deliberately restricts which processes may steal
@@ -47,7 +39,7 @@ constexpr FieldOffset kUsernameField{-1, 101};
 // the standard, reliable way external tools force focus onto another
 // process's window. Returns whether the target actually ended up foreground
 // — checked explicitly rather than assumed, since a silent failure here
-// means every subsequent click/keystroke goes to the wrong place.
+// means every subsequent keystroke goes to the wrong place.
 bool ForceForegroundWindow(HWND target)
 {
     const DWORD targetThreadId = GetWindowThreadProcessId(target, nullptr);
@@ -104,33 +96,14 @@ bool IsInputDesktopLocked()
     return _stricmp(name, "Default") != 0;
 }
 
-POINT ResolveClientPoint(HWND wnd, FieldOffset offset)
-{
-    RECT clientRect{};
-    GetClientRect(wnd, &clientRect);  // always (0,0,width,height) — origin is client-relative
-    return POINT{
-        (clientRect.right - clientRect.left) / 2 + offset.dx,
-        (clientRect.bottom - clientRect.top) / 2 + offset.dy
-    };
-}
-
-// Posts synthetic mouse/keyboard messages straight to the window's message
-// queue instead of generating real hardware-level input via SendInput. This
-// does NOT require attachment to the active input desktop — it works purely
+// Posts synthetic keyboard messages straight to the window's message queue
+// instead of generating real hardware-level input via SendInput. This does
+// NOT require attachment to the active input desktop — it works purely
 // through the target thread's own message pump, which keeps running whether
 // or not the session is locked. Whether the game's custom UI framework
-// actually consults window messages for its own hit-testing/typing (as
-// opposed to polling raw input) is unverified; this is a best-effort path
-// for the locked case where SendInput is guaranteed not to work at all.
-void PostClick(HWND wnd, POINT clientPt)
-{
-    const LPARAM lParam = MAKELPARAM(clientPt.x, clientPt.y);
-    SendMessageTimeoutA(wnd, WM_MOUSEMOVE, 0, lParam, SMTO_NORMAL, 500, nullptr);
-    SendMessageTimeoutA(wnd, WM_LBUTTONDOWN, MK_LBUTTON, lParam, SMTO_NORMAL, 500, nullptr);
-    Sleep(30);
-    SendMessageTimeoutA(wnd, WM_LBUTTONUP, 0, lParam, SMTO_NORMAL, 500, nullptr);
-}
-
+// actually consults window messages for its own focus/typing (as opposed to
+// polling raw input) is unverified; this is a best-effort path for the
+// locked case where SendInput is guaranteed not to work at all.
 void PostText(HWND wnd, const std::string& text)
 {
     for (char c : text) {
@@ -141,55 +114,12 @@ void PostText(HWND wnd, const std::string& text)
 }
 
 // Posts a Tab/Enter key press to the window's message queue -- same
-// locked-session rationale as PostClick/PostText above.
+// locked-session rationale as PostText above.
 void PostKey(HWND wnd, WORD vk)
 {
     SendMessageTimeoutA(wnd, WM_KEYDOWN, vk, 0, SMTO_NORMAL, 500, nullptr);
     Sleep(20);
     SendMessageTimeoutA(wnd, WM_KEYUP, vk, 0, SMTO_NORMAL, 500, nullptr);
-}
-
-POINT ResolveScreenPoint(HWND wnd, FieldOffset offset)
-{
-    RECT clientRect{};
-    GetClientRect(wnd, &clientRect);  // always (0,0,width,height) — origin is client-relative
-    POINT center{(clientRect.right - clientRect.left) / 2, (clientRect.bottom - clientRect.top) / 2};
-    ClientToScreen(wnd, &center);  // now a real screen coordinate
-    POINT pt;
-    pt.x = center.x + offset.dx;
-    pt.y = center.y + offset.dy;
-    return pt;
-}
-
-void SendClick(POINT screenPt)
-{
-    // MOUSEEVENTF_ABSOLUTE coordinates are normalized 0-65535 across
-    // whichever area MOUSEEVENTF_VIRTUALDESK selects. This machine has two
-    // monitors — normalizing against SM_CXSCREEN/SM_CYSCREEN (primary
-    // monitor only) would misplace clicks if the game window is on the
-    // second one, so use the full virtual desktop's origin/size instead.
-    const int vLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    const int vTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    const int vWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    const int vHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-
-    // Move the cursor there first (some UI frameworks need a real mouse-move
-    // event before a click registers, not just a click at a location the
-    // cursor never visited) then click.
-    INPUT inputs[3] = {};
-
-    inputs[0].type = INPUT_MOUSE;
-    inputs[0].mi.dx = static_cast<LONG>((screenPt.x - vLeft) * (65535.0 / vWidth));
-    inputs[0].mi.dy = static_cast<LONG>((screenPt.y - vTop) * (65535.0 / vHeight));
-    inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-
-    inputs[1].type = INPUT_MOUSE;
-    inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-
-    inputs[2].type = INPUT_MOUSE;
-    inputs[2].mi.dwFlags = MOUSEEVENTF_LEFTUP;
-
-    SendInput(3, inputs, sizeof(INPUT));
 }
 
 // Types via KEYEVENTF_UNICODE (one synthetic keypress per character) rather
@@ -231,24 +161,18 @@ void SendKey(WORD vk)
 
 // Locked-session path: no real input desktop attachment exists to force
 // foreground onto, so this skips ForceForegroundWindow entirely and posts
-// straight to the window handle — see PostClick/PostText above for why that
-// doesn't need it. Uses the same measured field offsets as the SendInput
-// path, just resolved to client-relative coordinates instead of screen ones.
+// straight to the window handle — see PostText above for why that doesn't
+// need it. Same Tab-only navigation as PerformLoginViaSendInput below.
 bool PerformLoginViaMessages(HWND loginWnd, const AutoLoginRequest& request, uint32_t timeoutMs)
 {
     printf("[auto-login] Session is locked — driving login via posted window messages "
         "(SendInput cannot reach the input desktop in this state).\n");
 
-    const POINT usernamePt = ResolveClientPoint(loginWnd, kUsernameField);
-    printf("[auto-login] Posting click to username field at client (%ld,%ld)\n", usernamePt.x, usernamePt.y);
-    PostClick(loginWnd, usernamePt);
-    Sleep(600);
+    PostKey(loginWnd, VK_TAB);
+    Sleep(300);
     PostText(loginWnd, request.username);
     printf("[auto-login] Username posted.\n");
 
-    // Session 13: same Tab-navigation fix as the SendInput path below — see
-    // its comment for the full rationale (RDP-observed coordinate/DPI drift
-    // making the password field's click land back on the username field).
     PostKey(loginWnd, VK_TAB);
     Sleep(150);
     PostText(loginWnd, request.password);
@@ -279,53 +203,19 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
         printf("[auto-login] Login window confirmed foreground.\n");
     else
         printf("[auto-login] WARNING: login window did NOT become foreground — "
-            "clicks/keystrokes will likely go to the wrong window.\n");
+            "keystrokes will likely go to the wrong window.\n");
     Sleep(200);
 
-    RECT windowRect{};
-    if (GetWindowRect(loginWnd, &windowRect)) {
-        printf("[auto-login] Login window rect: (%ld,%ld)-(%ld,%ld)\n",
-            windowRect.left, windowRect.top, windowRect.right, windowRect.bottom);
-    }
-
-    const POINT usernamePt = ResolveScreenPoint(loginWnd, kUsernameField);
-    printf("[auto-login] Clicking username field at (%ld,%ld)\n", usernamePt.x, usernamePt.y);
-    SendClick(usernamePt);
-    // Session 10: click coordinates confirmed pixel-accurate live (matched
-    // the measured field position almost exactly), yet username still came
-    // up empty while password (identical click+type pattern, just later in
-    // the sequence) worked. Two candidate causes, addressed together since
-    // there's no way to isolate them without another live round-trip: (1) a
-    // Ctrl+A select-all was sent before typing username but not password —
-    // if this custom-rendered UI doesn't handle Ctrl+A like a real text
-    // field, that keystroke could itself be what dropped focus/input state
-    // right before typing; removed rather than debugged further, since nothing
-    // here actually needs it (the account picker always provides the full
-    // username, so there's no partial-text-append risk to guard against).
-    // (2) the field may simply not be ready to receive input yet this soon
-    // after the window first appears/gains focus — the 150ms gap here was
-    // much shorter than the ~700ms+ that had already elapsed by the time
-    // password's click ran. Longer, equal delay before both now.
-    Sleep(600);
+    // Session 13: live-confirmed — no click needed. The window's default
+    // post-launch focus state responds directly to Tab: first Tab reaches
+    // the username field, second Tab reaches the password field. This
+    // replaces the coordinate-based clicking that kept breaking across
+    // different window sizes/DPI (see the file-header comment for history).
+    SendKey(VK_TAB);
+    Sleep(300);
     SendText(request.username);
     printf("[auto-login] Username typed.\n");
 
-    // Session 13: user reported that, ever since RDP'ing into this PC, the
-    // password ends up typed into the USERNAME field instead of the
-    // password field. Root cause: kUsernameField/kPasswordField are only
-    // 38px apart (dy=101 vs dy=139), calibrated once at a 1536x1112
-    // session. RDP sessions can present a different effective client-area
-    // size or DPI scale than that calibration (already flagged as a known,
-    // unfixed risk from an earlier live RDP test — see PerformLogin's
-    // comment below) — enough drift and the SECOND click (meant for the
-    // password field) lands back inside the username field's hit-test
-    // area instead, leaving the *first* field still focused when the
-    // password text is typed. Rather than trying to perfect pixel math
-    // across arbitrary resolutions/DPI, remove the second and third
-    // click targets entirely: click ONLY the username field (the one
-    // click whose accuracy still matters), then use Tab to move focus to
-    // the password field and Enter to submit — both are near-universal
-    // UI conventions and don't depend on any further coordinate math.
     SendKey(VK_TAB);
     Sleep(150);
     SendText(request.password);
@@ -346,8 +236,7 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
 
     if (IsWindow(loginWnd)) {
         printf("[auto-login] Login window still open after %ums — login may have failed "
-            "(wrong password, banned account, misaligned click coordinates, etc.) or is "
-            "taking unusually long.\n", timeoutMs);
+            "(wrong password, banned account, etc.) or is taking unusually long.\n", timeoutMs);
         return false;
     }
 
@@ -371,13 +260,10 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t timeoutMs)
 
     Sleep(1500);  // let it finish laying out/rendering after first appearing
 
-    // Session 12: live RDP test showed SendInput-driven clicks/keystrokes DO
-    // reach the game over RDP (unlike the true-lock case) — they just landed
-    // on the wrong coordinates, because the field offsets are fixed pixel
-    // constants measured at one specific window size and don't hold at a
-    // different size/DPI. That's a coordinate bug, not a delivery bug, so
-    // remote-session is not treated as a reason to route away from the
-    // proven SendInput path — only a genuinely locked desktop is.
+    // Session 12: live RDP test showed SendInput-driven keystrokes DO reach
+    // the game over RDP (unlike the true-lock case), ruling out an earlier
+    // wrong hypothesis about RDP needing the message-posting path for any
+    // reason other than a genuinely locked desktop.
     if (IsInputDesktopLocked())
         return PerformLoginViaMessages(loginWnd, request, timeoutMs);
     return PerformLoginViaSendInput(loginWnd, request, timeoutMs);
