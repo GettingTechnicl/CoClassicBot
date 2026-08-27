@@ -83,7 +83,7 @@ eligible — no bias toward White/Red over trivial Green when better options
 exist nearby). Worth adding once there's a real leveling character to tune
 against; premature to hand-tune weights against zero live data.
 
-## Part 3 — AutoHunt exploration incentive (planned, not yet implemented)
+## Part 3 — AutoHunt exploration incentive (shipped, commit `d87d90a`)
 
 **Problem**: `FindZoneExplorePosition` already avoids being a pure argmax
 (its own comment: "Sampling keeps some exploration alive") by sampling 40
@@ -95,18 +95,18 @@ always score highest. Nothing pulls the bot toward genuinely uncharted
 territory to complete the map's density picture. This gets worse under
 Map-Wide mode specifically, since the search space is much larger per call.
 
-**Design**: add an explore/exploit split to the existing candidate loop.
-Periodically (a tunable interval or probability — e.g. every Nth exploration
-decision, or a fixed percentage chance per decision) the loop keeps the
-LOWEST-scoring / zero-score candidate among the 40 samples instead of the
-highest-scoring one, biasing toward buckets `SpawnMemory` hasn't observed
-recently (or ever). This reuses the exact same candidate generation and
-`SpawnMemory::GetScore` call already in the loop — the only new code is
-which candidate gets kept at the end. A new `AutoHuntSettings` field (e.g.
-`explorationChancePercent`) controls the split; 0 disables it (pure exploit,
-today's behavior).
+**Shipped**: `AutoHuntSettings::explorationChancePercent` (0-100, default 0 =
+disabled/today's pure-exploit behavior). Rolled once per `FindZoneExplorePosition`
+call, only meaningful once `SpawnMemory::HasUsefulData` is true. On an
+"explore" roll, the loop keeps the LOWEST-scoring candidate among the 40
+samples instead of the highest — reuses the exact same candidate generation
+and `SpawnMemory::GetScore` call already in the loop, so the only new code is
+which candidate gets kept at the end. Paranoia evasion still takes priority
+over this when both apply (safety before exploration). UI: "Exploration
+Chance %" slider, shown for every zone mode via a shared
+`RenderExplorationBiasUI` helper.
 
-## Part 4 — Paranoia camping-detection with escalating backoff (planned, not yet implemented)
+## Part 4 — Paranoia camping-detection with escalating backoff (shipped, commit `17a46d1`)
 
 **Problem**: Paranoia Mode today (`GetParanoiaThreat`, `src/hunt_intervals.h`)
 is a pure per-tick nearest-player distance check with no memory of duration
@@ -118,9 +118,9 @@ tracking via `m_nearbyPlayerTicks`, `unordered_map<OBJID, DWORD>` in
 `base_hunt_plugin.h`) but for a different purpose (full retreat, not
 bucket-avoidance) and at hero-centered range, not bucket-centered.
 
-**Design**: track contest state per `SpawnMemory` bucket (reuse its existing
-8x8-tile bucket key, `PackBucket`, so density and contest data line up
-exactly) in a new small module, e.g. `src/hunt_contest.h/.cpp` mirroring
+**Shipped as designed**: tracks contest state per `SpawnMemory` bucket (reuse
+its existing 8x8-tile bucket key convention, so density and contest data
+line up) in a new small module, `src/hunt_contest.h/.cpp` mirroring
 `spawn_memory.h/.cpp`'s shape (in-memory `unordered_map`, no persistence
 needed — a camper's presence doesn't need to survive a DLL reload):
 
@@ -152,29 +152,32 @@ Logic, evaluated only when Paranoia is enabled and only against the bucket(s)
    or a different transient visitor → clear the entry, bucket available
    again.
 
-This hooks into `FindZoneExplorePosition`'s existing best-scored-candidate
-selection: after picking the top-scoring bucket, check its contest state;
-if contested, skip to the next-best candidate instead (falls through the
-same 40-candidate loop that's already there).
+Hooked into `FindZoneExplorePosition`'s existing candidate loop directly: a
+candidate whose bucket `HuntContest::IsBucketContested` reports true is
+skipped (`continue`) alongside the existing validity checks (walkable,
+in-zone, minimum travel distance), before scoring even runs — so a contested
+bucket simply never becomes a selection candidate that call, same 40-sample
+loop as everything else. `IsBucketContested`'s own player-presence scan uses
+an 8-tile radius around the candidate point (matching `SpawnMemory`'s bucket
+edge length), not a strict same-bucket check — resolves the open question
+below in favor of the slightly-larger radius.
 
-**Open question, needs a decision before implementing**: bucket size for
-contest tracking. Reusing `SpawnMemory`'s 8x8-tile buckets keeps density and
-contest data aligned, but a camper doesn't need to be standing in the exact
-same 8x8 bucket to be "on top of" the best farming spot for practical
-purposes — may need a slightly larger contest radius than the raw bucket
-even while keying storage by the same bucket ID. Decide once there's a real
-character to test against; guessing the right radius without live data risks
-tuning it wrong twice.
+**Still open, needs live tuning, not a design decision**: `kCampingConfirmMs`
+(3 minutes) and `kRecheckBackoffMs` (25 minutes, the midpoint of the
+"20-30 min" the user described) are both first-pass constants in
+`hunt_contest.cpp` with zero live data behind them. Adjust once there's a
+real character and an actual contested spot to observe.
 
-## Sequencing
+## Status
 
-Parts 1-2 are self-contained code (settings + geometry + target filter) and
-don't need a live character to be structurally correct, though the danger
-tier boundaries specifically will only get more accurate with more live
-spot-checks. Parts 3-4 are genuinely new subsystems (exploration bias,
-contest tracking) that benefit from having a real leveling character to tune
-against rather than guessing thresholds cold — per the user's own framing,
-"we'll tighten things up more once I start a character out from 1."
+All four parts are implemented (commits `00178f3`, `d87d90a`, `17a46d1`) and
+build/test clean (`map_tests.exe` 29/29 after each). None have been
+live-tested yet — no live character has run either goal mode, the danger
+tier boundaries are still first-pass interpolated estimates, and Part 4's
+timing constants are unverified guesses. Structurally correct, behaviorally
+unverified. Per the user's own framing, "we'll tighten things up more once I
+start a character out from 1" — that live tuning pass is the real next step,
+not more design work.
 
 ## Explicitly out of scope for this doc
 
