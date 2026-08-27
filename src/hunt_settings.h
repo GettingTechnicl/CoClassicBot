@@ -235,6 +235,14 @@ struct AutoHuntSettings
     char monsterIgnoreNames[256] = "";
     char monsterPreferNames[256] = "";
     char playerWhitelist[256] = "";
+    // Melee's own "Instant Attack (Skip Distance Check)" toggle (see
+    // MeleeHuntPlugin::RenderCombatUI) — independent of
+    // TravelSettings::usePacketJump, which drives the shared aggressive-
+    // speeds system instead. This one specifically skips the
+    // adjacent-distance check before attacking and prefers jump-only
+    // approach over walking. Not currently wired to a UI removal/rename of
+    // its own speed semantics — kept as-is per user request (2026-08-26),
+    // just renamed for clarity since it does more than adjust speed.
     bool usePacketJump = false;
     bool safetyEnabled = false;
     bool safetyNotifyDiscord = false;

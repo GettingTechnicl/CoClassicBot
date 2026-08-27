@@ -269,7 +269,7 @@ void MeleeHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Aut
     const int clumpRadius = (std::max)(1, settings.clumpRadius);
     const int localWalkRadius = (std::max)(actionRadius, clumpRadius);
 
-    // Legit mode (no speedhack) always walks to nearby mobs
+    // Normal mode (Instant Attack off) always walks to nearby mobs
     const bool allowWalkToMob = !settings.usePacketJump;
 
     // If already in attack range, no approach needed
@@ -327,8 +327,8 @@ void MeleeHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const AutoH
     const int clumpSize = m_lastClumpSize;
     const bool isClumpTarget = settings.prioritizeMobClumps && clumpSize >= kMinMobClumpSize;
 
-    // Legit mode: only attack when within 1 tile (adjacent).
-    // Speedhack mode: attack immediately at any distance.
+    // Normal mode: only attack when within 1 tile (adjacent).
+    // Instant Attack mode: attack immediately at any distance.
     if (!settings.usePacketJump) {
         const int actualDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
             target->m_posMap.x, target->m_posMap.y);
@@ -369,8 +369,8 @@ void MeleeHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const AutoH
 
 void MeleeHuntPlugin::RenderCombatUI(AutoHuntSettings& settings)
 {
-    ImGui::Checkbox("Speedhack If No Players Nearby", &settings.usePacketJump);
-    ImGui::TextDisabled("Send raw jump packets for faster movement. Falls back to normal jumps when players are nearby.");
+    ImGui::Checkbox("Instant Attack (Skip Distance Check)", &settings.usePacketJump);
+    ImGui::TextDisabled("Attacks fire immediately instead of waiting to be adjacent, and approach uses jump-only movement (no walk animation). Falls back to normal behavior when players are nearby.");
     ImGui::SliderInt("Stay Within Zone Radius", &settings.actionRadius, 1, CGameMap::MAX_JUMP_DIST);
     ImGui::Checkbox("Prioritize Mob Clumps", &settings.prioritizeMobClumps);
     ImGui::SliderInt("Clump Radius", &settings.clumpRadius, 1, 18);
