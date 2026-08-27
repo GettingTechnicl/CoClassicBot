@@ -24,7 +24,6 @@
 #include "hunt_targeting.h"
 #include "hunt_intervals.h"
 #include "inventory_utils.h"
-#include "plugins/travel_plugin.h"
 #include "log.h"
 
 #include <windows.h>
@@ -2083,11 +2082,12 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                     auto& gateways = GetGateways(curMapId);
                     RenderMapOverviewSection(hero, map, hasMap, curMapId, gateways, ms);
 
-                    if (auto* travel = PluginManager::Get().GetPlugin<TravelPlugin>()) {
-                        if (ImGui::CollapsingHeader("Travel", ImGuiTreeNodeFlags_DefaultOpen)) {
-                            travel->RenderUI();
-                        }
-                    }
+                    // Session 13 [UI reorg]: Travel used to also be embedded here,
+                    // duplicating the exact same TravelPlugin::RenderUI() already
+                    // reachable via Automation > Travel & Movement > Travel. Same
+                    // underlying settings either way (no state-desync risk like the
+                    // old Hunt Routes duplication had), but still two homes for one
+                    // feature -- removed here so Travel has exactly one home.
 
                     RenderMinimapSection(hero, map, entityList, mapItemList, hasMgr, hasMap, ms, gateways);
                     RenderEntitiesTableSection(hero, entityList, mapItemList, hasMgr, hasMap);
