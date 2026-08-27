@@ -133,6 +133,11 @@ public:
 // All offsets verified via Ghidra + Cheat Engine on the 64-bit client.
 // =====================================================================
 #pragma pack(push, 1)
+// =====================================================================
+// Monster name-color tier ("con color") — see CRole::GetDangerTier
+// =====================================================================
+enum class MonsterDangerTier { Green, White, Red, Black };
+
 class CRole : public CMapObj
 {
 public:
@@ -236,6 +241,23 @@ public:
     int GetStamina() const { return m_nStamina; }
     int GetMaxStamina() const { return m_nMaxStamina; }
     int GetLevel() const { return m_nLevel; }
+
+    // Session 13: calibrated live against the user's own observed name
+    // colors, hero fixed at level 110 throughout (con color is relative
+    // to hero level, so this delta -- not the raw monster level -- is
+    // what matters). Confirmed anchor points (delta = monster level -
+    // hero level): -8/-7 -> Green, -3/-2 -> White, +2/+3 -> Red, +7 ->
+    // Black. No monster has been confirmed exactly at a tier boundary
+    // yet, so the cutoffs below are the midpoint of each gap (a first-pass
+    // estimate, not a confirmed exact threshold) -- refine if a monster
+    // near delta -5, -1, or +5 ever gets checked.
+    MonsterDangerTier GetDangerTier(int heroLevel) const {
+        const int delta = m_nLevel - heroLevel;
+        if (delta <= -5) return MonsterDangerTier::Green;
+        if (delta <= 0)  return MonsterDangerTier::White;
+        if (delta <= 5)  return MonsterDangerTier::Red;
+        return MonsterDangerTier::Black;
+    }
     BOOL IsMining() const { return m_cmdAction.iType == _COMMAND_MINE; }
     BOOL IsJumping() const {
         return m_cmdAction.iType == _COMMAND_JUMP
