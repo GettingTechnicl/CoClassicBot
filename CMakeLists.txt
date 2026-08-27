@@ -53,6 +53,7 @@ add_library(coclassic SHARED
     src/spawn_memory.cpp
     src/mem_stats.cpp
     src/map_probe.cpp
+    src/monster_scan.cpp
     src/config.cpp
     src/hunt_settings.cpp
     src/hunt_stats.cpp

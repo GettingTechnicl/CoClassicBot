@@ -7,6 +7,7 @@
 #include "packets.h"
 #include "config.h"
 #include "map_probe.h"
+#include "monster_scan.h"
 #include "mapdata.h"
 #include "spawn_memory.h"
 #include "mem_stats.h"
@@ -2064,6 +2065,23 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                             const unsigned long long b = strtoull(gridBaseHex, nullptr, 16);
                             const bool ok = DebugProbeCells(b, cellStride, mapW, mapH, cellRadius);
                             spdlog::info("[debug] Cell dump base=0x{:X} stride={} ok={}", b, cellStride, ok);
+                        }
+                    }
+
+                    // Session 12: hunting whatever drives green/white/red/black
+                    // monster name color (a level-relative "con color" per the
+                    // user's explanation -- USERSTATUS_RED/BLACK were checked
+                    // and ruled out for monsters). Dumps every nearby monster's
+                    // name/ID plus raw unmapped CRole memory around the
+                    // already-known HP/stamina fields, so multiple presses
+                    // across a play session build up a correlatable dataset.
+                    if (ImGui::CollapsingHeader("Debug: Monster Stat Scan", kSectionFlags)) {
+                        ImGui::TextDisabled("Read-only. Appends to C:\\Users\\Public\\coclassic_monsterscan.json");
+                        ImGui::TextDisabled("Press near any monster(s) -- name/color doesn't need to be identified now,");
+                        ImGui::TextDisabled("just remember roughly when/where so it can be matched up afterward.");
+                        if (ImGui::Button("Dump Nearby Monster Stats")) {
+                            const int n = DumpNearbyMonsterStats();
+                            spdlog::info("[debug] Monster stat scan wrote {} entries", n);
                         }
                     }
 
