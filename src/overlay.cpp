@@ -577,14 +577,17 @@ static void RenderPacketsTab()
     }
 }
 
-// Session 13 [HkPresent split, phase 3]: the Misc tab's independent headers.
-// Each is already its own self-contained { }-scoped block fetching its own
-// settings reference — extracted verbatim into its own function, `hero`
-// passed to every one (even where unused) for a consistent signature. The
-// CollapsingHeader call itself moves WITH the body (unlike BeginTabItem/
-// EndTabItem in phases 1-2) since each section is independently gated, not
-// wrapping shared tab-level content.
-static void RenderMiscDiscordWebhookSection(CHero* /*hero*/)
+// Session 13 [HkPresent split, phase 3]: originally the old Misc tab's
+// independent headers, each its own self-contained { }-scoped block
+// fetching its own settings reference — extracted verbatim into its own
+// function, `hero` passed to every one (even where unused) for a
+// consistent signature. The CollapsingHeader call itself moves WITH the
+// body (unlike BeginTabItem/EndTabItem in phases 1-2) since each section
+// is independently gated, not wrapping shared tab-level content. Misc
+// itself was later split into Notifications/Developer Tools (session 13
+// UI reorg) — these functions kept their bodies unchanged, just renamed
+// and re-homed under the new tabs below.
+static void RenderNotifDiscordWebhookSection(CHero* /*hero*/)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Discord Webhook", kSectionFlags)) {
@@ -611,7 +614,7 @@ static void RenderMiscDiscordWebhookSection(CHero* /*hero*/)
     }
 }
 
-static void RenderMiscWhisperNotificationsSection(CHero* /*hero*/)
+static void RenderNotifWhisperSection(CHero* /*hero*/)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Whisper Notifications", kSectionFlags)) {
@@ -621,7 +624,7 @@ static void RenderMiscWhisperNotificationsSection(CHero* /*hero*/)
     }
 }
 
-static void RenderMiscLoggingDiagnosticsSection(CHero* /*hero*/)
+static void RenderDevToolsLoggingDiagnosticsSection(CHero* /*hero*/)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Logging & Diagnostics", kSectionFlags)) {
@@ -659,7 +662,7 @@ static void RenderMiscLoggingDiagnosticsSection(CHero* /*hero*/)
     }
 }
 
-static void RenderMiscNativePickupTestSection(CHero* /*hero*/)
+static void RenderDevToolsNativePickupTestSection(CHero* /*hero*/)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Debug: Native Pickup Test", kSectionFlags)) {
@@ -683,7 +686,7 @@ static void RenderMiscNativePickupTestSection(CHero* /*hero*/)
     }
 }
 
-static void RenderMiscNativeJumpTestSection(CHero* /*hero*/)
+static void RenderDevToolsNativeJumpTestSection(CHero* /*hero*/)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Debug: Native Jump Test", kSectionFlags)) {
@@ -707,7 +710,7 @@ static void RenderMiscNativeJumpTestSection(CHero* /*hero*/)
     }
 }
 
-static void RenderMiscNativeWalkTestSection(CHero* hero)
+static void RenderDevToolsNativeWalkTestSection(CHero* hero)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Debug: Native Walk Test", kSectionFlags)) {
@@ -733,7 +736,7 @@ static void RenderMiscNativeWalkTestSection(CHero* hero)
 // CGameMap. Game::GetMap() is confirmed broken (its RVA
 // dereferences to garbage); this pins down BOTH the access
 // path and the field offsets before anything is changed.
-static void RenderMiscMapProbeSection(CHero* hero)
+static void RenderDevToolsMapProbeSection(CHero* hero)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Debug: Map Probe", kSectionFlags)) {
@@ -882,7 +885,7 @@ static void RenderMiscMapProbeSection(CHero* hero)
 // name/ID plus raw unmapped CRole memory around the
 // already-known HP/stamina fields, so multiple presses
 // across a play session build up a correlatable dataset.
-static void RenderMiscMonsterStatScanSection(CHero* /*hero*/)
+static void RenderDevToolsMonsterStatScanSection(CHero* /*hero*/)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Debug: Monster Stat Scan", kSectionFlags)) {
@@ -902,7 +905,7 @@ static void RenderMiscMonsterStatScanSection(CHero* /*hero*/)
 // so they were expected to work as soon as entity
 // enumeration was restored — this tests one action at a
 // time rather than switching on a whole hunt loop.
-static void RenderMiscCombatTestSection(CHero* hero)
+static void RenderDevToolsCombatTestSection(CHero* hero)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Debug: Combat Test", kSectionFlags)) {
@@ -948,7 +951,7 @@ static void RenderMiscCombatTestSection(CHero* hero)
     }
 }
 
-static void RenderMiscLootDropNotificationsSection(CHero* /*hero*/)
+static void RenderNotifLootDropSection(CHero* /*hero*/)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Loot Drop Notifications", kSectionFlags)) {
@@ -958,7 +961,7 @@ static void RenderMiscLootDropNotificationsSection(CHero* /*hero*/)
     }
 }
 
-static void RenderMiscItemNotificationsSection(CHero* /*hero*/)
+static void RenderNotifItemSection(CHero* /*hero*/)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Item Notifications", kSectionFlags)) {
@@ -2087,19 +2090,25 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                     ImGui::EndTabItem();
                 }
 
-                // ── Misc tab ──
-                if (ImGui::BeginTabItem("Misc")) {
-                    RenderMiscDiscordWebhookSection(hero);
-                    RenderMiscWhisperNotificationsSection(hero);
-                    RenderMiscLoggingDiagnosticsSection(hero);
-                    RenderMiscNativePickupTestSection(hero);
-                    RenderMiscNativeJumpTestSection(hero);
-                    RenderMiscNativeWalkTestSection(hero);
-                    RenderMiscMapProbeSection(hero);
-                    RenderMiscMonsterStatScanSection(hero);
-                    RenderMiscCombatTestSection(hero);
-                    RenderMiscLootDropNotificationsSection(hero);
-                    RenderMiscItemNotificationsSection(hero);
+                // ── Notifications tab (Discord webhook + all notification toggles) ──
+                if (ImGui::BeginTabItem("Notifications")) {
+                    RenderNotifDiscordWebhookSection(hero);
+                    RenderNotifWhisperSection(hero);
+                    RenderNotifLootDropSection(hero);
+                    RenderNotifItemSection(hero);
+
+                    ImGui::EndTabItem();
+                }
+
+                // ── Developer Tools tab (RE/debug tools, not needed for normal use) ──
+                if (ImGui::BeginTabItem("Developer Tools")) {
+                    RenderDevToolsLoggingDiagnosticsSection(hero);
+                    RenderDevToolsNativePickupTestSection(hero);
+                    RenderDevToolsNativeJumpTestSection(hero);
+                    RenderDevToolsNativeWalkTestSection(hero);
+                    RenderDevToolsMapProbeSection(hero);
+                    RenderDevToolsMonsterStatScanSection(hero);
+                    RenderDevToolsCombatTestSection(hero);
 
                     ImGui::EndTabItem();
                 }
