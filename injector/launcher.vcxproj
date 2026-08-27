@@ -13,7 +13,7 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <ProjectGuid>{A1B2C3D4-3333-4000-A000-000000000003}</ProjectGuid>
-    <RootNamespace>injector</RootNamespace>
+    <RootNamespace>launcher</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -37,8 +37,8 @@
   </ImportGroup>
   <PropertyGroup>
     <OutDir>$(SolutionDir)build\bin\$(Configuration)\</OutDir>
-    <IntDir>$(SolutionDir)build\obj\injector\$(Configuration)\</IntDir>
-    <TargetName>injector</TargetName>
+    <IntDir>$(SolutionDir)build\obj\launcher\$(Configuration)\</IntDir>
+    <TargetName>launcher</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -47,7 +47,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;crypt32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Console</SubSystem>
       <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
     </Link>
@@ -68,6 +68,15 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="credentials.cpp" />
+    <ClCompile Include="auto_login.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="credentials.h" />
+    <ClInclude Include="auto_login.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="launcher.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

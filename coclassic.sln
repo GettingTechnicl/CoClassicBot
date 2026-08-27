@@ -5,7 +5,7 @@ VisualStudioVersion = 17.0.0.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "coclassic", "coclassic.vcxproj", "{A1B2C3D4-0000-4000-A000-000000000000}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "injector", "injector\injector.vcxproj", "{A1B2C3D4-3333-4000-A000-000000000003}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "launcher", "injector\launcher.vcxproj", "{A1B2C3D4-3333-4000-A000-000000000003}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "map_tests", "tests\map_tests.vcxproj", "{A1B2C3D4-4444-4000-A000-000000000004}"
 EndProject

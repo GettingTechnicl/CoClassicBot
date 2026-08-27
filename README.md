@@ -30,7 +30,7 @@ cmake -B build -A x64
 cmake --build build --config Release
 ```
 
-CMake auto-detects whatever Visual Studio toolset is installed (add `-G "Visual Studio 17 2022"` etc. to pin a specific one). **This is the actively maintained build path** — `coclassic.vcxproj`'s source-file list must be kept in sync with `CMakeLists.txt` by hand when adding files (see Build Notes), and `launcher.exe` (the `injector/` sources) currently has no Visual Studio project file at all, so it can only be built via CMake.
+CMake auto-detects whatever Visual Studio toolset is installed (add `-G "Visual Studio 17 2022"` etc. to pin a specific one). **This is the actively maintained build path** — `coclassic.vcxproj` and `injector/launcher.vcxproj`'s source-file lists must both be kept in sync with `CMakeLists.txt` by hand when adding files (see Build Notes).
 
 ### Output
 
@@ -232,7 +232,7 @@ This project works with a Themida-packed binary analyzed through a Scylla-dumped
   ```
   MSBuild.exe coclassic.sln -t:Rebuild -p:Configuration=Release -p:Platform=x64
   ```
-- **`coclassic.vcxproj`'s source-file list is not auto-synced with `CMakeLists.txt`.** When adding a new `.cpp`/`.h` to the main DLL, add it to both, or the CMake build will succeed while the Visual Studio build silently omits the file (this has happened before — several core files were missing from the `.vcxproj` for a while before being caught and fixed).
+- **`coclassic.vcxproj` and `injector/launcher.vcxproj`'s source-file lists are not auto-synced with `CMakeLists.txt`.** When adding a new `.cpp`/`.h` to the main DLL or the launcher, add it to both the relevant `.vcxproj` and `CMakeLists.txt`, or the CMake build will succeed while the Visual Studio build silently omits the file (this has happened before — several core `coclassic.vcxproj` files were missing for a while before being caught and fixed, and `injector/launcher.vcxproj` itself drifted out of sync the same way: it kept the project's old `injector` name/output after the executable was renamed to `launcher.exe`, and never picked up `credentials.cpp`/`auto_login.cpp` when they were added).
 - The Release build emits `coclassic.pdb` alongside `coclassic.dll` (`/Zi` + `/DEBUG` + explicit `/OPT:REF,ICF` in `CMakeLists.txt`, so code layout matches a plain Release build exactly — MSVC otherwise silently disables those optimizations once `/DEBUG` is present). This has no runtime cost and means a crash address from a minidump can be symbolized directly against the shipped binary (`tools/symbolize.ps1`) without reconstructing a separate build.
 - If the linker fails with LNK1104 while the DLL is injected into a running game, close the game (or kill `ImConquer.exe`/`launcher.exe`) before rebuilding — the crash-recovery supervisor in `launcher.exe` will otherwise relaunch the game and re-lock the DLL between build attempts.
 
