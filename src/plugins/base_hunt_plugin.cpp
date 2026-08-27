@@ -2569,6 +2569,23 @@ void BaseHuntPlugin::RenderDebugSection()
     ImGui::TextWrapped("Reason: %s", m_statusText);
     ImGui::Text("Last Target: %u", m_targetId);
 
+    // Session 13: live readout for the speedhack player-detection gate —
+    // added after a live report that movement stayed fast even with a
+    // player well within Detection Range. Every code path was re-audited
+    // and looked correctly wired, so rather than guess further this shows
+    // ground truth: whether the toggle is even on, whether a player is
+    // currently being detected, and the interval that decision produces.
+    {
+        const bool toggleOn = GetTravelSettings().usePacketJump;
+        const bool playerNearby = IsAnyPlayerNearby(settings);
+        const bool aggressive = ShouldUseAggressiveSpeeds(settings);
+        const DWORD effInterval = GetMovementIntervalMs(settings);
+        ImGui::TextColored(aggressive ? ImVec4(1, 0.7f, 0.3f, 1) : ImVec4(0.4f, 1, 0.4f, 1),
+            "Speedhack: toggle=%s playerNearby=%s -> aggressive=%s  interval=%ums",
+            toggleOn ? "on" : "off", playerNearby ? "yes" : "no",
+            aggressive ? "yes" : "no", effInterval);
+    }
+
     // Effective vs actual position. A mismatch means every range check AND
     // every scatter direction is being computed from a tile the hero isn't
     // on.
