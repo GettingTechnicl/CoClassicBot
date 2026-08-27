@@ -58,6 +58,15 @@ namespace Entities
     // Force a rescan on the next Get(), e.g. after a map change or teleport.
     void Invalidate();
 
+    // False for a short window right after Get() detects a map change. The
+    // heap scan (see entities.cpp) has no per-object "which map" field, so a
+    // CRole left over from the map just vacated can keep passing it on the
+    // new map — this window bounds how long that can influence anything
+    // PERSISTENT that the scan feeds (SpawnMemory, HuntContest). Ephemeral
+    // consumers (combat targeting, minimap display) don't need to check it —
+    // they self-correct on the very next scan either way.
+    bool IsMapDataSettled();
+
     // Cheap re-validation of a single cached pointer: confirms the object
     // still carries a CRole signature (vtable in image, sane id/position).
     // An entity that despawned between scans will fail this.

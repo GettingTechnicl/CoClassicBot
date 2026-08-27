@@ -44,6 +44,15 @@ namespace HuntContest {
 
 bool IsBucketContested(OBJID mapId, const Position& pos, const AutoHuntSettings& settings)
 {
+    // Session 13: the "camper" scan below draws from Entities::Get(), which
+    // can briefly contain a leftover player object from the map just
+    // vacated (see entities.cpp). Skip entirely during that settle window
+    // rather than risk starting/extending a camping timer off a phantom —
+    // costs at most ~1.5s of missed camping-avoidance right after a map
+    // change, which normal Paranoia distance-avoidance already covers.
+    if (!Entities::IsMapDataSettled())
+        return false;
+
     auto& buckets = g_perMap[mapId];
     const uint32_t key = PackBucket(pos.x, pos.y);
     const DWORD now = GetTickCount();

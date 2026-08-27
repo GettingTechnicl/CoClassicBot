@@ -26,6 +26,23 @@ namespace
     std::atomic<bool>   g_forceRescan{ true };
     std::atomic<bool>   g_threadStarted{ false };
     std::atomic<uint32_t> g_refreshIntervalMs{ Entities::kDefaultRefreshIntervalMs };
+
+    // Session 13: the heap scan below (LooksLikeRole) has no per-object
+    // "which map" field to check — a CRole left over in memory from the map
+    // just vacated can keep passing the exact same signature check on the
+    // new map (live-reported: stale entities showing on the minimap right
+    // after a map change). Get() detects the map-id change on every call
+    // (not gated by scan cadence) and (a) forces an early rescan so the
+    // visible list catches up fast, (b) opens a short grace window during
+    // which callers that feed this scan into anything PERSISTENT
+    // (SpawnMemory, HuntContest) should not trust it yet — see
+    // IsMapDataSettled() below. Does not fully eliminate a leftover object
+    // surviving into the very next scan (that needs a real per-object map
+    // tag, not yet found), just bounds how long it can influence anything
+    // that remembers what it saw.
+    std::atomic<OBJID> g_lastKnownMapId{ 0 };
+    std::atomic<DWORD> g_mapDataSettledTick{ 0 };
+    constexpr DWORD kMapChangeGraceMs = 1500;
     Entities::Stats     g_stats{};
     std::mutex          g_statsMutex;
 
@@ -264,6 +281,19 @@ namespace Entities
     std::vector<CRole*> Get()
     {
         EnsureThread();
+
+        // Detect a map change on every call, independent of scan cadence —
+        // see g_lastKnownMapId's comment above. Only a genuine map-to-map
+        // transition (both ids non-zero and different) opens the grace
+        // window; the very first call after login/injection (prevMapId==0)
+        // shouldn't delay anything.
+        const OBJID curMapId = Game::GetCurrentMapId();
+        const OBJID prevMapId = g_lastKnownMapId.exchange(curMapId, std::memory_order_relaxed);
+        if (curMapId && prevMapId && curMapId != prevMapId) {
+            g_forceRescan.store(true);
+            g_mapDataSettledTick.store(GetTickCount() + kMapChangeGraceMs, std::memory_order_relaxed);
+        }
+
         std::lock_guard<std::mutex> lk(g_backMutex);
 
         // Publish a completed scan if one is waiting. Never blocks on the
@@ -278,8 +308,10 @@ namespace Entities
             // because this is the one place a NEW scan becomes visible — doing
             // it per-frame would count the same standing monsters repeatedly
             // and reward "wherever the bot is loitering" rather than where
-            // monsters actually appear.
-            if (const OBJID mapId = Game::GetCurrentMapId()) {
+            // monsters actually appear. Skipped during the post-map-change
+            // grace window (see above) so a leftover object from the map
+            // just vacated can't record a phantom sighting on the new map.
+            if (curMapId && GetTickCount() >= g_mapDataSettledTick.load(std::memory_order_relaxed)) {
                 std::vector<Position> monsters;
                 monsters.reserve(g_front.size());
                 for (CRole* r : g_front) {
@@ -287,13 +319,18 @@ namespace Entities
                         monsters.push_back(r->m_posMap);
                 }
                 if (!monsters.empty())
-                    SpawnMemory::Observe(mapId, monsters);
+                    SpawnMemory::Observe(curMapId, monsters);
             }
         }
         return g_front;
     }
 
     void Invalidate() { g_forceRescan.store(true); }
+
+    bool IsMapDataSettled()
+    {
+        return GetTickCount() >= g_mapDataSettledTick.load(std::memory_order_relaxed);
+    }
 
     bool IsAlive(const CRole* role)
     {
