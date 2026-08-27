@@ -214,6 +214,47 @@ static uintptr_t FindPresentAddress()
 // =====================================================================
 // Present hook — renders ImGui into the game's back buffer
 // =====================================================================
+// Session 13 [HkPresent split, phase 1]: the two lowest-risk extractions —
+// zero dependency on anything else in HkPresent, not even `hero` from the
+// tab-bar scope below. See the approved plan (Split HkPresent() into smaller
+// functions) for the full phased breakdown; this is phase 1 of 4.
+
+// Runs every frame regardless of overlay visibility.
+static void TickBackgroundLogic()
+{
+    CHero* hero = Game::GetHero();
+    if (hero) {
+        UpdateCharacterConfigBinding();
+        Pathfinder::Get().Update();
+        PluginManager::Get().UpdateAll();
+        UpdateItemNotifications();
+        MaybeAutoSaveConfig();
+        // Piggyback on the config autosave cadence rather than adding a
+        // second timer — same rhythm, no extra frame cost.
+        MaybeAutoSaveSpawnMemory();
+    }
+    // Session 10: memory-leak tracking — runs regardless of hero/login
+    // state so the process's baseline footprint is visible too, not
+    // just once in-world.
+    MaybeLogMemoryStats();
+}
+
+// Runs only when the overlay is visible, before any tab renders.
+static void TickOverlayRecording()
+{
+    // Session 10: accumulate the walk trace every frame. Cheap (a dedup'd
+    // tile append), and it is what makes the cell-grid scan decisive —
+    // see map_probe.h.
+    MapProbe_RecordHeroTile();
+
+    // Route recording samples the hero's tile each frame while armed;
+    // it dedupes standing still, so only real movement is captured.
+    if (RouteRecordIsActive()) {
+        if (CHero* rh = Game::GetHero())
+            RouteRecordSample(rh->m_posMap);
+    }
+}
+
 static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync, UINT flags)
 {
     // ── Lazy init (first call only) ──
@@ -252,23 +293,7 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
     if (!g_pDevice) return OrigPresent(pSwapChain, sync, flags);
 
     // ── Background logic (runs every frame, even with overlay hidden) ──
-    {
-        CHero* hero = Game::GetHero();
-        if (hero) {
-            UpdateCharacterConfigBinding();
-            Pathfinder::Get().Update();
-            PluginManager::Get().UpdateAll();
-            UpdateItemNotifications();
-            MaybeAutoSaveConfig();
-            // Piggyback on the config autosave cadence rather than adding a
-            // second timer — same rhythm, no extra frame cost.
-            MaybeAutoSaveSpawnMemory();
-        }
-        // Session 10: memory-leak tracking — runs regardless of hero/login
-        // state so the process's baseline footprint is visible too, not
-        // just once in-world.
-        MaybeLogMemoryStats();
-    }
+    TickBackgroundLogic();
 
     // ── Render ImGui frame ──
     if (g_showOverlay) {
@@ -288,17 +313,7 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // Session 10: accumulate the walk trace every frame. Cheap (a dedup'd
-        // tile append), and it is what makes the cell-grid scan decisive —
-        // see map_probe.h.
-        MapProbe_RecordHeroTile();
-
-        // Route recording samples the hero's tile each frame while armed;
-        // it dedupes standing still, so only real movement is captured.
-        if (RouteRecordIsActive()) {
-            if (CHero* rh = Game::GetHero())
-                RouteRecordSample(rh->m_posMap);
-        }
+        TickOverlayRecording();
 
         // Bot control panel
         ImGui::SetNextWindowSize(ImVec2(420, 400), ImGuiCond_FirstUseEver);
