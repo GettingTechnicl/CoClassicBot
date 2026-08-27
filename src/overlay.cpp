@@ -255,6 +255,328 @@ static void TickOverlayRecording()
     }
 }
 
+// Session 13 [HkPresent split, phase 2]: fully self-contained tab bodies —
+// only reads `hero` from outer scope. The BeginTabItem/EndTabItem call
+// sites stay in HkPresent itself (ImGui's ID stack is keyed by call order,
+// not C++ function boundaries, so this is invisible to widget state as
+// long as those two calls don't move).
+static void RenderPlayerTab(CHero* hero)
+{
+    constexpr ImGuiTreeNodeFlags kPlayerSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+    const uint32_t silver = hero->GetSilver();
+    const uint64_t silverRuntime = hero->GetSilverRuntimeValue();
+    if (ImGui::CollapsingHeader("Overview", kPlayerSectionFlags)) {
+    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Player: %s", hero->GetName());
+    ImGui::Text("UID:      %u", hero->GetID());
+    ImGui::Text("Position: (%d, %d)", hero->m_posMap.x, hero->m_posMap.y);
+    ImGui::Text("World:    (%d, %d)", hero->m_posWorld.x, hero->m_posWorld.y);
+    ImGui::Text("Screen:   (%d, %d)", hero->m_posScr.x, hero->m_posScr.y);
+    ImGui::Text("Status:   0x%llX", (unsigned long long)hero->m_nStatusFlag);
+    ImGui::Text("Silver:   %u", silver);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", hero->HasTrustedSilverCache() ? "(server update)" : "(cached fallback)");
+    ImGui::Text("A30 Raw:  %llu", (unsigned long long)silverRuntime);
+
+    if (hero->HasSyndicate()) {
+        auto* entSet = CEntitySet::GetInstance();
+        const char* guildName = entSet ? entSet->GetSyndicateName(hero->m_idSyndicate) : nullptr;
+        const char* rankName = GetSyndicateRankName(hero->m_nSyndicateRank);
+        ImGui::Text("Guild:   ");
+        ImGui::SameLine(0, 0);
+        ImGui::TextColored(ImVec4(0.4f, 0.6f, 1.0f, 1.0f), "%s", guildName ? guildName : "Unknown");
+        if (rankName[0]) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(%s)", rankName);
+        }
+    }
+
+    if (hero->IsDead())
+        ImGui::TextColored(ImVec4(1, 0, 0, 1), "** DEAD **");
+
+    // Session 9: entity source is the heap scan — see entities.h.
+    {
+        const Entities::Stats st = Entities::GetStats();
+        ImGui::Text("Nearby:   %d players, %d monsters, %d NPCs",
+                    st.players, st.monsters, st.npcs);
+        ImGui::TextDisabled("entity scan #%u: %d found, %u ms",
+                            st.scans, st.total, st.lastScanMs);
+        if (st.total == 0) {
+            // Funnel readout: shows which predicate rejected
+            // everything rather than just "0 found".
+            ImGui::TextColored(ImVec4(1, 0.6f, 0, 1),
+                "  regions=%u addrs=%llu vt=%u id=%u pos=%u name=%u",
+                st.regions, (unsigned long long)st.addrs,
+                st.passVtable, st.passId, st.passPos, st.passName);
+        }
+    }
+
+    // ── Equipment (collapsible) ──
+    }
+    if (ImGui::CollapsingHeader("Equipment")) {
+        if (ImGui::BeginTable("##equip", 6,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_Resizable,
+                ImVec2(0, 0))) {
+            ImGui::TableSetupColumn("Slot",    ImGuiTableColumnFlags_WidthFixed, 65.0f);
+            ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Quality", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn("+",       ImGuiTableColumnFlags_WidthFixed, 25.0f);
+            ImGui::TableSetupColumn("Dur",     ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn("Sockets", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableHeadersRow();
+
+            for (int s = 0; s < EquipSlot::COUNT; s++) {
+                CItem* eq = hero->GetEquip(s);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", GetEquipSlotName(s));
+                ImGui::TableNextColumn();
+                if (eq)
+                    ImGui::Text("%s", eq->GetName());
+                else
+                    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "-");
+                ImGui::TableNextColumn();
+                if (eq) {
+                    int q = eq->GetQuality();
+                    ImVec4 qc = (q >= ItemQuality::SUPER) ? ImVec4(1,0.8f,0,1) :
+                                (q >= ItemQuality::ELITE) ? ImVec4(0.6f,0.4f,1,1) :
+                                (q >= ItemQuality::UNIQUE) ? ImVec4(0.2f,0.8f,1,1) :
+                                ImVec4(1,1,1,1);
+                    ImGui::TextColored(qc, "%s", eq->GetQualityName());
+                }
+                ImGui::TableNextColumn();
+                if (eq && eq->GetPlus() > 0)
+                    ImGui::Text("+%d", eq->GetPlus());
+                ImGui::TableNextColumn();
+                if (eq)
+                    ImGui::Text("%d/%d", eq->GetDurability(), eq->GetMaxDurability());
+                ImGui::TableNextColumn();
+                if (eq) {
+                    if (eq->HasSocket1() || eq->HasSocket2()) {
+                        ImGui::Text("%s%s%s",
+                            GetGemClassName(eq->GetGem1()),
+                            eq->HasSocket2() ? ", " : "",
+                            eq->HasSocket2() ? GetGemClassName(eq->GetGem2()) : "");
+                    }
+                }
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    // ── Inventory (collapsible) ──
+    if (ImGui::CollapsingHeader("Inventory")) {
+        ImGui::Text("Items: %zu / %d",
+                    hero->m_deqItem.size(), CHero::MAX_BAG_ITEMS);
+
+        if (hero->m_deqItem.empty()) {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Inventory is empty.");
+        } else if (ImGui::BeginTable("##inv", 6,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+                ImVec2(0, 200.0f))) {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("#",       ImGuiTableColumnFlags_WidthFixed, 25.0f);
+            ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Quality", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn("+",       ImGuiTableColumnFlags_WidthFixed, 25.0f);
+            ImGui::TableSetupColumn("Dur",     ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn("Sockets", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableHeadersRow();
+
+            for (size_t i = 0; i < hero->m_deqItem.size() && i < 40; i++) {
+                auto& ref = hero->m_deqItem[i];
+                if (!ref) continue;
+                CItem* item = ref.get();
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%zu", i + 1);
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", item->GetName());
+                ImGui::TableNextColumn();
+                {
+                    int q = item->GetQuality();
+                    ImVec4 qc = (q >= ItemQuality::SUPER) ? ImVec4(1,0.8f,0,1) :
+                                (q >= ItemQuality::ELITE) ? ImVec4(0.6f,0.4f,1,1) :
+                                (q >= ItemQuality::UNIQUE) ? ImVec4(0.2f,0.8f,1,1) :
+                                ImVec4(1,1,1,1);
+                    ImGui::TextColored(qc, "%s", item->GetQualityName());
+                }
+                ImGui::TableNextColumn();
+                if (item->GetPlus() > 0)
+                    ImGui::Text("+%d", item->GetPlus());
+                ImGui::TableNextColumn();
+                ImGui::Text("%d/%d", item->GetDurability(), item->GetMaxDurability());
+                ImGui::TableNextColumn();
+                if (item->HasSocket1() || item->HasSocket2()) {
+                    ImGui::Text("%s%s%s",
+                        GetGemClassName(item->GetGem1()),
+                        item->HasSocket2() ? ", " : "",
+                        item->HasSocket2() ? GetGemClassName(item->GetGem2()) : "");
+                }
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    // ── Skills (collapsible) ──
+    if (ImGui::CollapsingHeader("Skills")) {
+        if (hero->m_vecMagic.empty()) {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No skills learned.");
+        } else if (hero->m_vecMagic.size() < 200 &&
+                   ImGui::BeginTable("##skills", 7,
+                       ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+                       ImVec2(0, 200.0f))) {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("Name",     ImGuiTableColumnFlags_WidthStretch);
+            // Session 9: the magic-type ID is what MagicAttack()
+            // takes, so it needs to be visible, not just internal.
+            ImGui::TableSetupColumn("ID",       ImGuiTableColumnFlags_WidthFixed, 45.0f);
+            ImGui::TableSetupColumn("Lv",       ImGuiTableColumnFlags_WidthFixed, 25.0f);
+            ImGui::TableSetupColumn("MP",       ImGuiTableColumnFlags_WidthFixed, 40.0f);
+            ImGui::TableSetupColumn("Stam",     ImGuiTableColumnFlags_WidthFixed, 40.0f);
+            ImGui::TableSetupColumn("Dist",     ImGuiTableColumnFlags_WidthFixed, 35.0f);
+            ImGui::TableSetupColumn("Exp",      ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+
+            for (size_t i = 0; i < hero->m_vecMagic.size(); i++) {
+                auto& ref = hero->m_vecMagic[i];
+                if (!ref) continue;
+                CMagic* magic = ref.get();
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                if (magic->IsXpSkill()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "[XP]");
+                    ImGui::SameLine();
+                }
+                ImGui::Text("%s", magic->GetName());
+                ImGui::TableNextColumn();
+                ImGui::Text("%u", magic->GetMagicType());
+                ImGui::TableNextColumn();
+                ImGui::Text("%u", magic->GetLevel());
+                ImGui::TableNextColumn();
+                if (magic->GetMpCost() > 0)
+                    ImGui::Text("%u", magic->GetMpCost());
+                ImGui::TableNextColumn();
+                if (magic->GetStaminaCost() > 0)
+                    ImGui::Text("%u", magic->GetStaminaCost());
+                ImGui::TableNextColumn();
+                if (magic->GetDistance() > 0)
+                    ImGui::Text("%u", magic->GetDistance());
+                ImGui::TableNextColumn();
+                if (magic->GetExpRequired() > 0) {
+                    float progress = (float)magic->GetExp() / (float)magic->GetExpRequired();
+                    if (progress > 1.0f) progress = 1.0f;
+                    char overlay[32];
+                    snprintf(overlay, sizeof(overlay), "%u/%u",
+                             magic->GetExp(), magic->GetExpRequired());
+                    ImGui::ProgressBar(progress, ImVec2(-1, 0), overlay);
+                }
+            }
+            ImGui::EndTable();
+        }
+    }
+}
+
+// Fetches its own packet log — zero outer-scope dependency at all.
+static void RenderPacketsTab()
+{
+    PacketLog& plog = GetPacketLog();
+    constexpr ImGuiTreeNodeFlags kPacketSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+
+    if (ImGui::CollapsingHeader("Controls", kPacketSectionFlags)) {
+    ImGui::Checkbox("Logging", &plog.enabled);
+    ImGui::SameLine();
+    if (ImGui::Button("Clear"))
+        plog.Clear();
+    ImGui::SameLine();
+    ImGui::Text("(%zu packets)", plog.Count());
+    }
+
+    if (ImGui::CollapsingHeader("Log", kPacketSectionFlags)) {
+    if (plog.Count() == 0) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            "No packets captured yet.");
+    } else {
+        if (ImGui::BeginChild("##pktscroll", ImVec2(0, 0), ImGuiChildFlags_None,
+                ImGuiWindowFlags_HorizontalScrollbar)) {
+            for (size_t i = 0; i < plog.Count(); i++) {
+                const PacketEntry& pkt = plog.Get(i);
+
+                // Build full hex dump string (reused for expand & copy)
+                std::string fullDump;
+                for (size_t r = 0; r < pkt.data.size(); r += 16) {
+                    char line[128] = {};
+                    int p = snprintf(line, sizeof(line), "%04X  ", (unsigned)r);
+                    for (size_t c = 0; c < 16; c++) {
+                        if (r + c < pkt.data.size())
+                            p += snprintf(line + p, sizeof(line) - p,
+                                          "%02X ", pkt.data[r + c]);
+                        else
+                            p += snprintf(line + p, sizeof(line) - p, "   ");
+                        if (c == 7)
+                            p += snprintf(line + p, sizeof(line) - p, " ");
+                    }
+                    p += snprintf(line + p, sizeof(line) - p, " ");
+                    for (size_t c = 0; c < 16 && r + c < pkt.data.size(); c++) {
+                        uint8_t b = pkt.data[r + c];
+                        line[p++] = (b >= 0x20 && b < 0x7F) ? (char)b : '.';
+                    }
+                    line[p] = '\0';
+                    if (!fullDump.empty()) fullDump += '\n';
+                    fullDump += line;
+                }
+
+                // Header label: click to expand, right-click to copy
+                char label[128];
+                snprintf(label, sizeof(label),
+                         "[%zu] Type=0x%04X  Size=%u##pkt%zu",
+                         i, pkt.msgType, pkt.rawSize, i);
+
+                bool open = ImGui::TreeNode(label);
+
+                // Right-click copies entire hex dump to clipboard
+                if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+                    ImGui::SetClipboardText(fullDump.c_str());
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Right-click to copy hex dump");
+                }
+
+                if (open) {
+                    // Session 10: decoded field list — the packet
+                    // family used here (MsgAction and others) is a
+                    // tag/varint encoding, so raw hex alone means
+                    // hand-parsing every field by eye. This is what
+                    // makes reading off a captured packet's mode
+                    // value (e.g. to find real walk's mode, vs.
+                    // jump's confirmed 19) actually practical.
+                    const auto fields = DecodeVarintFields(pkt.data.data(), pkt.data.size());
+                    if (!fields.empty()) {
+                        std::string decoded = "Fields: ";
+                        for (size_t f = 0; f < fields.size(); ++f) {
+                            if (f) decoded += "  ";
+                            char fbuf[32];
+                            snprintf(fbuf, sizeof(fbuf), "#%d=%u", fields[f].fieldNumber, fields[f].value);
+                            decoded += fbuf;
+                        }
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "%s", decoded.c_str());
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.8f, 1.0f, 1.0f));
+                    ImGui::TextUnformatted(fullDump.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::TreePop();
+                }
+            }
+        }
+        ImGui::EndChild();
+    }
+    }
+}
+
 static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync, UINT flags)
 {
     // ── Lazy init (first call only) ──
@@ -335,223 +657,7 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                 if (ImGui::BeginTabBar("##tabs")) {
                 // ── Player tab ──
                 if (ImGui::BeginTabItem("Player")) {
-                    constexpr ImGuiTreeNodeFlags kPlayerSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
-                    const uint32_t silver = hero->GetSilver();
-                    const uint64_t silverRuntime = hero->GetSilverRuntimeValue();
-                    if (ImGui::CollapsingHeader("Overview", kPlayerSectionFlags)) {
-                    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Player: %s", hero->GetName());
-                    ImGui::Text("UID:      %u", hero->GetID());
-                    ImGui::Text("Position: (%d, %d)", hero->m_posMap.x, hero->m_posMap.y);
-                    ImGui::Text("World:    (%d, %d)", hero->m_posWorld.x, hero->m_posWorld.y);
-                    ImGui::Text("Screen:   (%d, %d)", hero->m_posScr.x, hero->m_posScr.y);
-                    ImGui::Text("Status:   0x%llX", (unsigned long long)hero->m_nStatusFlag);
-                    ImGui::Text("Silver:   %u", silver);
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", hero->HasTrustedSilverCache() ? "(server update)" : "(cached fallback)");
-                    ImGui::Text("A30 Raw:  %llu", (unsigned long long)silverRuntime);
-
-                    if (hero->HasSyndicate()) {
-                        auto* entSet = CEntitySet::GetInstance();
-                        const char* guildName = entSet ? entSet->GetSyndicateName(hero->m_idSyndicate) : nullptr;
-                        const char* rankName = GetSyndicateRankName(hero->m_nSyndicateRank);
-                        ImGui::Text("Guild:   ");
-                        ImGui::SameLine(0, 0);
-                        ImGui::TextColored(ImVec4(0.4f, 0.6f, 1.0f, 1.0f), "%s", guildName ? guildName : "Unknown");
-                        if (rankName[0]) {
-                            ImGui::SameLine();
-                            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(%s)", rankName);
-                        }
-                    }
-
-                    if (hero->IsDead())
-                        ImGui::TextColored(ImVec4(1, 0, 0, 1), "** DEAD **");
-
-                    // Session 9: entity source is the heap scan — see entities.h.
-                    {
-                        const Entities::Stats st = Entities::GetStats();
-                        ImGui::Text("Nearby:   %d players, %d monsters, %d NPCs",
-                                    st.players, st.monsters, st.npcs);
-                        ImGui::TextDisabled("entity scan #%u: %d found, %u ms",
-                                            st.scans, st.total, st.lastScanMs);
-                        if (st.total == 0) {
-                            // Funnel readout: shows which predicate rejected
-                            // everything rather than just "0 found".
-                            ImGui::TextColored(ImVec4(1, 0.6f, 0, 1),
-                                "  regions=%u addrs=%llu vt=%u id=%u pos=%u name=%u",
-                                st.regions, (unsigned long long)st.addrs,
-                                st.passVtable, st.passId, st.passPos, st.passName);
-                        }
-                    }
-
-                    // ── Equipment (collapsible) ──
-                    }
-                    if (ImGui::CollapsingHeader("Equipment")) {
-                        if (ImGui::BeginTable("##equip", 6,
-                                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                ImGuiTableFlags_Resizable,
-                                ImVec2(0, 0))) {
-                            ImGui::TableSetupColumn("Slot",    ImGuiTableColumnFlags_WidthFixed, 65.0f);
-                            ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch);
-                            ImGui::TableSetupColumn("Quality", ImGuiTableColumnFlags_WidthFixed, 55.0f);
-                            ImGui::TableSetupColumn("+",       ImGuiTableColumnFlags_WidthFixed, 25.0f);
-                            ImGui::TableSetupColumn("Dur",     ImGuiTableColumnFlags_WidthFixed, 55.0f);
-                            ImGui::TableSetupColumn("Sockets", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-                            ImGui::TableHeadersRow();
-
-                            for (int s = 0; s < EquipSlot::COUNT; s++) {
-                                CItem* eq = hero->GetEquip(s);
-                                ImGui::TableNextRow();
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%s", GetEquipSlotName(s));
-                                ImGui::TableNextColumn();
-                                if (eq)
-                                    ImGui::Text("%s", eq->GetName());
-                                else
-                                    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "-");
-                                ImGui::TableNextColumn();
-                                if (eq) {
-                                    int q = eq->GetQuality();
-                                    ImVec4 qc = (q >= ItemQuality::SUPER) ? ImVec4(1,0.8f,0,1) :
-                                                (q >= ItemQuality::ELITE) ? ImVec4(0.6f,0.4f,1,1) :
-                                                (q >= ItemQuality::UNIQUE) ? ImVec4(0.2f,0.8f,1,1) :
-                                                ImVec4(1,1,1,1);
-                                    ImGui::TextColored(qc, "%s", eq->GetQualityName());
-                                }
-                                ImGui::TableNextColumn();
-                                if (eq && eq->GetPlus() > 0)
-                                    ImGui::Text("+%d", eq->GetPlus());
-                                ImGui::TableNextColumn();
-                                if (eq)
-                                    ImGui::Text("%d/%d", eq->GetDurability(), eq->GetMaxDurability());
-                                ImGui::TableNextColumn();
-                                if (eq) {
-                                    if (eq->HasSocket1() || eq->HasSocket2()) {
-                                        ImGui::Text("%s%s%s",
-                                            GetGemClassName(eq->GetGem1()),
-                                            eq->HasSocket2() ? ", " : "",
-                                            eq->HasSocket2() ? GetGemClassName(eq->GetGem2()) : "");
-                                    }
-                                }
-                            }
-                            ImGui::EndTable();
-                        }
-                    }
-
-                    // ── Inventory (collapsible) ──
-                    if (ImGui::CollapsingHeader("Inventory")) {
-                        ImGui::Text("Items: %zu / %d",
-                                    hero->m_deqItem.size(), CHero::MAX_BAG_ITEMS);
-
-                        if (hero->m_deqItem.empty()) {
-                            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Inventory is empty.");
-                        } else if (ImGui::BeginTable("##inv", 6,
-                                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
-                                ImVec2(0, 200.0f))) {
-                            ImGui::TableSetupScrollFreeze(0, 1);
-                            ImGui::TableSetupColumn("#",       ImGuiTableColumnFlags_WidthFixed, 25.0f);
-                            ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch);
-                            ImGui::TableSetupColumn("Quality", ImGuiTableColumnFlags_WidthFixed, 55.0f);
-                            ImGui::TableSetupColumn("+",       ImGuiTableColumnFlags_WidthFixed, 25.0f);
-                            ImGui::TableSetupColumn("Dur",     ImGuiTableColumnFlags_WidthFixed, 55.0f);
-                            ImGui::TableSetupColumn("Sockets", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-                            ImGui::TableHeadersRow();
-
-                            for (size_t i = 0; i < hero->m_deqItem.size() && i < 40; i++) {
-                                auto& ref = hero->m_deqItem[i];
-                                if (!ref) continue;
-                                CItem* item = ref.get();
-
-                                ImGui::TableNextRow();
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%zu", i + 1);
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%s", item->GetName());
-                                ImGui::TableNextColumn();
-                                {
-                                    int q = item->GetQuality();
-                                    ImVec4 qc = (q >= ItemQuality::SUPER) ? ImVec4(1,0.8f,0,1) :
-                                                (q >= ItemQuality::ELITE) ? ImVec4(0.6f,0.4f,1,1) :
-                                                (q >= ItemQuality::UNIQUE) ? ImVec4(0.2f,0.8f,1,1) :
-                                                ImVec4(1,1,1,1);
-                                    ImGui::TextColored(qc, "%s", item->GetQualityName());
-                                }
-                                ImGui::TableNextColumn();
-                                if (item->GetPlus() > 0)
-                                    ImGui::Text("+%d", item->GetPlus());
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%d/%d", item->GetDurability(), item->GetMaxDurability());
-                                ImGui::TableNextColumn();
-                                if (item->HasSocket1() || item->HasSocket2()) {
-                                    ImGui::Text("%s%s%s",
-                                        GetGemClassName(item->GetGem1()),
-                                        item->HasSocket2() ? ", " : "",
-                                        item->HasSocket2() ? GetGemClassName(item->GetGem2()) : "");
-                                }
-                            }
-                            ImGui::EndTable();
-                        }
-                    }
-
-                    // ── Skills (collapsible) ──
-                    if (ImGui::CollapsingHeader("Skills")) {
-                        if (hero->m_vecMagic.empty()) {
-                            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No skills learned.");
-                        } else if (hero->m_vecMagic.size() < 200 &&
-                                   ImGui::BeginTable("##skills", 7,
-                                       ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
-                                       ImVec2(0, 200.0f))) {
-                            ImGui::TableSetupScrollFreeze(0, 1);
-                            ImGui::TableSetupColumn("Name",     ImGuiTableColumnFlags_WidthStretch);
-                            // Session 9: the magic-type ID is what MagicAttack()
-                            // takes, so it needs to be visible, not just internal.
-                            ImGui::TableSetupColumn("ID",       ImGuiTableColumnFlags_WidthFixed, 45.0f);
-                            ImGui::TableSetupColumn("Lv",       ImGuiTableColumnFlags_WidthFixed, 25.0f);
-                            ImGui::TableSetupColumn("MP",       ImGuiTableColumnFlags_WidthFixed, 40.0f);
-                            ImGui::TableSetupColumn("Stam",     ImGuiTableColumnFlags_WidthFixed, 40.0f);
-                            ImGui::TableSetupColumn("Dist",     ImGuiTableColumnFlags_WidthFixed, 35.0f);
-                            ImGui::TableSetupColumn("Exp",      ImGuiTableColumnFlags_WidthStretch);
-                            ImGui::TableHeadersRow();
-
-                            for (size_t i = 0; i < hero->m_vecMagic.size(); i++) {
-                                auto& ref = hero->m_vecMagic[i];
-                                if (!ref) continue;
-                                CMagic* magic = ref.get();
-
-                                ImGui::TableNextRow();
-                                ImGui::TableNextColumn();
-                                if (magic->IsXpSkill()) {
-                                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "[XP]");
-                                    ImGui::SameLine();
-                                }
-                                ImGui::Text("%s", magic->GetName());
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%u", magic->GetMagicType());
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%u", magic->GetLevel());
-                                ImGui::TableNextColumn();
-                                if (magic->GetMpCost() > 0)
-                                    ImGui::Text("%u", magic->GetMpCost());
-                                ImGui::TableNextColumn();
-                                if (magic->GetStaminaCost() > 0)
-                                    ImGui::Text("%u", magic->GetStaminaCost());
-                                ImGui::TableNextColumn();
-                                if (magic->GetDistance() > 0)
-                                    ImGui::Text("%u", magic->GetDistance());
-                                ImGui::TableNextColumn();
-                                if (magic->GetExpRequired() > 0) {
-                                    float progress = (float)magic->GetExp() / (float)magic->GetExpRequired();
-                                    if (progress > 1.0f) progress = 1.0f;
-                                    char overlay[32];
-                                    snprintf(overlay, sizeof(overlay), "%u/%u",
-                                             magic->GetExp(), magic->GetExpRequired());
-                                    ImGui::ProgressBar(progress, ImVec2(-1, 0), overlay);
-                                }
-                            }
-                            ImGui::EndTable();
-                        }
-                    }
+                    RenderPlayerTab(hero);
                     ImGui::EndTabItem();
                 }
 
@@ -1472,97 +1578,7 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
 
                 // ── Packets tab ──
                 if (ImGui::BeginTabItem("Packets")) {
-                    PacketLog& plog = GetPacketLog();
-                    constexpr ImGuiTreeNodeFlags kPacketSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
-
-                    if (ImGui::CollapsingHeader("Controls", kPacketSectionFlags)) {
-                    ImGui::Checkbox("Logging", &plog.enabled);
-                    ImGui::SameLine();
-                    if (ImGui::Button("Clear"))
-                        plog.Clear();
-                    ImGui::SameLine();
-                    ImGui::Text("(%zu packets)", plog.Count());
-                    }
-
-                    if (ImGui::CollapsingHeader("Log", kPacketSectionFlags)) {
-                    if (plog.Count() == 0) {
-                        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-                            "No packets captured yet.");
-                    } else {
-                        if (ImGui::BeginChild("##pktscroll", ImVec2(0, 0), ImGuiChildFlags_None,
-                                ImGuiWindowFlags_HorizontalScrollbar)) {
-                            for (size_t i = 0; i < plog.Count(); i++) {
-                                const PacketEntry& pkt = plog.Get(i);
-
-                                // Build full hex dump string (reused for expand & copy)
-                                std::string fullDump;
-                                for (size_t r = 0; r < pkt.data.size(); r += 16) {
-                                    char line[128] = {};
-                                    int p = snprintf(line, sizeof(line), "%04X  ", (unsigned)r);
-                                    for (size_t c = 0; c < 16; c++) {
-                                        if (r + c < pkt.data.size())
-                                            p += snprintf(line + p, sizeof(line) - p,
-                                                          "%02X ", pkt.data[r + c]);
-                                        else
-                                            p += snprintf(line + p, sizeof(line) - p, "   ");
-                                        if (c == 7)
-                                            p += snprintf(line + p, sizeof(line) - p, " ");
-                                    }
-                                    p += snprintf(line + p, sizeof(line) - p, " ");
-                                    for (size_t c = 0; c < 16 && r + c < pkt.data.size(); c++) {
-                                        uint8_t b = pkt.data[r + c];
-                                        line[p++] = (b >= 0x20 && b < 0x7F) ? (char)b : '.';
-                                    }
-                                    line[p] = '\0';
-                                    if (!fullDump.empty()) fullDump += '\n';
-                                    fullDump += line;
-                                }
-
-                                // Header label: click to expand, right-click to copy
-                                char label[128];
-                                snprintf(label, sizeof(label),
-                                         "[%zu] Type=0x%04X  Size=%u##pkt%zu",
-                                         i, pkt.msgType, pkt.rawSize, i);
-
-                                bool open = ImGui::TreeNode(label);
-
-                                // Right-click copies entire hex dump to clipboard
-                                if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
-                                    ImGui::SetClipboardText(fullDump.c_str());
-                                }
-                                if (ImGui::IsItemHovered()) {
-                                    ImGui::SetTooltip("Right-click to copy hex dump");
-                                }
-
-                                if (open) {
-                                    // Session 10: decoded field list — the packet
-                                    // family used here (MsgAction and others) is a
-                                    // tag/varint encoding, so raw hex alone means
-                                    // hand-parsing every field by eye. This is what
-                                    // makes reading off a captured packet's mode
-                                    // value (e.g. to find real walk's mode, vs.
-                                    // jump's confirmed 19) actually practical.
-                                    const auto fields = DecodeVarintFields(pkt.data.data(), pkt.data.size());
-                                    if (!fields.empty()) {
-                                        std::string decoded = "Fields: ";
-                                        for (size_t f = 0; f < fields.size(); ++f) {
-                                            if (f) decoded += "  ";
-                                            char fbuf[32];
-                                            snprintf(fbuf, sizeof(fbuf), "#%d=%u", fields[f].fieldNumber, fields[f].value);
-                                            decoded += fbuf;
-                                        }
-                                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "%s", decoded.c_str());
-                                    }
-                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.8f, 1.0f, 1.0f));
-                                    ImGui::TextUnformatted(fullDump.c_str());
-                                    ImGui::PopStyleColor();
-                                    ImGui::TreePop();
-                                }
-                            }
-                        }
-                        ImGui::EndChild();
-                    }
-                    }
+                    RenderPacketsTab();
                     ImGui::EndTabItem();
                 }
 
