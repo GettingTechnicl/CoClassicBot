@@ -48,29 +48,65 @@ void PluginManager::RenderAllUI()
 {
     if (m_plugins.empty()) return;
 
-    if (ImGui::BeginTabItem("Plugins")) {
-        constexpr float kSidebarWidth = 120.0f;
+    if (ImGui::BeginTabItem("Automation")) {
+        constexpr float kSidebarWidth = 150.0f;
 
         // Build sidebar entries — hunt plugins are merged into one "Hunting" entry
         // kHuntingIndex is a sentinel meaning "show the Hunting composite view"
         constexpr int kHuntingIndex = -2;
 
-        // ── Left sidebar ──
+        // Session 13 [UI reorg]: the sidebar used to be one flat alphabetical-
+        // by-insertion-order list mixing core automation (Hunting, Mining,
+        // Mule) with passive visual-aid plugins (Aim Helper, Revive Helper)
+        // at the same visual level — no way to tell "run this for hours" from
+        // "toggle this once" at a glance. Grouped explicitly by category
+        // instead, since the plugin set is small and fixed; a data-driven
+        // category system would be overkill for ~10 plugins that rarely change.
         ImGui::BeginChild("##plugin_sidebar", ImVec2(kSidebarWidth, 0), true);
-        bool huntEntryRendered = false;
+
+        ImGui::SeparatorText("Hunting");
         for (size_t i = 0; i < m_plugins.size(); i++) {
-            auto& p = m_plugins[i];
-            if (dynamic_cast<BaseHuntPlugin*>(p.get())) {
-                if (huntEntryRendered)
-                    continue;
-                huntEntryRendered = true;
+            if (dynamic_cast<BaseHuntPlugin*>(m_plugins[i].get())) {
                 if (ImGui::Selectable("Hunting", m_selectedPlugin == kHuntingIndex))
                     m_selectedPlugin = kHuntingIndex;
-                continue;
+                break;  // hunt plugins merge into this one entry
             }
+        }
 
-            if (ImGui::Selectable(p->GetName(), m_selectedPlugin == (int)i))
-                m_selectedPlugin = (int)i;
+        ImGui::SeparatorText("Gathering");
+        for (size_t i = 0; i < m_plugins.size(); i++) {
+            auto* p = m_plugins[i].get();
+            if (dynamic_cast<MiningPlugin*>(p) || dynamic_cast<MulePlugin*>(p)) {
+                if (ImGui::Selectable(p->GetName(), m_selectedPlugin == (int)i))
+                    m_selectedPlugin = (int)i;
+            }
+        }
+
+        ImGui::SeparatorText("Travel & Movement");
+        for (size_t i = 0; i < m_plugins.size(); i++) {
+            auto* p = m_plugins[i].get();
+            if (dynamic_cast<TravelPlugin*>(p) || dynamic_cast<FollowPlugin*>(p)) {
+                if (ImGui::Selectable(p->GetName(), m_selectedPlugin == (int)i))
+                    m_selectedPlugin = (int)i;
+            }
+        }
+
+        ImGui::SeparatorText("Combat & Skill Automation");
+        for (size_t i = 0; i < m_plugins.size(); i++) {
+            auto* p = m_plugins[i].get();
+            if (dynamic_cast<ArtisanSpammerPlugin*>(p) || dynamic_cast<SkillTrainerPlugin*>(p)) {
+                if (ImGui::Selectable(p->GetName(), m_selectedPlugin == (int)i))
+                    m_selectedPlugin = (int)i;
+            }
+        }
+
+        ImGui::SeparatorText("Visual Aids");
+        for (size_t i = 0; i < m_plugins.size(); i++) {
+            auto* p = m_plugins[i].get();
+            if (dynamic_cast<AimHelperPlugin*>(p) || dynamic_cast<ReviveHelperPlugin*>(p)) {
+                if (ImGui::Selectable(p->GetName(), m_selectedPlugin == (int)i))
+                    m_selectedPlugin = (int)i;
+            }
         }
         ImGui::EndChild();
 
