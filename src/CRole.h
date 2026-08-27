@@ -192,8 +192,21 @@ private:
 public:
     int   m_nStamina;              // +0x6E0 current stamina (PP)
     int   m_nMaxStamina;           // +0x6E4 max stamina
+    // Session 13: found via a full-range (+0x20..+0x71C) live memory scan
+    // correlated against user-confirmed green/white/red/black monster-name
+    // tiers -- zero variance across hundreds of samples per monster type,
+    // and exactly matches every "L###" name-suffix variant's own number
+    // (RedDevilL117 -> 117 here, RedDevilL118 -> 118, TombBatL103 -> 103,
+    // BloodyBatL108 -> 108). Confirmed tier ranges: Green~102, White~107-108,
+    // Red~112-113, Black~117-118 -- monotonically increasing with danger,
+    // consistent with the user's own description of name color as a
+    // level-relative "con color" computed against the hero's own level.
+    // CHero publicly inherits CRole and doesn't touch this offset (its own
+    // fields start at +0x71C), so this also reads the HERO's own level for
+    // free -- unblocks the discordOnLevelUp TODO in hunt_stats.h.
+    int32_t m_nLevel;              // +0x6E8
 private:
-    BYTE _pad6E8[0x714 - 0x6E8];  // +0x6E8
+    BYTE _pad6EC[0x714 - 0x6EC];  // +0x6EC
 public:
     OBJID m_idSyndicate;           // +0x714  syndicate/guild ID (0 = none)
     int   m_nSyndicateRank;        // +0x718  syndicate rank (100=Leader, 90=Deputy, 50=Member)
@@ -222,6 +235,7 @@ public:
     BOOL IsBlackName() const { return TestState(USERSTATUS_BLACK); }
     int GetStamina() const { return m_nStamina; }
     int GetMaxStamina() const { return m_nMaxStamina; }
+    int GetLevel() const { return m_nLevel; }
     BOOL IsMining() const { return m_cmdAction.iType == _COMMAND_MINE; }
     BOOL IsJumping() const {
         return m_cmdAction.iType == _COMMAND_JUMP
@@ -270,6 +284,7 @@ static_assert(offsetof(CRole, m_cmdAction)   == 0x188, "CRole::m_cmdAction");
 static_assert(offsetof(CRole, m_nMaxHp)      == 0x3D0, "CRole::m_nMaxHp");
 static_assert(offsetof(CRole, m_nStamina)     == 0x6E0, "CRole::m_nStamina");
 static_assert(offsetof(CRole, m_nMaxStamina)  == 0x6E4, "CRole::m_nMaxStamina");
+static_assert(offsetof(CRole, m_nLevel)       == 0x6E8, "CRole::m_nLevel");
 static_assert(offsetof(CRole, m_idSyndicate)  == 0x714, "CRole::m_idSyndicate");
 static_assert(offsetof(CRole, m_nSyndicateRank) == 0x718, "CRole::m_nSyndicateRank");
 

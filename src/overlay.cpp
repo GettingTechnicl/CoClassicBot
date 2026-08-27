@@ -1307,7 +1307,7 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                         if (noData) {
                             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
                                 "No entities nearby.");
-                        } else if (ImGui::BeginTable("##ent", 7,
+                        } else if (ImGui::BeginTable("##ent", 8,
                                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                 ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
                                 ImVec2(0, 200.0f))) {
@@ -1316,6 +1316,13 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                             ImGui::TableSetupColumn("Name",  ImGuiTableColumnFlags_WidthStretch);
                             ImGui::TableSetupColumn("Guild", ImGuiTableColumnFlags_WidthFixed, 100.0f);
                             ImGui::TableSetupColumn("Type",  ImGuiTableColumnFlags_WidthFixed, 70.0f);
+                            // Session 13: CRole+0x6E8, found via a full-range live
+                            // memory scan correlated against user-confirmed
+                            // green/white/red/black monster tiers — see
+                            // CRole::GetLevel's comment. Live-verify the numbers
+                            // shown here against the actual displayed name color
+                            // before trusting this for Auto-Level danger logic.
+                            ImGui::TableSetupColumn("Lvl##level", ImGuiTableColumnFlags_WidthFixed, 40.0f);
                             // Session 12: unverified — see CRole::IsRedName/
                             // IsBlackName's comment. Cross-check this column
                             // against a known redname/blackname player's
@@ -1387,6 +1394,9 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                     ImGui::TableNextColumn();
                                     ImGui::TextColored(typeColor, "%s", type);
                                     ImGui::TableNextColumn();
+                                    if (isMonster || isPlayer)
+                                        ImGui::Text("%d", e->GetLevel());
+                                    ImGui::TableNextColumn();
                                     if (e->IsBlackName())
                                         ImGui::TextColored(ImVec4(0.6f, 0.1f, 0.1f, 1.0f), "Black");
                                     else if (e->IsRedName())
@@ -1427,6 +1437,8 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                                     // no guild for items
                                     ImGui::TableNextColumn();
                                     ImGui::TextColored(ImVec4(0.86f,0.63f,1,1), "Item");
+                                    ImGui::TableNextColumn();
+                                    // no level for items
                                     ImGui::TableNextColumn();
                                     // no PK status for items
                                     ImGui::TableNextColumn();
