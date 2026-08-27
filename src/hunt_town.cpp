@@ -261,6 +261,15 @@ bool HuntTownService::IsPriorityLootItem(const CMapItem& item)
     return false;
 }
 
+bool HuntTownService::IsDragonBallMapItem(const CMapItem& item)
+{
+    if (item.m_idType == ItemTypeId::DRAGONBALL)
+        return true;
+    if (item.m_idType >= 2000031 && item.m_idType <= 2000038)  // 1-7 Star + Epic DragonBall
+        return true;
+    return false;
+}
+
 bool HuntTownService::ShouldLootMapItem(const AutoHuntSettings& settings, const CMapItem& item)
 {
     if (settings.lootMoney && IsMoneyMapItem(item))

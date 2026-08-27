@@ -1523,6 +1523,16 @@ void BaseHuntPlugin::Update()
         MapItems::Invalidate();   // don't wait out the rest of the interval
     }
 
+    // Session 13 [Paranoia active evasion]: while a threat is detected,
+    // ordinary loot doesn't get to detour the hero either — only a
+    // DragonBall does, per explicit user direction ("a detected player
+    // should interrupt everything except for picking up a DragonBall").
+    // Treating it as if nothing was found here makes the entire loot-phase
+    // block below naturally no-op and fall through to the evasion check
+    // further down, without duplicating any of its logic.
+    if (loot && paranoiaEvading && !HuntTownService::IsDragonBallMapItem(*loot))
+        loot = nullptr;
+
     const bool midMovement = hero->IsJumping() || Pathfinder::Get().IsActive();
     if (loot) {
         const int lootDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, loot->m_pos.x, loot->m_pos.y);
@@ -1604,6 +1614,34 @@ void BaseHuntPlugin::Update()
             }
             spdlog::warn("[hunt-loot] Failed to path to loot id={} at ({},{}) dist={}",
                 loot->m_id, loot->m_pos.x, loot->m_pos.y, lootDist);
+        }
+    }
+
+    // Session 13 [Paranoia active evasion]: until now, Paranoia only biased
+    // target PREFERENCE (CollectHuntTargets) and idle-exploration direction
+    // — both of which only ever run when there's nothing more urgent already
+    // happening. Live-tested: a good hunting spot always has a target
+    // available, so evasion never actually triggered — the bot just kept
+    // fighting in place next to a detected player. This is the actual
+    // interrupt: while a threat is detected, skip engaging/pursuing a
+    // target entirely this tick and walk toward the same threat-biased
+    // destination FindZoneExplorePosition already computes for idle
+    // exploration, abandoning whatever's in progress. No separate "too
+    // close" threshold needed on top of paranoiaEvading/safetyPlayerRange —
+    // the entity list itself is already server-visibility-bounded (the
+    // client only knows about a player once they're close enough to be a
+    // real proximity risk in the first place), per the user's own
+    // observation. Loot pickup above is intentionally NOT gated by this —
+    // priority items (meteors/dragonballs) already have their own explicit
+    // "stop everything and go get it" override, and an already-in-hand
+    // free/no-detour pickup costs no extra exposure.
+    if (paranoiaEvading) {
+        Position evadePos{};
+        if (FindZoneExplorePosition(hero, map, settings, evadePos)
+            && StartPathTo(hero, map, evadePos, 0)) {
+            m_targetId = 0;
+            SetState(AutoHuntState::AcquireTarget, "Evading nearby player");
+            return;
         }
     }
 

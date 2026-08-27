@@ -116,6 +116,14 @@ public:
     // IsWithinLootPickupRange in base_hunt_plugin.cpp.
     static bool IsPriorityLootItem(const CMapItem& item);
 
+    // Session 13: DragonBall specifically (base + all star tiers/Epic), NOT
+    // the broader Meteor/MeteorTear/+items priority-loot bucket above. Used
+    // to let a DragonBall pickup survive Paranoia's active-evasion
+    // interrupt (base_hunt_plugin.cpp) while ordinary loot — including
+    // Meteors — does not, per explicit user direction: "a detected player
+    // should interrupt everything except for picking up a DragonBall."
+    static bool IsDragonBallMapItem(const CMapItem& item);
+
     static bool ShouldLootMapItem(const AutoHuntSettings& settings, const CMapItem& item);
     static bool CanAffordArrowPurchase(const CHero* hero);
 
