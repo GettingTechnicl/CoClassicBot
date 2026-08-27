@@ -1532,7 +1532,10 @@ static HRESULT STDMETHODCALLTYPE HkPresent(IDXGISwapChain* pSwapChain, UINT sync
                     if (ImGui::CollapsingHeader("Discord Webhook", kSectionFlags)) {
                         DiscordSettings& discord = GetDiscordSettings();
                         ImGui::Checkbox("Enable Discord Webhook", &discord.webhookEnabled);
-                        ImGui::InputText("Webhook URL##discord", discord.webhookUrl, IM_ARRAYSIZE(discord.webhookUrl));
+                        // Session 12: masked -- a webhook URL is a bearer credential
+                        // (anyone with it can post to the channel), same as a password.
+                        ImGui::InputText("Webhook URL##discord", discord.webhookUrl, IM_ARRAYSIZE(discord.webhookUrl),
+                            ImGuiInputTextFlags_Password);
                         ImGui::InputText("Mention User ID##discord", discord.mentionUserId, IM_ARRAYSIZE(discord.mentionUserId));
                         if (ImGui::Button("Test Webhook")) {
                             if (discord.webhookUrl[0] != '\0') {

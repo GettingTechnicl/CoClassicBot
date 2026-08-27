@@ -11,10 +11,163 @@
 #include "plugins/follow_plugin.h"
 #include "log.h"
 #include <windows.h>
+#include <wincrypt.h>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
+
+// =====================================================================
+// Session 12: DPAPI-encrypted storage for the Discord webhook URL — a
+// webhook URL is itself a bearer credential (anyone with it can post to
+// the channel), the same category as launcher.exe's saved account
+// passwords (see injector/credentials.cpp, already hardened this
+// session). This mirrors that implementation (same entropy/UI-forbidden/
+// scrubbing choices) but lives here instead, since config.cpp is part of
+// coclassic.dll — a separate binary from launcher.exe that can't call
+// into injector/'s code across the process boundary. Runs entirely
+// post-login (config load/save is normal gameplay operation, not the
+// sensitive pre-login window), and DPAPI is a standard OS facility with
+// no relation to game state, so this doesn't touch the "only hook OS
+// DLLs pre-login" boundary the rest of this project is careful about.
+// =====================================================================
+namespace {
+
+constexpr BYTE kConfigEntropyBytes[] = {
+    0x4F, 0x2A, 0x9C, 0x17, 0xB6, 0x3D, 0xE8, 0x05,
+    0xA1, 0x7F, 0x62, 0xD9, 0x3B, 0x94, 0xC0, 0x28,
+};
+
+DATA_BLOB ConfigEntropyBlob()
+{
+    DATA_BLOB entropy{};
+    entropy.pbData = const_cast<BYTE*>(kConfigEntropyBytes);
+    entropy.cbData = static_cast<DWORD>(sizeof(kConfigEntropyBytes));
+    return entropy;
+}
+
+const char kConfigBase64Chars[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string ConfigBase64Encode(const unsigned char* data, size_t len)
+{
+    std::string out;
+    out.reserve(((len + 2) / 3) * 4);
+    size_t i = 0;
+    for (; i + 2 < len; i += 3) {
+        uint32_t n = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+        out += kConfigBase64Chars[(n >> 18) & 0x3F];
+        out += kConfigBase64Chars[(n >> 12) & 0x3F];
+        out += kConfigBase64Chars[(n >> 6) & 0x3F];
+        out += kConfigBase64Chars[n & 0x3F];
+    }
+    const size_t rem = len - i;
+    if (rem == 1) {
+        uint32_t n = data[i] << 16;
+        out += kConfigBase64Chars[(n >> 18) & 0x3F];
+        out += kConfigBase64Chars[(n >> 12) & 0x3F];
+        out += "==";
+    } else if (rem == 2) {
+        uint32_t n = (data[i] << 16) | (data[i + 1] << 8);
+        out += kConfigBase64Chars[(n >> 18) & 0x3F];
+        out += kConfigBase64Chars[(n >> 12) & 0x3F];
+        out += kConfigBase64Chars[(n >> 6) & 0x3F];
+        out += '=';
+    }
+    return out;
+}
+
+int ConfigDecodeChar(char c)
+{
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+std::vector<unsigned char> ConfigBase64Decode(const std::string& text)
+{
+    std::vector<unsigned char> out;
+    out.reserve((text.size() / 4) * 3);
+    int vals[4];
+    size_t n = 0;
+    for (char c : text) {
+        if (c == '=' || c == '\0')
+            break;
+        const int v = ConfigDecodeChar(c);
+        if (v < 0)
+            continue;
+        vals[n++] = v;
+        if (n == 4) {
+            out.push_back(static_cast<unsigned char>((vals[0] << 2) | (vals[1] >> 4)));
+            out.push_back(static_cast<unsigned char>((vals[1] << 4) | (vals[2] >> 2)));
+            out.push_back(static_cast<unsigned char>((vals[2] << 6) | vals[3]));
+            n = 0;
+        }
+    }
+    if (n >= 2) {
+        out.push_back(static_cast<unsigned char>((vals[0] << 2) | (vals[1] >> 4)));
+        if (n == 3)
+            out.push_back(static_cast<unsigned char>((vals[1] << 4) | (vals[2] >> 2)));
+    }
+    return out;
+}
+
+std::string ConfigDpapiEncrypt(const std::string& plaintext)
+{
+    if (plaintext.empty())
+        return "";
+
+    DATA_BLOB in{};
+    in.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(plaintext.data()));
+    in.cbData = static_cast<DWORD>(plaintext.size());
+
+    DATA_BLOB entropy = ConfigEntropyBlob();
+    DATA_BLOB out{};
+    if (!CryptProtectData(&in, L"coclassic config", &entropy, nullptr, nullptr,
+            CRYPTPROTECT_UI_FORBIDDEN, &out))
+        return "";
+
+    std::string encoded = "enc:" + ConfigBase64Encode(out.pbData, out.cbData);
+    SecureZeroMemory(out.pbData, out.cbData);
+    LocalFree(out.pbData);
+    return encoded;
+}
+
+// Session 12: values saved before this change are plain, unprefixed URLs —
+// returned as-is (and re-saved encrypted on the next SaveAll) rather than
+// treated as a decrypt failure, so upgrading doesn't lose an existing
+// webhook URL.
+std::string ConfigDpapiDecrypt(const std::string& stored)
+{
+    if (stored.empty())
+        return "";
+    if (stored.rfind("enc:", 0) != 0)
+        return stored;  // legacy plaintext value
+
+    const std::vector<unsigned char> cipherBytes = ConfigBase64Decode(stored.substr(4));
+    if (cipherBytes.empty())
+        return "";
+
+    DATA_BLOB in{};
+    in.pbData = const_cast<BYTE*>(cipherBytes.data());
+    in.cbData = static_cast<DWORD>(cipherBytes.size());
+
+    DATA_BLOB entropy = ConfigEntropyBlob();
+    DATA_BLOB out{};
+    if (!CryptUnprotectData(&in, nullptr, &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out))
+        return "";
+
+    std::string result(reinterpret_cast<char*>(out.pbData), out.cbData);
+    SecureZeroMemory(out.pbData, out.cbData);
+    LocalFree(out.pbData);
+    return result;
+}
+
+}  // namespace
 
 static MapSettings g_mapSettings;
 MapSettings& GetMapSettings() { return g_mapSettings; }
@@ -1014,7 +1167,11 @@ static void SaveSharedSections(const char* file)
 
     DiscordSettings& discord = GetDiscordSettings();
     WriteInt(file, "Discord", "webhookEnabled", discord.webhookEnabled ? 1 : 0);
-    WritePrivateProfileStringA("Discord", "webhookUrl", discord.webhookUrl, file);
+    // Session 12: a webhook URL is a bearer credential (anyone with it can
+    // post to the channel) -- encrypted at rest, same as launcher.exe's
+    // saved account passwords. See ConfigDpapiEncrypt's comment above.
+    const std::string encryptedWebhook = ConfigDpapiEncrypt(discord.webhookUrl);
+    WritePrivateProfileStringA("Discord", "webhookUrl", encryptedWebhook.c_str(), file);
     WritePrivateProfileStringA("Discord", "mentionUserId", discord.mentionUserId, file);
 
     HuntStats::Settings& stats = HuntStats::GetSettings();
@@ -1076,7 +1233,15 @@ static void LoadSharedSections(const char* file)
     DiscordSettings& discord = GetDiscordSettings();
     discord = DiscordSettings{};
     discord.webhookEnabled = ReadInt(file, "Discord", "webhookEnabled", 0) != 0;
-    ReadString(file, "Discord", "webhookUrl", "", discord.webhookUrl, sizeof(discord.webhookUrl));
+    // Session 12: stored value may be DPAPI-encrypted ("enc:" prefix, see
+    // ConfigDpapiEncrypt) or a legacy plaintext URL from before this change
+    // -- ConfigDpapiDecrypt handles both. Read buffer is generously sized
+    // since the encrypted form (base64 + DPAPI overhead) is larger than the
+    // plaintext URL it holds.
+    char rawWebhook[1024] = "";
+    ReadString(file, "Discord", "webhookUrl", "", rawWebhook, sizeof(rawWebhook));
+    const std::string decryptedWebhook = ConfigDpapiDecrypt(rawWebhook);
+    strncpy_s(discord.webhookUrl, decryptedWebhook.c_str(), _TRUNCATE);
     ReadString(file, "Discord", "mentionUserId", "", discord.mentionUserId, sizeof(discord.mentionUserId));
 
     HuntStats::Settings& stats = HuntStats::GetSettings();

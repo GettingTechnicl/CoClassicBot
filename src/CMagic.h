@@ -68,6 +68,16 @@ static_assert(offsetof(CMagic, m_bEnable)      == 0x08, "CMagic::m_bEnable");
 static_assert(offsetof(CMagic, m_dwExp)         == 0x0C, "CMagic::m_dwExp");
 static_assert(offsetof(CMagic, m_idMagicType)   == 0x10, "CMagic::m_idMagicType");
 static_assert(offsetof(CMagic, m_strName)        == 0x18, "CMagic::m_strName");
+// Session 12: m_strName is a live std::string embedded in a #pragma pack(1)
+// class — packing suppresses the compiler's normal alignment padding, so
+// nothing else would catch it if a future field insertion shifted this
+// offset to something no longer a multiple of alignof(std::string) (MSVC's
+// std::string layout relies on aligned access to its internal pointer).
+// This offset (0x18) is currently fine only because it happens to land on
+// an 8-byte boundary; this assert makes that a checked invariant instead
+// of an accident.
+static_assert(offsetof(CMagic, m_strName) % alignof(std::string) == 0,
+    "CMagic::m_strName must stay aligned for std::string in this #pragma pack(1) layout");
 static_assert(offsetof(CMagic, m_dwLevel)        == 0x48, "CMagic::m_dwLevel");
 static_assert(offsetof(CMagic, m_dwMpCost)       == 0x4C, "CMagic::m_dwMpCost");
 static_assert(offsetof(CMagic, m_dwPower)        == 0x50, "CMagic::m_dwPower");

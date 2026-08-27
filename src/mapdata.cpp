@@ -202,12 +202,33 @@ CGameMap* GetFileBackedGameMap()
 MapGrid* GetCurrentMapGrid()
 {
     static MapGrid grid;
+    // Session 12: without this, a map id whose .DMap can't be resolved or
+    // parsed (missing file, bad JSON entry, corrupt data) was re-resolved
+    // and re-parsed from disk on EVERY call to this function — which runs
+    // every frame from pathfinding consumers — spamming warn/error logs and
+    // disk I/O for as long as the hero stayed on that map. Remembers the
+    // last-failed id and only retries after a cooldown, rather than caching
+    // the failure forever (a transient cause, e.g. a network drive hiccup,
+    // isn't impossible even if unlikely for static installed content).
+    static int   s_lastFailedId = 0;
+    static DWORD s_lastFailTick = 0;
+    constexpr DWORD kFailRetryCooldownMs = 30000;
+
     const OBJID id = Game::GetCurrentMapId();
     if (!id)
         return grid.IsLoaded() ? &grid : nullptr;   // keep last map during a transition
+
     if (!grid.IsLoaded() || grid.GetMapId() != (int)id) {
-        if (!grid.Load((int)id))
+        const DWORD now = GetTickCount();
+        if ((int)id == s_lastFailedId && now - s_lastFailTick < kFailRetryCooldownMs)
             return grid.IsLoaded() ? &grid : nullptr;
+
+        if (!grid.Load((int)id)) {
+            s_lastFailedId = (int)id;
+            s_lastFailTick = now;
+            return grid.IsLoaded() ? &grid : nullptr;
+        }
+        s_lastFailedId = 0;
     }
     return &grid;
 }

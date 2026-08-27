@@ -573,8 +573,19 @@ bool LoadFromDisk()
         const std::string val = Trim(line.substr(eq + 1));
 
         if (key == "volumeSerial") {
-            id.volumeSerial = static_cast<uint32_t>(std::stoul(val, nullptr, 16));
-            any = true;
+            // Session 12: hwid.txt is a user-editable file (its own header
+            // says so) parsed on InitThread, a raw CreateThread with no
+            // exception handling anywhere above it — an unguarded stoul
+            // throwing on a malformed/overflowing value would std::terminate()
+            // the whole game process before hooks even install. Malformed
+            // input now just skips this field (leaves whatever Snapshot()
+            // already had) instead of crashing.
+            try {
+                id.volumeSerial = static_cast<uint32_t>(std::stoul(val, nullptr, 16));
+                any = true;
+            } catch (const std::exception&) {
+                spdlog::warn("[hwid] hwid.txt: invalid volumeSerial value '{}', ignoring", val);
+            }
         } else if (key == "mac") {
             unsigned m[6]{};
             if (sscanf_s(val.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x",

@@ -101,6 +101,7 @@ target_link_libraries(coclassic PRIVATE
     dxgi.lib
     d3dcompiler.lib
     winhttp.lib
+    crypt32.lib    # CryptProtectData/CryptUnprotectData — Discord webhook URL at rest (config.cpp)
 )
 set_target_properties(coclassic PROPERTIES
     OUTPUT_NAME "coclassic"

@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <winhttp.h>
 #include <algorithm>
+#include <atomic>
 #include <thread>
 #include <unordered_map>
 #include <cctype>
@@ -178,8 +179,28 @@ bool SendDiscordWebhookPayload(const std::string& webhookUrl, const std::string&
     return success;
 }
 
+// Session 12: a burst of notifications (e.g. several notable drops in quick
+// succession) used to spawn one detached thread + one real HTTP POST per
+// call with no limit, risking a pile of concurrent requests and Discord
+// rate-limit (429) responses. These are best-effort notifications, not
+// guaranteed-delivery messages, so excess ones in a burst are simply
+// dropped rather than queued/delayed -- a queue would risk an unbounded
+// backlog of its own if the bot outpaces Discord's rate limit for a while.
+constexpr DWORD kMinDiscordSendIntervalMs = 1000;
+
 void SendDiscordWebhookPayloadAsync(std::string webhookUrl, std::string jsonPayload)
 {
+    static std::atomic<DWORD> s_lastSendTick{0};
+    const DWORD now = GetTickCount();
+    const DWORD last = s_lastSendTick.load(std::memory_order_relaxed);
+    if (now - last < kMinDiscordSendIntervalMs) {
+        spdlog::debug("[discord] Notification dropped (rate limit, {}ms since last send)", now - last);
+        return;
+    }
+    // Best-effort claim -- if another thread wins the race, this call just
+    // sends slightly early rather than being dropped; fine for a soft limit.
+    s_lastSendTick.store(now, std::memory_order_relaxed);
+
     std::thread([webhookUrl = std::move(webhookUrl), jsonPayload = std::move(jsonPayload)]() mutable {
         SendDiscordWebhookPayload(webhookUrl, jsonPayload);
     }).detach();
