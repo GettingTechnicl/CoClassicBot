@@ -169,12 +169,12 @@ bool PerformLoginViaMessages(HWND loginWnd, const AutoLoginRequest& request, uin
         "(SendInput cannot reach the input desktop in this state).\n");
 
     PostKey(loginWnd, VK_TAB);
-    Sleep(300);
+    Sleep(1000);
     PostText(loginWnd, request.username);
     printf("[auto-login] Username posted.\n");
 
     PostKey(loginWnd, VK_TAB);
-    Sleep(150);
+    Sleep(500);
     PostText(loginWnd, request.password);
     printf("[auto-login] Password posted.\n");
 
@@ -211,13 +211,20 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
     // the username field, second Tab reaches the password field. This
     // replaces the coordinate-based clicking that kept breaking across
     // different window sizes/DPI (see the file-header comment for history).
+    //
+    // First live run of THIS approach dropped the first few characters of
+    // the username ("Shooter411" came out as "er411" -- exactly the first
+    // 5 chars missing, matching SendText's 20ms/char pace) because the
+    // field wasn't actually ready to receive input yet this soon after
+    // Tab/window-launch, even though focus had already moved. Widened both
+    // post-Tab delays well past the ~100ms that was dropped, with margin.
     SendKey(VK_TAB);
-    Sleep(300);
+    Sleep(1000);
     SendText(request.username);
     printf("[auto-login] Username typed.\n");
 
     SendKey(VK_TAB);
-    Sleep(150);
+    Sleep(500);
     SendText(request.password);
     printf("[auto-login] Password typed.\n");
 
