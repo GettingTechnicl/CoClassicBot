@@ -48,6 +48,13 @@ public:
     static CEntityInfo* GetInstance();
 
     bool HasPendingTradeRequest() const;
+    // Session 12 [CRASH FIX]: mule_plugin.cpp's Runtime UI panel read
+    // m_nTradeRequestState directly (entityInfo->m_nTradeRequestState),
+    // bypassing the SEH-guarded accessor convention every other field read
+    // here follows -- crashed live (access violation on an unverified RVA
+    // resolving to garbage, see class comment above). Use this instead of
+    // touching the raw field anywhere outside this class.
+    uint64_t GetTradeRequestState() const;
     OBJID GetTradeRequesterId() const;
     const char* GetTradeRequesterName() const;
     std::vector<CItem*> GetWarehouseItems() const;

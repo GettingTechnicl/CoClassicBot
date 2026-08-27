@@ -69,6 +69,15 @@ bool CEntityInfo::HasPendingTradeRequest() const
     }
 }
 
+uint64_t CEntityInfo::GetTradeRequestState() const
+{
+    __try {
+        return m_nTradeRequestState;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
 OBJID CEntityInfo::GetTradeRequesterId() const
 {
     __try {

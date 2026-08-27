@@ -94,8 +94,11 @@ static void HkRenderEntityVisual(void* entityPtr)
 static uint64_t HkTradeWindowHandleMessage(int64_t* param1, int param2, int64_t param3)
 {
     if (param2 == kTradeWindowMessage) {
+        // Session 12 [CRASH FIX]: was entityInfo->m_nTradeRequestState directly
+        // -- see CEntityInfo::GetTradeRequestState()'s comment. Sibling of the
+        // exact same bug that crashed MulePlugin::RenderUI live.
         if (CEntityInfo* entityInfo = Game::GetEntityInfo())
-            g_lastTradeRequestRawState = entityInfo->m_nTradeRequestState;
+            g_lastTradeRequestRawState = entityInfo->GetTradeRequestState();
 
         if (param3 == kTradeEventIncomingRequest) {
             if (CEntityInfo* entityInfo = Game::GetEntityInfo()) {

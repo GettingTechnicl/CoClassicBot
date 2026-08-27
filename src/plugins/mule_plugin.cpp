@@ -323,7 +323,13 @@ void MulePlugin::RenderUI()
     const bool hasIncomingRequest = HasIncomingTradeRequest();
     const OBJID requesterId = hasIncomingRequest ? GetIncomingTradeRequesterId() : 0;
     const char* requesterName = hasIncomingRequest ? GetIncomingTradeRequesterName() : "";
-    const uint64_t requestState = entityInfo ? entityInfo->m_nTradeRequestState : GetLastTradeRequestRawState();
+    // Session 12 [CRASH FIX]: was entityInfo->m_nTradeRequestState directly --
+    // a plain null check on entityInfo isn't enough, since Game::GetEntityInfo()
+    // only guards the pointer-acquisition read, not the validity of the
+    // pointer value itself (an unverified RVA can resolve to a non-null but
+    // garbage pointer). GetTradeRequestState() is SEH-guarded, matching every
+    // other CEntityInfo field read in this codebase -- see its declaration.
+    const uint64_t requestState = entityInfo ? entityInfo->GetTradeRequestState() : GetLastTradeRequestRawState();
 
     if (ImGui::CollapsingHeader("Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Checkbox("Enabled", &settings.enabled);
