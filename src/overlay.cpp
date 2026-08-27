@@ -1113,6 +1113,7 @@ static void RenderMapOverviewSection(CHero* hero, CGameMap* map, bool hasMap, OB
                         ImGui::Text("Middle or Right drag - pan");
                         ImGui::Text("Right double-click   - recentre on hero");
                         ImGui::Text("Left click           - capture, when a capture mode is armed");
+                        ImGui::Text("Ctrl + Left click    - move hero to clicked tile");
                         ImGui::EndTooltip();
                     }
                     ImGui::SameLine();
@@ -1678,7 +1679,16 @@ static void RenderMinimapSection(CHero* hero, CGameMap* map,
                             int tileX = (int)roundf(camTileX + ftdx);
                             int tileY = (int)roundf(camTileY + ftdy);
 
-                            if (!PluginManager::Get().HandleMapClick({tileX, tileY})) {
+                            // Session 13: a bare click used to ALWAYS move the hero
+                            // here whenever no capture mode consumed it -- trivially
+                            // easy to trigger by accident while just looking at the
+                            // map. Capture-mode clicks (armed via an explicit
+                            // "Capture..." button first) stay unprotected, since
+                            // arming one is already a deliberate two-step action.
+                            // Manual click-to-move specifically now requires Ctrl
+                            // held, so an accidental plain click is inert.
+                            if (!PluginManager::Get().HandleMapClick({tileX, tileY})
+                                && ImGui::GetIO().KeyCtrl) {
                                 // Cancel any active path on manual click
                                 Pathfinder::Get().Stop();
 
