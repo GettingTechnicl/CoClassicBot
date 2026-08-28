@@ -5,10 +5,28 @@
 
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
 namespace {
+
+// Multi-account manager support: SendInput() and SetForegroundWindow() are
+// GLOBAL, desktop-wide operations, not scoped to whichever HWND was
+// resolved by PID — live-reported, with 3+ accounts reconnecting around
+// the same time, one account's ForceForegroundWindow() call could steal
+// focus mid-typing from a DIFFERENT account's in-flight keystroke
+// sequence, interleaving credentials between the two windows. Serializes
+// just the foreground+keystroke portion of PerformLoginViaSendInput
+// (below) across every concurrent login/reconnect attempt in this
+// process — not the completion-wait that follows it, which doesn't touch
+// shared desktop state and would otherwise pointlessly block OTHER
+// accounts' typing behind one account's own up-to-8s completion
+// detection. PerformLoginViaMessages (the locked-desktop path) doesn't
+// need this: PostMessage/SendMessageTimeout target a specific HWND's own
+// message queue directly, with no shared global-focus dependency.
+std::mutex g_sendInputMutex;
+
 
 constexpr const char* kLoginWindowTitle = "[ClassicConquer]";
 
@@ -256,56 +274,66 @@ bool PerformLoginViaMessages(HWND loginWnd, const AutoLoginRequest& request, uin
 
 bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, uint32_t timeoutMs, bool isReconnect)
 {
-    if (ForceForegroundWindow(loginWnd))
-        printf("[auto-login] Login window confirmed foreground.\n");
-    else
-        printf("[auto-login] WARNING: login window did NOT become foreground — "
-            "keystrokes will likely go to the wrong window.\n");
-    Sleep(200);
+    {
+        // Multi-account manager support: holds g_sendInputMutex for exactly
+        // the foreground+keystroke span — see its own comment for why this
+        // is needed at all (SendInput/SetForegroundWindow are global, not
+        // per-window) and why the lock is released before the
+        // completion-wait loop below rather than held for this whole
+        // function.
+        std::lock_guard<std::mutex> lock(g_sendInputMutex);
 
-    // Multi-account manager support: reconnecting after an in-game
-    // disconnect shows an "Error: Connection with the server is
-    // interrupted. Please re-login." banner FIRST, live-reported —
-    // dismissed with Enter/Space before the form is usable, unlike a
-    // fresh post-launch login which has no such banner. Only sent on the
-    // reconnect path; an unconditional stray Enter on a fresh login could
-    // submit the form prematurely.
-    if (isReconnect) {
-        SendKey(VK_RETURN);
+        if (ForceForegroundWindow(loginWnd))
+            printf("[auto-login] Login window confirmed foreground.\n");
+        else
+            printf("[auto-login] WARNING: login window did NOT become foreground — "
+                "keystrokes will likely go to the wrong window.\n");
+        Sleep(200);
+
+        // Multi-account manager support: reconnecting after an in-game
+        // disconnect shows an "Error: Connection with the server is
+        // interrupted. Please re-login." banner FIRST, live-reported —
+        // dismissed with Enter/Space before the form is usable, unlike a
+        // fresh post-launch login which has no such banner. Only sent on
+        // the reconnect path; an unconditional stray Enter on a fresh
+        // login could submit the form prematurely.
+        if (isReconnect) {
+            SendKey(VK_RETURN);
+            Sleep(500);
+            printf("[auto-login] Reconnect: dismissed disconnect banner.\n");
+        }
+
+        // Session 13: live-confirmed — no click needed. The window's default
+        // post-launch focus state responds directly to Tab: first Tab reaches
+        // the username field, second Tab reaches the password field. This
+        // replaces the coordinate-based clicking that kept breaking across
+        // different window sizes/DPI (see the file-header comment for history).
+        //
+        // First live run of THIS approach dropped the first few characters of
+        // the username ("Shooter411" came out as "er411" -- exactly the first
+        // 5 chars missing, matching SendText's 20ms/char pace) because the
+        // field wasn't actually ready to receive input yet this soon after
+        // Tab/window-launch, even though focus had already moved. Widened both
+        // post-Tab delays well past the ~100ms that was dropped, with margin.
+        SendKey(VK_TAB);
+        Sleep(1000);
+        SendText(request.username);
+        printf("[auto-login] Username typed.\n");
+
+        SendKey(VK_TAB);
         Sleep(500);
-        printf("[auto-login] Reconnect: dismissed disconnect banner.\n");
-    }
+        SendText(request.password);
+        printf("[auto-login] Password typed.\n");
 
-    // Session 13: live-confirmed — no click needed. The window's default
-    // post-launch focus state responds directly to Tab: first Tab reaches
-    // the username field, second Tab reaches the password field. This
-    // replaces the coordinate-based clicking that kept breaking across
-    // different window sizes/DPI (see the file-header comment for history).
-    //
-    // First live run of THIS approach dropped the first few characters of
-    // the username ("Shooter411" came out as "er411" -- exactly the first
-    // 5 chars missing, matching SendText's 20ms/char pace) because the
-    // field wasn't actually ready to receive input yet this soon after
-    // Tab/window-launch, even though focus had already moved. Widened both
-    // post-Tab delays well past the ~100ms that was dropped, with margin.
-    SendKey(VK_TAB);
-    Sleep(1000);
-    SendText(request.username);
-    printf("[auto-login] Username typed.\n");
+        // Server dropdown intentionally left untouched: this game currently
+        // only exposes one real option ("Classic (US)") and it's not a real
+        // Win32 combo box to drive programmatically anyway. Revisit if/when
+        // multi-server support is actually needed.
 
-    SendKey(VK_TAB);
-    Sleep(500);
-    SendText(request.password);
-    printf("[auto-login] Password typed.\n");
-
-    // Server dropdown intentionally left untouched: this game currently
-    // only exposes one real option ("Classic (US)") and it's not a real
-    // Win32 combo box to drive programmatically anyway. Revisit if/when
-    // multi-server support is actually needed.
-
-    Sleep(200);
-    SendKey(VK_RETURN);
-    printf("[auto-login] Login submitted via Enter.\n");
+        Sleep(200);
+        SendKey(VK_RETURN);
+        printf("[auto-login] Login submitted via Enter.\n");
+    }  // g_sendInputMutex released -- the completion-wait below doesn't touch shared desktop state
 
     const DWORD waitStart = GetTickCount();
     while (IsWindow(loginWnd) && GetTickCount() - waitStart < timeoutMs)
