@@ -50,9 +50,6 @@ struct LaunchOptions
     std::string m_proxyUser;
     std::string m_proxyPassword;
     uint16_t m_relayPort = 0;
-    bool m_showHelp = false;
-    bool m_noPrompt = false;  // Skip SOCKS5 dialog if true
-    bool m_packetLog = false;
     bool m_killSwitch = true;
 };
 

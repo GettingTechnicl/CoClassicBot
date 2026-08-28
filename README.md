@@ -45,65 +45,33 @@ CMake auto-detects whatever Visual Studio toolset is installed (add `-G "Visual 
 ## Usage
 
 1. Build the solution (see above)
-2. Run `launcher.exe` **as Administrator** (the game itself requires elevation, and the launcher auto-requests it). A character-select dialog appears first:
-   - Pick a saved account to log in automatically, add a new one (label, username, password, server, optional per-account proxy — credentials are DPAPI-encrypted, tied to the current Windows user account, stored in `accounts.dat` next to `launcher.exe`), or skip to fall through to a manual/proxy-only launch.
-   - If an account is selected, the launcher starts the game, injects the DLL, and drives the login screen itself (the login window is custom-rendered with no real Win32 controls, so this is synthetic mouse/keyboard input, not `WM_SETTEXT` — one click on the username field, then Tab/Enter for the rest, deliberately avoiding hardcoded pixel coordinates for anything past that first click) — no manual login needed.
-   - The launcher then supervises the game process. If it crashes, it automatically relaunches and re-logs in with the same account, and any plugin that was enabled before the crash (autohunt, mining, etc.) resumes automatically — this resume-on-relaunch behavior is one-shot and only fires after a crash, never on a fresh manual login.
-   - Skipping the account picker falls back to the previous behavior: inject into a fresh or already-running game process, log in manually, no auto-relaunch.
-3. Press **Insert** to toggle the overlay
+2. Run `launcher.exe` **as Administrator** (the game itself requires elevation, and the launcher auto-requests it). This opens the persistent **CoClassic Account Manager** window — a plain native Win32 window, not part of the in-game overlay. No console windows appear anywhere (neither the launcher's own nor one per game process for the bot log); everything logs to `launcher.log`/`coclassic.log` next to their respective executables instead.
+   - **Add Account** prompts for a label, username, password, server, and optionally a per-account SOCKS5 proxy — credentials are DPAPI-encrypted, tied to the current Windows user account, stored in `accounts.dat` next to `launcher.exe`.
+   - **Login** (per account row) launches the game, injects the DLL, and drives the login screen itself — the login window is custom-rendered with no real Win32 controls, so this is synthetic keyboard input (Tab into the username field, Tab into the password field, Enter), not `WM_SETTEXT`. No manual login needed. The row's status tracks progress live: Launching → Injecting → Logging in... → Running.
+   - **Exit** (replaces Login once an account is running) stops supervising that account and closes its game window — a hard stop, the manager doesn't wait around to confirm the OS has actually finished tearing the process down before reflecting the exit in the UI.
+   - Several accounts can run concurrently, each its own independent game process, started/stopped/managed independently from the same window.
+   - Closing the manager window (the X button) hides it to the system tray rather than exiting — every account keeps running and being supervised in the background. Double-click the tray icon to bring the window back; right-click it for **Exit Manager**, which stops supervising every account (without killing any already-running games) and actually quits the process.
+   - If a game process crashes, that account automatically relaunches and re-logs in, and any plugin that was enabled before the crash (autohunt, mining, etc.) resumes automatically — one-shot, only fires after a crash, never on a fresh login.
+   - If an account gets disconnected in-game (network hiccup, a manual in-game "Disconnect") without the game process itself exiting, the manager notices the login screen reappearing and reconnects in place, no relaunch needed — including dismissing the "connection interrupted" banner that shows up first. Bounded to 5 consecutive failed reconnect attempts before giving up and forcing a full relaunch instead.
+3. Press **Insert** in any game window to toggle its overlay
 
 ### Launcher Networking
 
-The launcher can launch directly, route the game login connection through a SOCKS5 relay, or be used while a system VPN is already connected.
+Each account can launch directly, or route its own game login connection through a SOCKS5 relay — proxy settings (host:port, optional auth) are configured per-account in the Add Account flow and saved with that account's profile. There's no separate global proxy prompt or command-line flags; every account's networking choice is self-contained.
 
-Proxy settings can now be saved per-account in the character-select dialog (prompted when adding a new account). If a saved account with its own proxy settings is selected, those are used directly and the standalone SOCKS5 prompt below is skipped entirely. The prompt only appears when skipping the account picker (or when no accounts are saved yet).
-
-#### Interactive SOCKS5 Prompt
-
-Running `launcher.exe` with no proxy arguments (and no account selected) shows a pre-launch SOCKS5 prompt:
-
-1. Choose whether to use SOCKS5.
-2. Enter proxy `host:port`.
-3. Choose whether username/password authentication is required.
-4. Enter the username and masked password if needed.
-5. Choose whether to enable packet logging.
-6. Choose whether to enable the kill-switch.
-
-If SOCKS5 is selected and setup is cancelled, invalid, or fails the pre-launch connection test, the launcher aborts before launching the game.
-
-Saved SOCKS5 settings are stored next to `launcher.exe` in `socks5_config.txt`. The saved fields are proxy host, port, auth flag, username, packet logging preference, and kill-switch preference. The SOCKS5 password is never saved.
-
-#### SOCKS5 Command Line
-
-```powershell
-launcher.exe --proxy <host:port> [--proxy-user <user>] [--proxy-pass <pass>] [--relay-port <port>] [--target <host:port>] [--packet-log] [--no-kill-switch]
-launcher.exe --no-prompt
-```
-
-| Option | Description |
-|--------|-------------|
-| `--proxy <host:port>` | SOCKS5 proxy server, for example `127.0.0.1:1080` |
-| `--proxy-user <user>` | SOCKS5 username |
-| `--proxy-pass <pass>` | SOCKS5 password |
-| `--relay-port <port>` | Local relay port; defaults to the target server port |
-| `--target <host:port>` | Override the upstream game server endpoint |
-| `--packet-log` | Enables relay packet logging to `relay_packets.log` |
-| `--no-kill-switch` | Disables process termination when a proxied connection fails |
-| `--no-prompt` | Skips the SOCKS5 prompt and launches without proxy unless `--proxy` is provided |
-
-SOCKS5 mode temporarily rewrites the game `servers.json` login target to `127.0.0.1:<relay-port>` while the launched game is running. The launcher restores `servers.json` after launch and keeps the relay alive until the game exits.
-
-Before launching the game, SOCKS5 mode tests:
+Before launching a proxied account, the launcher tests the tunnel:
 
 ```text
 local launcher -> SOCKS5 proxy -> game login server
 ```
 
-If the test fails, the game is not launched. For example, PIA SOCKS5 may authenticate successfully but return `host unreachable` for `login.conqueronline.net:9959`; that means PIA accepted the credentials but its SOCKS5 endpoint could not reach the game server/port.
+If the test fails, that account's game is not launched. For example, PIA SOCKS5 may authenticate successfully but return `host unreachable` for `login.conqueronline.net:9959`; that means PIA accepted the credentials but its SOCKS5 endpoint could not reach the game server/port.
 
-Packet logging is off by default because `relay_packets.log` can contain sensitive traffic. Enable it only while debugging.
+SOCKS5 mode temporarily rewrites the game's `servers.json` login target to `127.0.0.1:<relay-port>` for the duration of that account's session, and restores it once the relay stops. Concurrent proxy-mode launches from different accounts are serialized around this rewrite (a short critical section spanning patch → launch → the new game process having had a chance to read its config) so two accounts starting in proxy mode at the same time can't clobber each other's rewrite of the same shared file.
 
-The kill-switch is on by default. If a SOCKS5 tunnel was established and then the proxied connection closes while the game process is still running, the launcher terminates the game process instead of allowing continued play after a proxy failure.
+The kill-switch is on by default: if a SOCKS5 tunnel was established and the proxied connection then closes while that account's game process is still running, the launcher terminates that process instead of allowing continued play after a proxy failure.
+
+> **Note:** proxy-mode accounts are implemented (unchanged mechanism from the previous CLI-driven flow, just triggered per-account from Add Account instead) but not yet live-verified end-to-end through the current manager — the maintainer doesn't use SOCKS5.
 
 #### Using a VPN Instead of SOCKS5
 
@@ -111,8 +79,7 @@ A full VPN such as PIA VPN is managed by Windows and the VPN client, not by the 
 
 1. Connect the VPN first.
 2. Verify your public IP changed.
-3. Run `launcher.exe`.
-4. Choose **No** in the SOCKS5 prompt, or run `launcher.exe --no-prompt`.
+3. Add the account without enabling its SOCKS5 proxy option, and click Login normally.
 
 In VPN mode the game connects normally through the system network stack. The launcher does not currently verify VPN state or force traffic through a specific VPN adapter.
 
@@ -177,10 +144,11 @@ coclassic/
 │       ├── plugin.h         # IPlugin interface
 │       ├── plugin_mgr.cpp/h # Plugin manager singleton
 │       └── *_plugin.cpp/h   # Individual plugins
-├── injector/               # Standalone launcher executable
-│   ├── main.cpp             # Entry point, account picker, proxy/relay, crash-recovery supervision loop
+├── injector/               # Standalone launcher/account-manager executable
+│   ├── main.cpp             # WinMain, persistent account-manager GUI window, proxy/relay, per-account supervision loop
+│   ├── account_session.h    # AccountSession — per-account runtime state, one worker thread per running account
 │   ├── credentials.cpp/h    # DPAPI-encrypted multi-account credential store (accounts.dat)
-│   ├── auto_login.cpp/h     # Tab/Enter-driven login automation
+│   ├── auto_login.cpp/h     # Tab/Enter-driven login automation (initial login + in-place reconnect after a disconnect)
 │   └── launcher.vcxproj     # VS project for this executable (kept in sync with CMakeLists.txt by hand, see Build Notes)
 ├── tests/                  # Unit tests
 │   └── map_tests.cpp
@@ -256,6 +224,7 @@ System libraries: `d3d11.lib`, `dxgi.lib`, `d3dcompiler.lib`, `winhttp.lib`, `ws
 - **Some `gateway.cpp` map-ID constants are unverified against current game data** — e.g. `MAP_APE_MOUNTAIN` resolves to a map the game's own data labels "Bird Island," and at least one real hunt-zone map has no gateway routes to/from it at all, so automated travel to it fails outright (this fails safely — the bot disables hunting after repeated failures rather than looping or freezing — but doesn't fix the underlying routing gap).
 - **Treasure Bank / Compose Bank NPC deposits are not confirmed working.** The client never confirms these bank windows actually opened server-side (unlike the Warehouse NPC flow, which sends 2 additional confirmation packets these two don't); the bot now gives up cleanly after a few failed attempts instead of the game freezing, but the deposits themselves may not be completing.
 - **Player Safety / Paranoia Mode have no visibility into another player's facing or camera** — there is no such field readable anywhere on `CRole`/`CHero`. Both features are positioning/distance-based only.
+- **Reconnecting after an in-game disconnect occasionally fails login with correct, unchanged credentials**, resolved only by manually retyping part of the username — not every time, hard to reproduce on demand. Ruled out: garbled/dropped characters (visually and independently verified correct) and a stale pre-filled username field (the field does select-all on focus). Root cause unconfirmed; would need live memory instrumentation of the login form to pin down further.
 
 ## Limitations
 Nothing is currently omitted from the source — the plugin list above and `PluginManager::Init()` reflect what actually builds and runs.
