@@ -2721,6 +2721,36 @@ void BaseHuntPlugin::RenderSafetySection()
 void BaseHuntPlugin::RenderAdvancedSection()
 {
     AutoHuntSettings& settings = GetAutoHuntSettings();
+
+    // Session 13 [RESET TO DEFAULTS]: right-aligned so it reads as a
+    // corrective action for the slider block below, not a step in the normal
+    // top-to-bottom flow. Copies from a default-constructed AutoHuntSettings{}
+    // rather than repeating the 14 numbers here — see the [SHIPPED DEFAULTS]
+    // comment on the struct fields (hunt_settings.h) for what they are and why.
+    {
+        const char* kResetLabel = "Reset to Defaults";
+        const float buttonWidth = ImGui::CalcTextSize(kResetLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - buttonWidth);
+        if (ImGui::Button(kResetLabel)) {
+            const AutoHuntSettings defaults{};
+            settings.movementIntervalMs = defaults.movementIntervalMs;
+            settings.attackIntervalMs = defaults.attackIntervalMs;
+            settings.cycloneAttackIntervalMs = defaults.cycloneAttackIntervalMs;
+            settings.targetSwitchAttackIntervalMs = defaults.targetSwitchAttackIntervalMs;
+            settings.itemActionIntervalMs = defaults.itemActionIntervalMs;
+            settings.selfCastIntervalMs = defaults.selfCastIntervalMs;
+            settings.npcActionIntervalMs = defaults.npcActionIntervalMs;
+            settings.reviveDelayMs = defaults.reviveDelayMs;
+            settings.reviveRetryIntervalMs = defaults.reviveRetryIntervalMs;
+            settings.monsterSpawnGraceMs = defaults.monsterSpawnGraceMs;
+            settings.entityScanIntervalMs = defaults.entityScanIntervalMs;
+            settings.itemPickupDelayMs = defaults.itemPickupDelayMs;
+            settings.decisionThrottleMs = defaults.decisionThrottleMs;
+            settings.randomWalkIntervalMs = defaults.randomWalkIntervalMs;
+        }
+        HelpMarkerOnSameLine("Resets only the sliders on this Advanced tab back to their shipped defaults.");
+    }
+
     ImGui::TextDisabled("Advanced: only change these if actions are too fast or too slow.");
     ImGui::SliderInt("Movement Interval (ms)", &settings.movementIntervalMs, kMinMovementIntervalMs, kMaxMovementIntervalMs);
     ImGui::SliderInt("Attack Interval (ms)", &settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs);

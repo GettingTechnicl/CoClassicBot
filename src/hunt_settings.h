@@ -173,46 +173,56 @@ struct AutoHuntSettings
     int rangedAttackRange = 0;
     int archerSafetyDistance = 0;
     int lootRange = 5;
-    int movementIntervalMs = 900;
-    int attackIntervalMs = 300;
-    int cycloneAttackIntervalMs = 100;
-    int targetSwitchAttackIntervalMs = 75;
-    int itemActionIntervalMs = 700;
+    // Session 13 [SHIPPED DEFAULTS]: the 14 Advanced-tab sliders below were
+    // switched from their original placeholder values to the user's own
+    // hand-tuned human-speed settings — reached through many live-tested
+    // iterations across this whole hunting-logic saga (see
+    // [[coclassicbot-project-status]]) and confirmed to produce clean,
+    // human-plausible pathing with no dead time. These are now what a fresh
+    // install ships with; RenderAdvancedSection's "Reset to Defaults" button
+    // restores exactly these values by copying from a default-constructed
+    // AutoHuntSettings{}, so this struct stays the single source of truth —
+    // never hardcode these numbers a second time at the reset call site.
+    int movementIntervalMs = 893;
+    int attackIntervalMs = 246;
+    int cycloneAttackIntervalMs = 25;
+    int targetSwitchAttackIntervalMs = 270;
+    int itemActionIntervalMs = 100;
     int lootSpawnGraceMs = 1000;
     // Session 11: same idea as lootSpawnGraceMs but for monster targets — a
     // monster that just spawned (e.g. the rest of a clump was killed and one
     // more spawns in mid-animation) can get the bot stuck repeatedly trying
     // to attack a target that isn't actually engageable yet. 0 = off.
-    int monsterSpawnGraceMs = 0;
+    int monsterSpawnGraceMs = 441;
     // Session 10: how long the background heap scanners (entities.h, map_items.h)
     // cache their results before rescanning. Exposed as a slider mainly so the
     // Themida-anti-tamper crash hypothesis can be tested live (slow the scan
     // way down, see if crash frequency changes) without a rebuild.
-    int entityScanIntervalMs = 500;
+    int entityScanIntervalMs = 607;
     // How long the hero must stand on an item's tile (dist == 0) before the
     // FIRST pickup attempt fires. 0 preserves the original behaviour (attempt
     // immediately). Distinct from itemActionIntervalMs, which only throttles
     // RETRIES after a first attempt has already been made.
-    int itemPickupDelayMs = 0;
+    int itemPickupDelayMs = 86;
     // Session 10: caps how often BaseHuntPlugin::Update()'s heavy decision
     // section (target/loot scanning, pathfinding requests, state machine) runs.
     // Discovered running unthrottled at the render frame rate (~150Hz) with
     // sustained memory growth over long sessions — this is the lever to test
     // whether that hot loop is the leak source. 0 = unthrottled (old behavior).
-    int decisionThrottleMs = 50;
+    int decisionThrottleMs = 416;
     // Session 10: periodically walk a short random hop instead of the usual
     // jump, purely to exercise the walk code path regularly during real
     // autohunt use (rather than only when a target happens to end up 1-2
     // tiles away) — both for its own sake and as a controllable-frequency
     // stress test for the still-open memory leak investigation (down to 50ms
     // = ~20 real actions/sec). 0 disables it entirely.
-    int randomWalkIntervalMs = 0;
-    int selfCastIntervalMs = 1000;
-    int npcActionIntervalMs = 400;
+    int randomWalkIntervalMs = 5556;
+    int selfCastIntervalMs = 100;
+    int npcActionIntervalMs = 100;
     int lootPickupIgnoreMs = 30000;
     int manualControlPauseMs = 3000;
-    int reviveDelayMs = 20000;
-    int reviveRetryIntervalMs = 1000;
+    int reviveDelayMs = 0;
+    int reviveRetryIntervalMs = 100;
     int minimumLootPlus = 0;
     int minimumStorePlus = 0;
     // ── Phase 2a: gold-value floor for ground-item pickup ─────────────────
