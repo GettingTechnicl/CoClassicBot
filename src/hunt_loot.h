@@ -33,7 +33,9 @@ public:
         std::function<bool(DWORD)> updatePendingJumpFn);
 
     // ── Pickup-attempt tracking ───────────────────────────────────────────────
-    bool IsLootPickupIgnored(OBJID itemId, DWORD now) const;
+    // Non-const: promotes confirmed ghosts (see LootPickupAttemptState) so the
+    // one-time promotion log fires exactly once per item.
+    bool IsLootPickupIgnored(OBJID itemId, DWORD now);
     void RecordLootPickupAttempt(OBJID itemId, DWORD now,
         const AutoHuntSettings& settings);
     void PruneLootPickupAttempts(CGameMap* map);
@@ -62,6 +64,17 @@ private:
     struct LootPickupAttemptState {
         uint8_t attempts       = 0;
         DWORD   ignoreUntilTick = 0;
+        // Session 13 [GHOST LOOT FIX]: tick of the first pickup packet sent
+        // while standing EXACTLY on the item's tile with bag space free. A
+        // real item vanishes within one server round trip of that; one still
+        // alive kLootGhostConfirmMs later is a stale heap-scan entry the
+        // server no longer knows about ("ghost") — 60% of FindBestLoot
+        // selections in the live 2026-08-29 session were the bot standing on
+        // such ghosts re-picking them forever, because the timed ignore
+        // expired and reset. Ghosts are ignored for as long as the stale
+        // entry stays in our list (pruned with it in PruneLootPickupAttempts).
+        DWORD   firstOnTileSendTick = 0;
+        bool    ghostLogged = false;
     };
 
     std::unordered_map<OBJID, LootPickupAttemptState> m_lootPickupAttempts;

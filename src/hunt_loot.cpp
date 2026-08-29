@@ -16,6 +16,11 @@
 
 // ── File-local constants ──────────────────────────────────────────────────────
 static constexpr int   kLootPickupAttemptLimit   = 2;
+// Session 13 [GHOST LOOT FIX]: how long an item may survive an exact-on-tile
+// pickup packet before it's declared a ghost (stale heap-scan entry) and
+// ignored for the rest of its client-side lifetime. Real pickups resolve in
+// one server round trip — well under a second even on a bad connection.
+static constexpr DWORD kLootGhostConfirmMs       = 1500;
 static constexpr DWORD kLootTargetSwitchIntervalMs = 100;
 
 static constexpr int kMinLootPickupIgnoreMs = 0;
@@ -93,7 +98,7 @@ CMapItem* HuntLootManager::FindBestLoot(
     const DWORD spawnGraceMs = GetLootSpawnGraceMs(settings);
     CMapItem* best = nullptr;
     float bestDist = (std::numeric_limits<float>::max)();
-    int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0;
+    int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0, skippedOutOfRange = 0;
 
     // True if this is a money drop we actually want (lootMoney on AND at/above
     // the configured minimum tier) — reused below since both the gold-value
@@ -144,6 +149,26 @@ CMapItem* HuntLootManager::FindBestLoot(
         }
 
         const float dist = hero->m_posMap.DistanceTo(itemRef->m_pos);
+
+        // Session 13 [LOOT RANGE FIX]: "Loot Range" was only ever applied to
+        // the PICKUP check (IsWithinLootPickupRange, base_hunt_plugin.cpp) —
+        // never here, when the item is SELECTED. So with Loot Range 6 this
+        // still happily picked an item 41 tiles away, and the hunt loop then
+        // committed to a cross-map loot run for it, abandoning combat.
+        // Live-traced: the bot chain-jumped to items 41 -> 24 -> 47 -> 30
+        // tiles out, item to item, barely attacking at all — which is what
+        // made loot-enabled runs collapse to a fraction of the kill rate of
+        // loot-disabled ones. Priority items (meteor/dragonball/+gear) keep
+        // their deliberate "go get it from anywhere" exemption, matching
+        // IsWithinLootPickupRange's own carve-out.
+        const int lootRange = std::clamp(settings.lootRange, 0, (int)CGameMap::MAX_JUMP_DIST);
+        if (lootRange > 0
+            && dist > (float)lootRange
+            && !HuntTownService::IsPriorityLootItem(*itemRef)) {
+            ++skippedOutOfRange;
+            continue;
+        }
+
         if (dist < bestDist) {
             bestDist = dist;
             best = itemRef;
@@ -151,20 +176,38 @@ CMapItem* HuntLootManager::FindBestLoot(
     }
 
     if (best) {
-        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} notOurDrop={}",
+        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} notOurDrop={} outOfRange={}",
             best->m_id, best->m_idType, best->m_pos.x, best->m_pos.y, bestDist,
-            totalItems, skippedFilter, skippedIgnored, skippedZone, skippedSpawnGrace, skippedNotOurDrop);
+            totalItems, skippedFilter, skippedIgnored, skippedZone, skippedSpawnGrace, skippedNotOurDrop,
+            skippedOutOfRange);
     }
 
     return best;
 }
 
-bool HuntLootManager::IsLootPickupIgnored(OBJID itemId, DWORD now) const
+bool HuntLootManager::IsLootPickupIgnored(OBJID itemId, DWORD now)
 {
     const auto it = m_lootPickupAttempts.find(itemId);
     if (it == m_lootPickupAttempts.end())
         return false;
-    return TickIsFuture(it->second.ignoreUntilTick, now);
+
+    // Ghost check (see LootPickupAttemptState): an item still alive this long
+    // after an on-tile pickup packet is a stale entry — ignore it until it
+    // finally drops out of the scan list (PruneLootPickupAttempts erases this
+    // record with it). Unlike ignoreUntilTick this never expires, which is
+    // the point: the timed ignore is what let ghosts cycle back forever.
+    LootPickupAttemptState& state = it->second;
+    if (state.firstOnTileSendTick != 0
+        && now - state.firstOnTileSendTick > kLootGhostConfirmMs) {
+        if (!state.ghostLogged) {
+            state.ghostLogged = true;
+            spdlog::info("[hunt-loot] Item id={} confirmed GHOST (alive {}ms after on-tile pickup) — ignored until it despawns",
+                itemId, now - state.firstOnTileSendTick);
+        }
+        return true;
+    }
+
+    return TickIsFuture(state.ignoreUntilTick, now);
 }
 
 void HuntLootManager::RecordLootPickupAttempt(OBJID itemId, DWORD now,
@@ -340,6 +383,15 @@ bool HuntLootManager::TryPickupLootItem(CHero* hero, const AutoHuntSettings& set
     m_lastLootTick   = now;
     m_lastLootItemId = item->m_id;
     RecordLootPickupAttempt(item->m_id, now, settings);
+    // Arm the ghost timer (see LootPickupAttemptState): dist==0 is guaranteed
+    // here by the not_on_tile check above. Skipped when the bag is full — a
+    // full bag makes a REAL item fail pickup too, and we don't want to brand
+    // it a ghost over that.
+    if (!hero->IsBagFull()) {
+        LootPickupAttemptState& ghostState = m_lootPickupAttempts[item->m_id];
+        if (ghostState.firstOnTileSendTick == 0)
+            ghostState.firstOnTileSendTick = now;
+    }
     spdlog::trace("[hunt-loot] PickupItem id={} type={} pos=({},{}) sent_on_tile",
         item->m_id, item->m_idType, item->m_pos.x, item->m_pos.y);
     return true;
