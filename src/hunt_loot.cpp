@@ -20,7 +20,14 @@ static constexpr int   kLootPickupAttemptLimit   = 2;
 // pickup packet before it's declared a ghost (stale heap-scan entry) and
 // ignored for the rest of its client-side lifetime. Real pickups resolve in
 // one server round trip — well under a second even on a bad connection.
-static constexpr DWORD kLootGhostConfirmMs       = 1500;
+static constexpr DWORD kLootGhostConfirmMs       = 800;
+// Session 13 [STALE LOOT SKIP]: real drops despawn server-side within a minute
+// or two — an item still in our heap-scan list this long after we FIRST saw it
+// is stale (or another player's protected drop we can't take either way), so
+// FindBestLoot skips it without ever walking there. Before this, every ghost
+// cost a trip: the bot had to jump to it, stand on it, and fail a pickup
+// before the ghost blacklist could catch it (~190 ghost-trips per session).
+static constexpr DWORD kLootStaleMaxAgeMs        = 180000;
 static constexpr DWORD kLootTargetSwitchIntervalMs = 100;
 
 static constexpr int kMinLootPickupIgnoreMs = 0;
@@ -106,7 +113,7 @@ CMapItem* HuntLootManager::FindBestLoot(
     const DWORD spawnGraceMs = GetLootSpawnGraceMs(settings);
     CMapItem* best = nullptr;
     float bestDist = (std::numeric_limits<float>::max)();
-    int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0, skippedOutOfRange = 0, skippedBagFull = 0;
+    int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0, skippedOutOfRange = 0, skippedBagFull = 0, skippedStale = 0;
 
     // True if this is a money drop we actually want (lootMoney on AND at/above
     // the configured minimum tier) — reused below since both the gold-value
@@ -130,6 +137,8 @@ CMapItem* HuntLootManager::FindBestLoot(
         const auto seenResult = m_lootSeenTicks.try_emplace(itemRef->m_id, now);
         const DWORD seenAge = now - seenResult.first->second;
         if (seenAge < spawnGraceMs) { ++skippedSpawnGrace; continue; }
+        // Stale skip (see kLootStaleMaxAgeMs): too old to still be real.
+        if (seenAge > kLootStaleMaxAgeMs) { ++skippedStale; continue; }
         if (isLootPickupIgnoredFn && isLootPickupIgnoredFn(itemRef->m_id, now)) { ++skippedIgnored; continue; }
         if (isPointInZoneFn && !isPointInZoneFn(Game::GetCurrentMapId(), itemRef->m_pos)) { ++skippedZone; continue; }
 
@@ -186,10 +195,10 @@ CMapItem* HuntLootManager::FindBestLoot(
     }
 
     if (best) {
-        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} notOurDrop={} outOfRange={} bagFullSkip={}",
+        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} notOurDrop={} outOfRange={} bagFullSkip={} stale={}",
             best->m_id, best->m_idType, best->m_pos.x, best->m_pos.y, bestDist,
             totalItems, skippedFilter, skippedIgnored, skippedZone, skippedSpawnGrace, skippedNotOurDrop,
-            skippedOutOfRange, skippedBagFull);
+            skippedOutOfRange, skippedBagFull, skippedStale);
     }
 
     return best;
