@@ -248,15 +248,28 @@ int HuntTownService::GetMoneyTier(const CMapItem& item)
 
 bool HuntTownService::IsPriorityLootItem(const CMapItem& item)
 {
-    // Money is never a detour-priority item. CMapItem::GetPlus() reads a raw
-    // info-struct byte (+0x48) that only means "plus level" on equipment — on
-    // money piles it holds unrelated data and reads nonzero, which made every
-    // gold pile "priority", bypassing the Loot Range gate: live session showed
-    // the bot chain-jumping to gold 33-59 tiles out (Loot Range 6) while its
-    // kill counter sat frozen for 13 straight seconds.
-    if (GetMoneyTier(item) >= 0)
-        return false;
-    if (item.GetPlus() > 0)
+    // CMapItem::GetPlus() reads a raw info-struct byte (+0x48) that only
+    // means "plus level" on actual wearable equipment — on money piles it
+    // holds unrelated data and reads nonzero, which made every gold pile
+    // "priority", bypassing the Loot Range gate: live session showed the bot
+    // chain-jumping to gold 33-59 tiles out (Loot Range 6) while its kill
+    // counter sat frozen for 13 straight seconds (fixed for money
+    // specifically in commit 85fa61d).
+    //
+    // Session 13 [PLUS-CHECK SCOPE FIX]: money isn't the only case — it just
+    // happens to share the EXPEND item-sort group with ordinary consumables/
+    // materials, which have the exact same unreliable-byte problem. Scoped
+    // the plus-check itself to equipment sorts only (the same
+    // IsEquipmentQualitySort test ShouldLootMapItem's plus-check uses, see
+    // hunt_loot.cpp's caller) — a random potion/material reading
+    // garbage-nonzero at that offset could otherwise trigger the full "stop
+    // everything, ignore Loot Range, ignore combat" priority behavior for
+    // something that was never actually plussed. Deliberately NOT an
+    // early-return for the whole function: DragonBalls/Meteors are
+    // themselves classified in the EXPEND/MOUNT sort groups by GetItemSort
+    // (not equipment), so gating the function on equipment-sort would have
+    // broken their own priority check just below.
+    if (IsEquipmentQualitySort(GetItemSort(item.m_idType)) && item.GetPlus() > 0)
         return true;
     // Base DragonBall/Meteor/MeteorTear trio (contiguous IDs) plus the
     // separately-numbered star-tiered/Epic DragonBalls — CItem::IsTreasureItem()
@@ -286,7 +299,23 @@ bool HuntTownService::ShouldLootMapItem(const AutoHuntSettings& settings, const 
         return true;
     if (MatchesSelectedLootQuality(settings, item))
         return true;
-    return settings.minimumLootPlus > 0 && item.GetPlus() >= settings.minimumLootPlus;
+    // Session 13 [PLUS-CHECK SCOPE FIX]: CMapItem::GetPlus() reads a raw
+    // info-struct byte (+0x48) that only means "plus level" on actual
+    // wearable equipment. We already proved this offset reads unrelated
+    // garbage for money (IsPriorityLootItem's money exclusion, commit
+    // 85fa61d) — money and ordinary consumables/materials share the same
+    // EXPEND item-sort group, and this check had no such guard: live log
+    // showed an EXPEND-type item (type=1000020, plain consumable) picked up
+    // as "plussed" alongside genuine +N helmets/rings/weapons/armor, even
+    // though minimumLootPlus is set intentionally (per the user: "every
+    // piece of equipment... can be +1 all the way up to +8... I want the
+    // bot to pick those up" — the setting was correct, GetPlus() just isn't
+    // meaningful outside equipment slots). Scoped to the same
+    // IsEquipmentQualitySort check MatchesSelectedLootQuality above already
+    // uses, so "plus" now only ever means a real gear enchantment.
+    return settings.minimumLootPlus > 0
+        && IsEquipmentQualitySort(GetItemSort(item.m_idType))
+        && item.GetPlus() >= settings.minimumLootPlus;
 }
 
 bool HuntTownService::CanAffordArrowPurchase(const CHero* hero)
