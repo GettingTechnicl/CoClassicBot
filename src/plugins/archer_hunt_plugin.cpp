@@ -1062,8 +1062,35 @@ bool ArcherHuntPlugin::HandleNoTargetIdle(CHero* hero, CGameMap* map, const Auto
         return true;
     }
 
+    // Session 13 [PATROL COMMIT + HEATMAP]: finish walking to the committed
+    // patrol destination before picking a new one (see m_patrolCommitPos), and
+    // pick destinations with the SpawnMemory-weighted explorer instead of the
+    // blind compass sweep — patrol had never consulted the heatmap, so in a
+    // farmed-down zone it zigzagged over empty ground instead of sweeping the
+    // spots monsters actually respawn. The compass sweep remains the fallback
+    // for maps with no heatmap data yet (FindZoneExplorePosition still returns
+    // a uniform sample there, so this mostly matters for the commit).
+    const DWORD nowTick = GetTickCount();
+    constexpr DWORD kPatrolCommitMs = 8000;
+    const Position heroPos = GetEffectiveHeroPosition(hero);
+    const bool commitActive = !IsZeroPos(m_patrolCommitPos)
+        && (nowTick - m_patrolCommitTick) < kPatrolCommitMs
+        && CGameMap::TileDist(heroPos.x, heroPos.y, m_patrolCommitPos.x, m_patrolCommitPos.y) > 3;
+    if (commitActive) {
+        if (Pathfinder::Get().IsActive() || StartPathTo(hero, map, m_patrolCommitPos, 0)) {
+            m_targetId = 0;
+            SetState(AutoHuntState::AcquireTarget, "Scouting hunt zone for mob clumps");
+            return true;
+        }
+        m_patrolCommitPos = {};  // unreachable — drop it and pick fresh below
+    }
+
     Position patrolPos = {};
-    if (FindArcherPatrolPosition(hero, map, settings, patrolPos) && StartPathTo(hero, map, patrolPos, 0)) {
+    const bool found = FindZoneExplorePosition(hero, map, settings, patrolPos)
+        || FindArcherPatrolPosition(hero, map, settings, patrolPos);
+    if (found && StartPathTo(hero, map, patrolPos, 0)) {
+        m_patrolCommitPos = patrolPos;
+        m_patrolCommitTick = nowTick;
         m_targetId = 0;
         SetState(AutoHuntState::AcquireTarget, "Scouting hunt zone for mob clumps");
         return true;

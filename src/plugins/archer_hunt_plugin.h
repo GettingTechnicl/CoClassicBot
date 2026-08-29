@@ -78,6 +78,14 @@ private:
     // Cycles the patrol band so idle movement drifts inward and outward
     // instead of tracing the zone rim. See FindArcherPatrolPosition.
     mutable int   m_patrolDriftPhase = 0;
+    // Session 13 [PATROL COMMIT]: current patrol destination, held until
+    // reached or expired. Without this, every no-target tick picked a FRESH
+    // patrol point (the compass direction and radius band both rotate per
+    // call), so consecutive short paths swung wildly — live trace showed an
+    // 18-tile jump west immediately followed by 17 tiles back east, zero net
+    // progress, during a 15s dead window in a sparse zone.
+    Position m_patrolCommitPos = {};
+    DWORD    m_patrolCommitTick = 0;
     Position m_lastFailedRetreatDest = {};
     DWORD m_lastFailedRetreatTick = 0;
     DWORD m_retreatCooldownTick = 0;
