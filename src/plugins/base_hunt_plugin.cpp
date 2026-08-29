@@ -341,6 +341,14 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
         return false;
 
     const Position heroPos = hero->m_posMap;
+    const DWORD now = GetTickCount();
+
+    // Prune expired tabu entries (see m_recentExploreDests) so the list stays
+    // a handful of live entries rather than growing all session.
+    m_recentExploreDests.erase(
+        std::remove_if(m_recentExploreDests.begin(), m_recentExploreDests.end(),
+            [now](const auto& e) { return now - e.second >= 20000; }),
+        m_recentExploreDests.end());
 
     // Sample points inside the zone and take the first walkable one that is a
     // meaningful distance away — near-identical destinations would leave the
@@ -450,6 +458,24 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
             continue;
         if (CGameMap::TileDist(heroPos.x, heroPos.y, candidate.x, candidate.y) < minTravel)
             continue;
+        // Explore tabu (see m_recentExploreDests): skip spots visited within
+        // the last 20s so consecutive picks sweep NEW ground instead of
+        // ping-ponging between the two hottest buckets. Paranoia evasion is
+        // exempt — fleeing back through a recent spot is fine.
+        if (!paranoiaEvading) {
+            constexpr DWORD kExploreTabuMs = 20000;
+            constexpr int kExploreTabuRadius = 10;
+            bool tabu = false;
+            for (const auto& [pos, tick] : m_recentExploreDests) {
+                if (now - tick < kExploreTabuMs
+                    && CGameMap::TileDist(pos.x, pos.y, candidate.x, candidate.y) <= kExploreTabuRadius) {
+                    tabu = true;
+                    break;
+                }
+            }
+            if (tabu)
+                continue;
+        }
 
         // Session 13 [Paranoia camping-detection]: don't let the bot walk
         // onto a bucket another player has been camping — distinct from
@@ -510,6 +536,7 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
 
     if (exploring && worstScore < (std::numeric_limits<float>::max)() && !IsZeroPos(worstScored)) {
         out = JitterDestination(map, worstScored, GetJitterRadius(settings));
+        m_recentExploreDests.emplace_back(out, now);
         spdlog::trace("[hunt] Explore (exploration roll) -> ({},{}) spawnScore={:.1f}/{:.1f}",
                       out.x, out.y, worstScore, maxScore);
         return true;
@@ -517,6 +544,7 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
 
     if (useHeatmap && bestScore >= 0.0f && !IsZeroPos(bestScored)) {
         out = JitterDestination(map, bestScored, GetJitterRadius(settings));
+        m_recentExploreDests.emplace_back(out, now);
         spdlog::trace("[hunt] Explore -> ({},{}) spawnScore={:.1f}/{:.1f}",
                       out.x, out.y, bestScore, maxScore);
         return true;

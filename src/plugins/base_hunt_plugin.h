@@ -230,6 +230,13 @@ protected:
     DWORD m_lastMoveTick = 0;
     DWORD m_manualControlPauseUntilTick = 0;
 
+    // Session 13 [EXPLORE TABU]: explore destinations visited recently, so
+    // the exploit pick can't oscillate between the map's two hottest buckets
+    // (live: arrive at A -> A excluded by minTravel -> hottest remaining is B,
+    // 25 tiles away -> arrive at B -> A hottest again -> ping-pong every
+    // ~370ms, never pausing long enough to actually engage anything).
+    mutable std::vector<std::pair<Position, DWORD>> m_recentExploreDests;
+
     Position m_pendingJumpDest = {};
     DWORD m_pendingJumpTick = 0;
     Position m_pendingJumpLastPos = {};

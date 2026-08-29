@@ -1072,7 +1072,26 @@ bool ArcherHuntPlugin::HandleNoTargetIdle(CHero* hero, CGameMap* map, const Auto
     // a uniform sample there, so this mostly matters for the commit).
     const DWORD nowTick = GetTickCount();
     constexpr DWORD kPatrolCommitMs = 8000;
+    // Session 13 [ARRIVAL DWELL]: on reaching a scouting destination, hold
+    // ~1s (2-3 entity scans) before picking the next one. Without this the
+    // bot re-picked the INSTANT it landed — before the scan could even show
+    // it what was standing nearby — and oscillated between hot spots at
+    // full sprint, "running all over the place before it starts attacking".
+    // Combat still interrupts instantly: this only runs when no target is
+    // visible, and a mob appearing mid-dwell wins the next tick.
+    constexpr DWORD kPatrolDwellMs = 1000;
     const Position heroPos = GetEffectiveHeroPosition(hero);
+    if (!IsZeroPos(m_patrolCommitPos)
+        && CGameMap::TileDist(heroPos.x, heroPos.y, m_patrolCommitPos.x, m_patrolCommitPos.y) <= 3) {
+        // Arrived — clear the commitment and look around before moving on.
+        m_patrolCommitPos = {};
+        m_patrolDwellUntilTick = nowTick + kPatrolDwellMs;
+    }
+    if (TickIsFuture(m_patrolDwellUntilTick, nowTick)) {
+        m_targetId = 0;
+        SetState(AutoHuntState::AcquireTarget, "Scouting hunt zone for mob clumps");
+        return true;
+    }
     const bool commitActive = !IsZeroPos(m_patrolCommitPos)
         && (nowTick - m_patrolCommitTick) < kPatrolCommitMs
         && CGameMap::TileDist(heroPos.x, heroPos.y, m_patrolCommitPos.x, m_patrolCommitPos.y) > 3;

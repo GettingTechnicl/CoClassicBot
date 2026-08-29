@@ -86,6 +86,9 @@ private:
     // progress, during a 15s dead window in a sparse zone.
     Position m_patrolCommitPos = {};
     DWORD    m_patrolCommitTick = 0;
+    // Hold-and-look window after arriving at a patrol destination — see the
+    // [ARRIVAL DWELL] comment in HandleNoTargetIdle.
+    DWORD    m_patrolDwellUntilTick = 0;
     Position m_lastFailedRetreatDest = {};
     DWORD m_lastFailedRetreatTick = 0;
     DWORD m_retreatCooldownTick = 0;
