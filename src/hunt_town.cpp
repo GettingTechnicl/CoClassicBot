@@ -248,6 +248,14 @@ int HuntTownService::GetMoneyTier(const CMapItem& item)
 
 bool HuntTownService::IsPriorityLootItem(const CMapItem& item)
 {
+    // Money is never a detour-priority item. CMapItem::GetPlus() reads a raw
+    // info-struct byte (+0x48) that only means "plus level" on equipment — on
+    // money piles it holds unrelated data and reads nonzero, which made every
+    // gold pile "priority", bypassing the Loot Range gate: live session showed
+    // the bot chain-jumping to gold 33-59 tiles out (Loot Range 6) while its
+    // kill counter sat frozen for 13 straight seconds.
+    if (GetMoneyTier(item) >= 0)
+        return false;
     if (item.GetPlus() > 0)
         return true;
     // Base DragonBall/Meteor/MeteorTear trio (contiguous IDs) plus the
