@@ -89,8 +89,16 @@ CMapItem* HuntLootManager::FindBestLoot(
     std::function<bool(OBJID mapId, const Position&)> isPointInZoneFn) const
 {
     if (!hero || !map) return nullptr;
-    if (hero->IsBagFull()) {
-        spdlog::trace("[hunt-loot] FindBestLoot: bag full, skip");
+    // Session 13 [BAG-FULL MONEY FIX]: a full bag used to skip ALL loot here —
+    // including money, which goes straight to the silver counter and never
+    // occupies a bag slot. Live session: bag sat at 40/40 for three straight
+    // minutes (autoStore and trash-drop both off) and the bot walked over
+    // every gold pile without picking any up. Full bag now degrades to
+    // money-only looting instead of none; it only fully skips when money
+    // looting is off too (nothing could match).
+    const bool bagFull = hero->IsBagFull();
+    if (bagFull && !settings.lootMoney) {
+        spdlog::trace("[hunt-loot] FindBestLoot: bag full (money loot off), skip");
         return nullptr;
     }
 
@@ -98,7 +106,7 @@ CMapItem* HuntLootManager::FindBestLoot(
     const DWORD spawnGraceMs = GetLootSpawnGraceMs(settings);
     CMapItem* best = nullptr;
     float bestDist = (std::numeric_limits<float>::max)();
-    int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0, skippedOutOfRange = 0;
+    int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0, skippedOutOfRange = 0, skippedBagFull = 0;
 
     // True if this is a money drop we actually want (lootMoney on AND at/above
     // the configured minimum tier) — reused below since both the gold-value
@@ -117,6 +125,8 @@ CMapItem* HuntLootManager::FindBestLoot(
         // pointers into the game's own heap, freeable at any moment).
         if (!MapItems::IsAlive(itemRef)) continue;
         ++totalItems;
+        // Bag-full money-only mode (see the bagFull comment above).
+        if (bagFull && !isWantedMoney(*itemRef)) { ++skippedBagFull; continue; }
         const auto seenResult = m_lootSeenTicks.try_emplace(itemRef->m_id, now);
         const DWORD seenAge = now - seenResult.first->second;
         if (seenAge < spawnGraceMs) { ++skippedSpawnGrace; continue; }
@@ -176,10 +186,10 @@ CMapItem* HuntLootManager::FindBestLoot(
     }
 
     if (best) {
-        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} notOurDrop={} outOfRange={}",
+        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} notOurDrop={} outOfRange={} bagFullSkip={}",
             best->m_id, best->m_idType, best->m_pos.x, best->m_pos.y, bestDist,
             totalItems, skippedFilter, skippedIgnored, skippedZone, skippedSpawnGrace, skippedNotOurDrop,
-            skippedOutOfRange);
+            skippedOutOfRange, skippedBagFull);
     }
 
     return best;
@@ -386,8 +396,10 @@ bool HuntLootManager::TryPickupLootItem(CHero* hero, const AutoHuntSettings& set
     // Arm the ghost timer (see LootPickupAttemptState): dist==0 is guaranteed
     // here by the not_on_tile check above. Skipped when the bag is full — a
     // full bag makes a REAL item fail pickup too, and we don't want to brand
-    // it a ghost over that.
-    if (!hero->IsBagFull()) {
+    // it a ghost over that. Money is exempt from that guard: it never needs a
+    // bag slot, so a money pile surviving an on-tile pickup is a ghost
+    // regardless of bag state (the live ghosts were in fact Gold, 1090020).
+    if (!hero->IsBagFull() || HuntTownService::GetMoneyTier(*item) >= 0) {
         LootPickupAttemptState& ghostState = m_lootPickupAttempts[item->m_id];
         if (ghostState.firstOnTileSendTick == 0)
             ghostState.firstOnTileSendTick = now;
