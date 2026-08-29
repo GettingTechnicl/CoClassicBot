@@ -58,8 +58,9 @@ namespace SpawnMemory
     void Save();
     void Load();
 
-    // Diagnostics for the overlay.
-    struct Stats { int maps; int buckets; int observations; float maxScore; };
+    // Diagnostics for the overlay. novelBuckets = buckets currently carrying a
+    // temporary "test it out" novelty boost (see spawn_memory.cpp).
+    struct Stats { int maps; int buckets; int observations; float maxScore; int novelBuckets; };
     Stats GetStats(OBJID mapId);
 
     void ClearMap(OBJID mapId);

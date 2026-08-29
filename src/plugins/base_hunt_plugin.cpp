@@ -2795,8 +2795,8 @@ void BaseHuntPlugin::RenderDebugSection()
         const bool useful = SpawnMemory::HasUsefulData(mid);
         ImGui::TextColored(useful ? ImVec4(0.4f, 1, 0.4f, 1)
                                   : ImVec4(0.6f, 0.6f, 0.6f, 1),
-            "spawn memory: %d buckets, %d observations%s",
-            sm.buckets, sm.observations,
+            "spawn memory: %d buckets, %d observations, %d novel%s",
+            sm.buckets, sm.observations, sm.novelBuckets,
             useful ? " (steering exploration)" : " (still learning)");
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear map"))

@@ -18,6 +18,21 @@ namespace
     constexpr float kPruneBelow      = 0.05f;
     constexpr int   kMinObservations = 40;      // before scores are trusted
 
+    // Session 13 [NOVELTY BOOST] (user-designed): visibility-limited
+    // observation makes the heatmap self-reinforcing — the bot camps its known
+    // hot quadrant, never learns the rest of the zone, and an exploration roll
+    // that glimpses a monster somewhere new still walks away because one
+    // sighting scores ~1.0 against a hot bucket's hundreds. So: a monster seen
+    // in a bucket with NO history (fresh insertion into the sparse map) arms a
+    // temporary boost that makes that bucket score near the map max — "test it
+    // out" — for the next kNoveltyObserves observation batches (~2-5 min at
+    // normal scan cadence, same scan-count clock the decay uses). Patrol then
+    // pulls the bot over, real observations either earn the bucket a genuine
+    // score or don't, and the boost expires either way. Session-local by
+    // design (not persisted): novelty is a trigger, not knowledge.
+    constexpr int   kNoveltyObserves   = 600;
+    constexpr float kNoveltyScoreShare = 0.9f;  // boosted score = 90% of map max
+
     // Session 12: this is the second documented safety rail (header comment,
     // "dropping maps not seen for a long time on load") — it was written
     // (lastTouched updated every Observe()) but never actually read anywhere,
@@ -31,6 +46,9 @@ namespace
     struct MapMemory
     {
         std::unordered_map<uint32_t, float> buckets;   // packed bucket -> score
+        // packed bucket -> observation-count deadline for its novelty boost
+        // (see kNoveltyObserves). Session-local, never saved.
+        std::unordered_map<uint32_t, int> novelty;
         int     observations = 0;
         float   maxScore = 0.0f;
         int64_t lastTouched = 0;   // time(nullptr) — see kStaleMapMaxAgeSeconds above
@@ -92,10 +110,29 @@ void Observe(OBJID mapId, const std::vector<Position>& monsterTiles)
             mm.buckets.erase(it);
             continue;
         }
+        // Novelty boost (see kNoveltyObserves): first sighting in an
+        // uncharted bucket — only arm once the map's data is otherwise
+        // trusted, so the initial learning flood on a fresh map doesn't
+        // mark everything novel at once.
+        if (inserted && mm.observations >= kMinObservations) {
+            mm.novelty[key] = mm.observations + kNoveltyObserves;
+            spdlog::debug("[spawnmem] novelty boost armed: map {} bucket ({},{}) for {} observes",
+                mapId, (int)(key >> 16), (int)(key & 0xFFFF), kNoveltyObserves);
+        }
         it->second += 1.0f;
         if (it->second > newMax) newMax = it->second;
     }
     mm.maxScore = newMax;
+
+    // Expire novelty boosts whose window has passed. (Kept even if the bucket
+    // itself was pruned — the deadline check below makes them inert, and this
+    // sweep removes them shortly after either way.)
+    for (auto it = mm.novelty.begin(); it != mm.novelty.end(); ) {
+        if (it->second <= mm.observations)
+            it = mm.novelty.erase(it);
+        else
+            ++it;
+    }
 }
 
 float GetScore(OBJID mapId, const Position& tile)
@@ -104,8 +141,16 @@ float GetScore(OBJID mapId, const Position& tile)
     auto mit = g_maps.find((uint32_t)mapId);
     if (mit == g_maps.end())
         return 0.0f;
-    auto bit = mit->second.buckets.find(PackBucket(tile.x / kBucketTiles, tile.y / kBucketTiles));
-    return (bit == mit->second.buckets.end()) ? 0.0f : bit->second;
+    const MapMemory& mm = mit->second;
+    const uint32_t key = PackBucket(tile.x / kBucketTiles, tile.y / kBucketTiles);
+    auto bit = mm.buckets.find(key);
+    float score = (bit == mm.buckets.end()) ? 0.0f : bit->second;
+    // Active novelty boost: score this bucket like a near-best one so
+    // exploration goes and tests it (see kNoveltyObserves).
+    auto nit = mm.novelty.find(key);
+    if (nit != mm.novelty.end() && nit->second > mm.observations)
+        score = (std::max)(score, mm.maxScore * kNoveltyScoreShare);
+    return score;
 }
 
 float GetMaxScore(OBJID mapId)
@@ -134,6 +179,7 @@ Stats GetStats(OBJID mapId)
         s.buckets = (int)it->second.buckets.size();
         s.observations = it->second.observations;
         s.maxScore = it->second.maxScore;
+        s.novelBuckets = (int)it->second.novelty.size();
     }
     return s;
 }
