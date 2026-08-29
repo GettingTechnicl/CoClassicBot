@@ -1,6 +1,7 @@
 #include "spawn_memory.h"
 
 #include <windows.h>
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <mutex>
@@ -168,6 +169,42 @@ float GetMaxScore(OBJID mapId)
     std::lock_guard<std::mutex> lk(g_mutex);
     auto it = g_maps.find((uint32_t)mapId);
     return (it == g_maps.end()) ? 0.0f : it->second.maxScore;
+}
+
+std::vector<Position> GetHotBuckets(OBJID mapId, int maxCount)
+{
+    std::lock_guard<std::mutex> lk(g_mutex);
+    std::vector<Position> out;
+    auto mit = g_maps.find((uint32_t)mapId);
+    if (mit == g_maps.end() || maxCount <= 0)
+        return out;
+    const MapMemory& mm = mit->second;
+
+    // Effective score per bucket, novelty boosts applied the same way
+    // GetScore applies them, so a boosted uncharted bucket makes the list.
+    std::vector<std::pair<float, uint32_t>> scored;
+    scored.reserve(mm.buckets.size() + mm.novelty.size());
+    for (const auto& [key, sc] : mm.buckets) {
+        float s = sc;
+        auto nit = mm.novelty.find(key);
+        if (nit != mm.novelty.end() && nit->second > mm.observations)
+            s = (std::max)(s, mm.maxScore * kNoveltyScoreShare);
+        scored.emplace_back(s, key);
+    }
+    for (const auto& [key, deadline] : mm.novelty) {
+        if (deadline > mm.observations && mm.buckets.find(key) == mm.buckets.end())
+            scored.emplace_back(mm.maxScore * kNoveltyScoreShare, key);
+    }
+
+    const int n = (std::min)((int)scored.size(), maxCount);
+    std::partial_sort(scored.begin(), scored.begin() + n, scored.end(),
+        [](const auto& a, const auto& b) { return a.first > b.first; });
+    out.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        out.push_back({ BucketX(scored[i].second) * kBucketTiles + kBucketTiles / 2,
+                        BucketY(scored[i].second) * kBucketTiles + kBucketTiles / 2 });
+    }
+    return out;
 }
 
 bool HasUsefulData(OBJID mapId)

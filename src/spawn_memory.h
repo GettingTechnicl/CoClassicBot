@@ -49,6 +49,13 @@ namespace SpawnMemory
     // Best-known score anywhere on the map, for normalising weights.
     float GetMaxScore(OBJID mapId);
 
+    // Centers of the top-scored buckets (novelty boosts included), hottest
+    // first. Exploration feeds these into its candidate pool directly:
+    // uniform sampling alone almost never rediscovers a small hot area on a
+    // large map (live MapWide run: best sampled candidate scored 5-40% of the
+    // known max while the map held 400-point buckets the sampler never hit).
+    std::vector<Position> GetHotBuckets(OBJID mapId, int maxCount);
+
     // True once enough observations exist for the scores to mean anything —
     // until then callers should keep searching uniformly rather than trusting
     // a map built from two sightings.

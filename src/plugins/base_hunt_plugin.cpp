@@ -383,10 +383,25 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     Position bestAwayFromThreat{};
     float    bestThreatDist = -1.0f;
 
-    for (int attempt = 0; attempt < 40; ++attempt) {
+    // Session 13 [KNOWN HOT SPOTS]: uniform sampling alone almost never
+    // rediscovers a small hot area on a large map — live MapWide run: the
+    // best sampled candidate scored 5-40% of the known max while the heatmap
+    // held 400-point buckets the sampler never hit, so every "exploit" pick
+    // was effectively random and the bot beelined corner to corner. Feed the
+    // top-scored buckets we ALREADY KNOW straight into the candidate pool;
+    // they pass through the same zone/walkable/contested validation and the
+    // same travel-cost discount as sampled candidates.
+    const std::vector<Position> hotSpots = useHeatmap
+        ? SpawnMemory::GetHotBuckets(mapId, 12)
+        : std::vector<Position>{};
+    const int totalAttempts = 40 + (int)hotSpots.size();
+
+    for (int attempt = 0; attempt < totalAttempts; ++attempt) {
         Position candidate{};
 
-        if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
+        if (attempt >= 40) {
+            candidate = hotSpots[attempt - 40];
+        } else if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
             // Uniform over the map's full tile extent. Same sampling shape as
             // Polygon's bounding-box sample below, just sized to the whole
             // map instead of a drawn shape's bounds.
