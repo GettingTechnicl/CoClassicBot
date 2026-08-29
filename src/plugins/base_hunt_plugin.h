@@ -144,15 +144,6 @@ protected:
     bool StartWalkTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange);
     bool StartPathNearTarget(CHero* hero, CGameMap* map, const Position& targetPos, int desiredRange);
 
-    // Shared by every hunt class and every zone mode: when nothing is
-    // engageable within "Only Target Mobs Within" (mobSearchRange), walk
-    // toward the nearest/densest monster clump ANYWHERE in the hunt zone
-    // instead of random patrol/explore. mobSearchRange gates ATTACK range
-    // only (don't scatter/shoot at mobs too far to hit) — it must not blind
-    // the bot to distant clumps the minimap clearly shows. Returns true (and
-    // starts a path + sets state) when it steered this tick.
-    bool TrySteerTowardZoneClump(CHero* hero, CGameMap* map, const AutoHuntSettings& settings);
-
     // Session 10: periodic short random hop via StartWalkTo — see
     // settings.randomWalkIntervalMs. Paced independently of the shared
     // movement interval so it can be dialed well below it for testing.

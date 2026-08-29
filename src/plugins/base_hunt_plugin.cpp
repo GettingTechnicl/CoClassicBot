@@ -927,60 +927,6 @@ bool BaseHuntPlugin::StartPathNearTarget(CHero* hero, CGameMap* map, const Posit
     return StartPathTo(hero, map, bestPos, 0);
 }
 
-bool BaseHuntPlugin::TrySteerTowardZoneClump(CHero* hero, CGameMap* map, const AutoHuntSettings& settings)
-{
-    if (!hero || !map)
-        return false;
-
-    // With no attack-range limit, every in-zone monster is already an
-    // engageable target, so normal targeting would have returned one and we'd
-    // never reach here — there's nothing "out of attack range but in zone" to
-    // steer toward. (Also avoids double work when the user runs unlimited.)
-    if (settings.mobSearchRange <= 0)
-        return false;
-
-    // The full in-zone monster set the minimap shows, INCLUDING mobs past
-    // mobSearchRange — exactly the clumps the user reports the bot ignoring.
-    // Zone geometry + name/tier filters still apply, so this stays bounded to
-    // the hunt zone and never chases across the map.
-    const std::vector<CRole*> zoneTargets = CollectHuntTargets(settings, false, /*ignoreSearchRange=*/true);
-    if (zoneTargets.empty())
-        return false;
-
-    const Position effectivePos = GetEffectiveHeroPosition(hero);
-    const int clumpRadius = (std::max)(1, settings.clumpRadius);
-    int clusterSize = 0;
-    CRole* clump = FindBestClusterTarget(zoneTargets, effectivePos, (float)clumpRadius, &clusterSize);
-    // No real cluster (all scattered singles) — still head to the nearest mob
-    // so the bot closes on SOMETHING instead of random patrol.
-    if (!clump) {
-        clump = FindClosestTarget(zoneTargets, effectivePos);
-        clusterSize = clump ? 1 : 0;
-    }
-    if (!clump)
-        return false;
-
-    // If the chosen clump is already within attack range, normal targeting
-    // should have engaged it — don't shadow that with a redundant steer.
-    const int dist = CGameMap::TileDist(effectivePos.x, effectivePos.y,
-        clump->m_posMap.x, clump->m_posMap.y);
-    if (dist <= settings.mobSearchRange)
-        return false;
-
-    // Stop a little inside mobSearchRange so that, on arrival, the clump is
-    // comfortably within attack range and normal scatter/shoot targeting takes
-    // over on the next tick (which also Stops this steer-path).
-    const int stopRange = (std::max)(1, settings.mobSearchRange - 1);
-    if (StartPathTo(hero, map, clump->m_posMap, stopRange)) {
-        m_targetId = 0;
-        char buf[96];
-        snprintf(buf, sizeof(buf), "Approaching mob clump (%d mobs, %d tiles)", clusterSize, dist);
-        SetState(AutoHuntState::AcquireTarget, buf);
-        return true;
-    }
-    return false;
-}
-
 // ── Travel helpers ──────────────────────────────────────────────────────────
 
 void BaseHuntPlugin::BeginTravelToZone(TravelPlugin* travel, const AutoHuntSettings& settings)
@@ -1785,16 +1731,6 @@ void BaseHuntPlugin::Update()
         return;
     }
 
-    // Nothing engageable within attack range — but the minimap may still show
-    // big clumps deeper in the zone (mobSearchRange only gates ATTACK range, so
-    // those clumps are deliberately not attack-targets yet). Walk toward the
-    // nearest/densest one instead of random patrol/explore, so the bot actually
-    // goes and hunts what it can see. Shared across melee/archer and every zone
-    // mode; takes priority over the subclass patrol and the generic explore
-    // fallback below. Once it arrives, normal targeting engages on the next tick.
-    if (TrySteerTowardZoneClump(hero, map, settings))
-        return;
-
     // Subclass idle behavior (archer patrol, etc.)
     if (HandleNoTargetIdle(hero, map, settings))
         return;
@@ -2449,15 +2385,8 @@ void BaseHuntPlugin::RenderCombatSection()
         "Archer Hunt / Melee Hunt tab below.");
 
     ImGui::SeparatorText("Targeting");
-    ImGui::SliderInt("Only Attack Mobs Within", &settings.mobSearchRange, 0, CGameMap::MAX_JUMP_DIST);
-    HelpMarkerOnSameLine(
-        "How close a monster must be before the bot ATTACKS it (e.g. throws a "
-        "scatter) -- keep this modest so it doesn't fire at mobs too far to "
-        "actually hit.\n\n"
-        "This does NOT blind the bot to distant clumps: when nothing is within "
-        "this range, it now walks toward the nearest/densest clump anywhere in "
-        "the hunt zone, then attacks once it arrives.\n\n"
-        "0 = attack any monster in the zone regardless of distance.");
+    ImGui::SliderInt("Only Target Mobs Within", &settings.mobSearchRange, 0, CGameMap::MAX_JUMP_DIST);
+    HelpMarkerOnSameLine("0 means unlimited target search range.");
 
     ImGui::SeparatorText("Recovery");
     ImGui::Checkbox("Use Potions", &settings.usePotions);

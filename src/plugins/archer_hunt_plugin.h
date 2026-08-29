@@ -64,17 +64,6 @@ private:
     int m_lastScatterRange = 0;
     int m_lastScatterHitCount = 0;
     mutable DWORD m_lastScatterApproachTick = 0;
-    // Session 13 [FIRE-RATE FIX]: the clump this archer committed to
-    // approaching, and when it committed. Without this, FindBestArcherTarget
-    // re-scored every clump on each ~7ms decision tick and chased whichever
-    // momentarily scored highest — live trace showed it ping-ponging between
-    // clumps ~38 tiles apart with 15-18 tile jumps, "Move blocked: pathfinder
-    // active" hundreds of times per second, and only ~1 scatter every 2-4s
-    // because it never stayed put long enough to fire. Sticking with one
-    // chosen approach position until arrival (or expiry) is what lets it land
-    // and actually shoot.
-    mutable Position m_committedApproachPos = {};
-    mutable DWORD m_committedApproachTick = 0;
     // Cycles the patrol band so idle movement drifts inward and outward
     // instead of tracing the zone rim. See FindArcherPatrolPosition.
     mutable int   m_patrolDriftPhase = 0;
