@@ -237,6 +237,11 @@ protected:
     // ~370ms, never pausing long enough to actually engage anything).
     mutable std::vector<std::pair<Position, DWORD>> m_recentExploreDests;
 
+    // Session 13 [LOOT COMMITMENT]: id + expiry of a loot pickup currently in
+    // progress — see the comment at its use site in the loot-priority block.
+    OBJID m_lootCommitId = 0;
+    DWORD m_lootCommitUntilTick = 0;
+
     Position m_pendingJumpDest = {};
     DWORD m_pendingJumpTick = 0;
     Position m_pendingJumpLastPos = {};

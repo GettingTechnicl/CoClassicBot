@@ -1696,8 +1696,26 @@ void BaseHuntPlugin::Update()
         // FindBestTarget peek entirely in that case since its result
         // wouldn't be used anyway.
         const bool isPriorityLoot = HuntTownService::IsPriorityLootItem(*loot);
+
+        // Session 13 [LOOT COMMITMENT]: hasEngageableTarget below is a fresh
+        // peek EVERY decision tick (~150ms) — once combat got frequent enough
+        // (a live 11-minute human-speed session logged 248 scatter casts),
+        // almost every loot walk got aborted mid-flight the instant a new
+        // target became engageable, before the hero ever physically reached
+        // the item: only 21 "Jumping to loot" starts produced 4 total
+        // pickups, and silver sat completely flat across the whole session
+        // despite 657 kills. Once a walk toward a SPECIFIC item has begun,
+        // stick with it for a short bounded window regardless of
+        // hasEngageableTarget — long enough for one human-paced walk to
+        // land, short enough that this can never become a new way to starve
+        // combat: it protects one grab already in flight, then reopens to
+        // normal priority for whatever loot is nearest next.
+        constexpr DWORD kLootCommitMs = 2000;
+        const bool lootCommitted = m_lootCommitId == loot->m_id
+            && TickIsFuture(m_lootCommitUntilTick, now);
+
         bool hasEngageableTarget = false;
-        if (!isPriorityLoot) {
+        if (!isPriorityLoot && !lootCommitted) {
             // Cheap peek: FindBestTarget is a pure scan with no side
             // effects, and gets called again below for the real combat
             // handling — this just decides whether it's worth detouring
@@ -1709,7 +1727,7 @@ void BaseHuntPlugin::Update()
                 &peekApproachPos, &peekAttackPos, &peekClumpSize, &peekUseScatter) != nullptr;
         }
 
-        if (!midMovement && !hasEngageableTarget) {
+        if (!midMovement && (!hasEngageableTarget || lootCommitted)) {
             // Session 13 [LOOT-BINGE FIX]: with no engageable target, ordinary
             // loot used to win over walking to the next visible pack — a
             // drop-rich field kept re-winning until it was picked dry while a
@@ -1739,11 +1757,15 @@ void BaseHuntPlugin::Update()
             // requiring so much as a single extra step now defers to a
             // steerable pack, same as the >3 case already did.
             const int lootUnderfootTiles = ShouldUseAggressiveSpeeds(settings) ? 3 : 0;
-            if (!isPriorityLoot && lootDist > lootUnderfootTiles
+            if (!isPriorityLoot && !lootCommitted && lootDist > lootUnderfootTiles
                 && TrySteerTowardZoneClump(hero, map, settings))
                 return;
             if (StartPathNearTarget(hero, map, loot->m_pos, kLootPathStopRange)) {
                 m_targetId = loot->m_id;
+                if (m_lootCommitId != loot->m_id) {
+                    m_lootCommitId = loot->m_id;
+                    m_lootCommitUntilTick = now + kLootCommitMs;
+                }
                 SetState(AutoHuntState::LootNearby, "Jumping to loot");
                 return;
             }
