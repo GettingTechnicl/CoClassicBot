@@ -794,9 +794,19 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
             return true;
     }
 
+    // Session 13 [JUMP VARIANCE]: shrink an over-long direct jump toward a
+    // walkable intermediate point when a player is nearby (see
+    // ApplyJumpDistanceCap) — the hero simply continues toward the true
+    // destination on the next decision tick, so this only changes HOW MANY
+    // jumps a long move takes, never whether it completes. Falls back to the
+    // untouched `destination` when uncapped, already close enough, or no
+    // valid intermediate point exists.
+    Position jumpDest = destination;
+    ApplyJumpDistanceCap(map, {hx, hy}, jumpDest, settings, CGameMap::GetHeroAltThreshold());
+
     const bool canDirectJump = dist <= CGameMap::MAX_JUMP_DIST
-        && map->CanJump(hx, hy, destination.x, destination.y, CGameMap::GetHeroAltThreshold())
-        && !IsTileOccupied(destination.x, destination.y);
+        && map->CanJump(hx, hy, jumpDest.x, jumpDest.y, CGameMap::GetHeroAltThreshold())
+        && !IsTileOccupied(jumpDest.x, jumpDest.y);
     const DWORD movementIntervalMs = canDirectJump
         ? GetJumpMovementIntervalMs(settings, hero)
         : GetMovementIntervalMs(settings);
@@ -804,10 +814,11 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
         return true;
 
     if (canDirectJump) {
-        spdlog::debug("[hunt] JUMP ({},{}) -> ({},{}) dist={}", hx, hy, destination.x, destination.y, dist);
-        hero->Jump(destination.x, destination.y);
+        spdlog::debug("[hunt] JUMP ({},{}) -> ({},{}) dist={}", hx, hy, jumpDest.x, jumpDest.y,
+            CGameMap::TileDist(hx, hy, jumpDest.x, jumpDest.y));
+        hero->Jump(jumpDest.x, jumpDest.y);
         m_lastMoveTick = now;
-        ArmPendingJump(hero, destination, now, false);
+        ArmPendingJump(hero, jumpDest, now, false);
         return true;
     }
 
@@ -824,7 +835,8 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
     if (waypoints.empty())
         return false;
 
-    Pathfinder::Get().StartPath(waypoints, [] { return GetMovementIntervalMs(GetAutoHuntSettings()); });
+    Pathfinder::Get().StartPath(waypoints, [] { return GetMovementIntervalMs(GetAutoHuntSettings()); },
+        [] { return GetJumpDistanceCapTiles(GetAutoHuntSettings()); });
     m_lastMoveTick = now;
     return true;
 }

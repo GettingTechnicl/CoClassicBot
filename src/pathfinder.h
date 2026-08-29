@@ -22,7 +22,16 @@ public:
     // supplies its own provider since Pathfinder is shared across multiple
     // plugins with independent settings (hunt vs. mining vs. manual travel)
     // — it has no business hardcoding which settings struct to read.
-    void StartPath(const std::vector<Position>& waypoints, std::function<DWORD()> movementIntervalProvider);
+    // jumpDistanceCapProvider (optional): re-invoked fresh on every jump this
+    // route issues, same live-reactivity reasoning as movementIntervalProvider
+    // above. Returns the max tiles a single jump toward the current waypoint
+    // may cover; a shorter cap makes the hero close in on that waypoint over
+    // several jumps instead of one, which is what makes jump length vary
+    // instead of always hugging the map's true max. Leave unset (default) for
+    // callers with no stealth concerns — behavior is then unchanged from
+    // before this parameter existed.
+    void StartPath(const std::vector<Position>& waypoints, std::function<DWORD()> movementIntervalProvider,
+        std::function<int()> jumpDistanceCapProvider = nullptr);
     void Stop();
     void Update();
     bool IsActive() const { return m_active; }
@@ -70,6 +79,7 @@ private:
     Position m_finalDestination = {};
     bool m_lastIssuedMoveWasImmediate = false;
     std::function<DWORD()> m_movementIntervalProvider;
+    std::function<int()> m_jumpDistanceCapProvider;
     DWORD m_lastProgressTick = 0;
     uint32_t m_generation = 0;
 };

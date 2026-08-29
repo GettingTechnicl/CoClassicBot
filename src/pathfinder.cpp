@@ -2,6 +2,7 @@
 #include "game.h"
 #include "log.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace {
@@ -203,9 +204,41 @@ bool Pathfinder::IssueMovementToWaypoint(CHero* hero, CGameMap* map, const Posit
             spdlog::debug("[path] Avoiding mob: ({},{}) -> ({},{})", target.x, target.y, effective.x, effective.y);
     }
 
-    const int dist = CGameMap::TileDist(hx, hy, effective.x, effective.y);
+    int dist = CGameMap::TileDist(hx, hy, effective.x, effective.y);
     if (dist <= 0)
         return false;
+
+    // Session 13 [JUMP VARIANCE]: shrink an over-long waypoint jump toward a
+    // walkable intermediate point when the caller supplied a cap (hunt
+    // plugins do, when a player is nearby — see ApplyJumpDistanceCap). This
+    // waypoint is re-targeted on the NEXT Update() tick since dist stays > 0
+    // after landing short, so a long leg becomes several medium jumps toward
+    // the same real waypoint instead of one maximal one. Skipped for the
+    // walk-range case just below (dist <= 2 is already short and not part of
+    // what reads as suspicious).
+    if (dist > 2 && m_jumpDistanceCapProvider) {
+        const int cap = m_jumpDistanceCapProvider();
+        if (cap > 0 && cap < dist) {
+            const float dx = (float)(effective.x - hx);
+            const float dy = (float)(effective.y - hy);
+            const float len = sqrtf(dx * dx + dy * dy);
+            for (int backoff = 0; backoff <= 3 && len >= 1.0f; ++backoff) {
+                const float scale = (float)(cap - backoff) / len;
+                if (scale <= 0.0f)
+                    break;
+                const Position candidate = { hx + (int)std::lround(dx * scale), hy + (int)std::lround(dy * scale) };
+                if (candidate.x == hx && candidate.y == hy)
+                    continue;
+                if (!map->IsWalkable(candidate.x, candidate.y))
+                    continue;
+                if (!map->CanJump(hx, hy, candidate.x, candidate.y, CGameMap::GetHeroAltThreshold()))
+                    continue;
+                effective = candidate;
+                dist = CGameMap::TileDist(hx, hy, effective.x, effective.y);
+                break;
+            }
+        }
+    }
 
     const Position before = hero->m_posMap;
 
@@ -290,7 +323,8 @@ bool Pathfinder::RepathFrom(CHero* hero, CGameMap* map, const Position& finalDes
     return !issueImmediate || IssueMovementToWaypoint(hero, map, m_waypoints[0]);
 }
 
-void Pathfinder::StartPath(const std::vector<Position>& waypoints, std::function<DWORD()> movementIntervalProvider)
+void Pathfinder::StartPath(const std::vector<Position>& waypoints, std::function<DWORD()> movementIntervalProvider,
+    std::function<int()> jumpDistanceCapProvider)
 {
     if (waypoints.empty())
         return;
@@ -301,6 +335,7 @@ void Pathfinder::StartPath(const std::vector<Position>& waypoints, std::function
     m_forceNativeJump = false;
     m_finalDestination = waypoints.back();
     m_movementIntervalProvider = std::move(movementIntervalProvider);
+    m_jumpDistanceCapProvider = std::move(jumpDistanceCapProvider);
     m_generation++;
     spdlog::info("[path] StartPath: {} waypoints, gen={}", waypoints.size(), m_generation);
 

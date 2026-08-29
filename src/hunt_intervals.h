@@ -11,6 +11,7 @@
 #include "CGameMap.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 // =====================================================================
@@ -159,17 +160,19 @@ inline CRole* FindNearestRole(const Position& from, int maxRange, Predicate pred
 // every single pass — live log showed one nearby player's presence flicker
 // between scans just 100-300ms apart (plr count alternating 1<->2, far too
 // fast to be them actually leaving and returning). Each time a scan happened
-// to miss them, this function flipped back to aggressive for that instant,
-// and BOTH movement and entity-scan cadence snapped to the fast floor —
-// live-reported as "speedhack never reverts to the slider speeds even with a
-// player confirmed detected." A brief hold after the last CONFIRMED sighting
-// — the same anti-flap pattern already used elsewhere here
-// (kArcherSafetyBufferTiles, HuntContest bucket memory) — absorbs that scan
-// noise: aggressive speed only resumes once the player has been genuinely
-// absent for the whole hold window, not just missing from one pass. Errs
-// toward the safe (slow) side, which is the correct direction for a bot
-// trying not to look like one.
-inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)
+// to miss them, this flipped back to "not nearby" for that instant, and BOTH
+// movement and entity-scan cadence snapped to the fast floor — live-reported
+// as "speedhack never reverts to the slider speeds even with a player
+// confirmed detected." A brief hold after the last CONFIRMED sighting — the
+// same anti-flap pattern already used elsewhere here (kArcherSafetyBufferTiles,
+// HuntContest bucket memory) — absorbs that scan noise: "nearby" only clears
+// once the player has been genuinely absent for the whole hold window, not
+// just missing from one pass. Errs toward the safe (slow/careful) side, the
+// correct direction for a bot trying not to look like one. Shared by
+// ShouldUseAggressiveSpeeds (movement pacing) and GetJumpDistanceCapTiles
+// (jump-length variance, see below) so both react to the exact same debounced
+// signal instead of drifting out of sync with independent timers.
+inline bool IsPlayerNearbyDebounced(const AutoHuntSettings& settings)
 {
     const bool toggleOn = GetTravelSettings().usePacketJump;
     const DWORD now = GetTickCount();
@@ -179,17 +182,91 @@ inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)
         s_lastPlayerSeenTick = now;
 
     constexpr DWORD kPlayerNearbyHoldMs = 1500;
-    const bool playerNearby = toggleOn && s_lastPlayerSeenTick != 0
+    return toggleOn && s_lastPlayerSeenTick != 0
         && (now - s_lastPlayerSeenTick) < kPlayerNearbyHoldMs;
+}
+
+inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)
+{
+    const bool toggleOn = GetTravelSettings().usePacketJump;
+    const bool playerNearby = IsPlayerNearbyDebounced(settings);
     const bool result = toggleOn && !playerNearby;
 
     static DWORD s_lastLogTick = 0;
+    const DWORD now = GetTickCount();
     if (now - s_lastLogTick >= 2000) {
         s_lastLogTick = now;
         spdlog::trace("[speedhack] toggleOn={} playerNearby={} -> aggressive={}", toggleOn, playerNearby, result);
     }
 
     return result;
+}
+
+// Session 13 [JUMP VARIANCE]: live-reported that the bot's jumps consistently
+// read as maximum-possible-distance — the user's own manual max-jump test
+// (clicking as far as the game would allow) measured real jumps around 15-16
+// tiles, yet every bot jump that legally could cover that much ground did so
+// at (or essentially at) the coded MAX_JUMP_DIST ceiling every single time —
+// a repeatable, unvarying pattern a real player's jump lengths would never
+// produce. Scoped to the player-nearby case only, matching every other
+// speedhack behavior here: full efficiency while farming alone (no one to
+// see the pattern), varied and careful the moment someone's actually
+// watching. Re-rolled on every call rather than cached, so consecutive jumps
+// don't settle on one suspiciously-consistent fraction either.
+inline int GetJumpDistanceCapTiles(const AutoHuntSettings& settings)
+{
+    if (!IsPlayerNearbyDebounced(settings))
+        return CGameMap::MAX_JUMP_DIST;  // no cap — full efficiency when alone
+    const float pct = 0.60f + (float)(NextRandom32() % 3001u) / 10000.0f;  // 0.60-0.90
+    const int capped = (int)(CGameMap::MAX_JUMP_DIST * pct);
+    return (std::max)(3, capped);  // floor so it never degenerates to trivial hops
+}
+
+// If `destination` is farther from `origin` than the current jump-distance
+// cap allows, rewrites it in place to a walkable intermediate point along the
+// same line at (up to) the capped distance and returns true — the caller's
+// normal decision loop then continues toward the true destination on
+// subsequent ticks, producing several medium jumps instead of one maximal
+// one. Returns false (destination untouched) when uncapped, already within
+// range, or no walkable point along that line was found — callers should
+// fall back to their existing full-distance behavior in that case rather
+// than stalling.
+inline bool ApplyJumpDistanceCap(const CGameMap* map, const Position& origin, Position& destination,
+    const AutoHuntSettings& settings, int altThreshold)
+{
+    const int cap = GetJumpDistanceCapTiles(settings);
+    if (cap >= CGameMap::MAX_JUMP_DIST)
+        return false;
+    const int fullDist = CGameMap::TileDist(origin.x, origin.y, destination.x, destination.y);
+    if (fullDist <= cap)
+        return false;
+
+    const float dx = (float)(destination.x - origin.x);
+    const float dy = (float)(destination.y - origin.y);
+    const float len = sqrtf(dx * dx + dy * dy);
+    if (len < 1.0f)
+        return false;
+
+    // Walk inward a few tiles from the exact capped point in case that
+    // precise spot is blocked — same spirit as JitterDestination's fallback.
+    for (int backoff = 0; backoff <= 3; ++backoff) {
+        const float scale = (float)(cap - backoff) / len;
+        if (scale <= 0.0f)
+            break;
+        const Position candidate = {
+            origin.x + (int)std::lround(dx * scale),
+            origin.y + (int)std::lround(dy * scale)
+        };
+        if (candidate.x == origin.x && candidate.y == origin.y)
+            continue;
+        if (!map || !map->IsWalkable(candidate.x, candidate.y))
+            continue;
+        if (!map->CanJump(origin.x, origin.y, candidate.x, candidate.y, altThreshold))
+            continue;
+        destination = candidate;
+        return true;
+    }
+    return false;
 }
 
 // Session 11: short hops prefer a real animated Walk over an instant Jump
