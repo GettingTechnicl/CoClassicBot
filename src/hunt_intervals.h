@@ -217,7 +217,7 @@ inline int GetJumpDistanceCapTiles(const AutoHuntSettings& settings)
 {
     if (!IsPlayerNearbyDebounced(settings))
         return CGameMap::MAX_JUMP_DIST;  // no cap — full efficiency when alone
-    const float pct = 0.60f + (float)(NextRandom32() % 3001u) / 10000.0f;  // 0.60-0.90
+    const float pct = 0.60f + (float)(NextRandom32() % 2001u) / 10000.0f;  // 0.60-0.80
     const int capped = (int)(CGameMap::MAX_JUMP_DIST * pct);
     return (std::max)(3, capped);  // floor so it never degenerates to trivial hops
 }
