@@ -176,8 +176,25 @@ CMapItem* HuntLootManager::FindBestLoot(
 
         // Confirmed drops (our kill via system message) are always looted.
         // Other items must pass the item filter (loot list, quality, or plus).
+        //
+        // Session 13 [PRIORITY SELECTION GAP]: IsPriorityLootItem (+items,
+        // Meteor/DragonBall family) was previously only consulted AFTER an
+        // item already passed this gate — the elaborate "stop everything and
+        // go get it" handling downstream (base_hunt_plugin.cpp: bypasses Loot
+        // Range, the combat-priority check, steer-to-pack) never got a chance
+        // to run for a priority item that wasn't ALSO a confirmed drop of
+        // ours or already sitting in the user's Loot Item List. In practice
+        // that gap was masked whenever the user's own lootItemIds happened to
+        // already include the meteor/dragonball type IDs — but the guarantee
+        // wasn't real, it was riding on that config. A priority item now
+        // bypasses this gate the same way a confirmed drop does, so it's
+        // seen and pursued regardless of the Loot Item List or whether it
+        // was this hero's own kill (another player's abandoned drop, or one
+        // still on the ground after the 30s confirmed-drop window expires,
+        // now both still register as loot).
         const bool confirmed = IsConfirmedDrop(itemRef->m_pos, now);
-        if (!confirmed) {
+        const bool isPriorityItem = HuntTownService::IsPriorityLootItem(*itemRef);
+        if (!confirmed && !isPriorityItem) {
             if (!HuntTownService::ShouldLootMapItem(settings, *itemRef)) { ++skippedFilter; continue; }
             if (!HuntTownService::IsSelectedLootItem(settings, itemRef->m_idType)
                 && !isWantedMoney(*itemRef)) {
@@ -202,7 +219,7 @@ CMapItem* HuntLootManager::FindBestLoot(
         const int lootRange = std::clamp(settings.lootRange, 0, (int)CGameMap::MAX_JUMP_DIST);
         if (lootRange > 0
             && dist > (float)lootRange
-            && !HuntTownService::IsPriorityLootItem(*itemRef)) {
+            && !isPriorityItem) {
             ++skippedOutOfRange;
             continue;
         }
