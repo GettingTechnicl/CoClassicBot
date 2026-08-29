@@ -154,14 +154,36 @@ inline CRole* FindNearestRole(const Position& from, int maxRange, Predicate pred
     return best;
 }
 
+// Session 13 [FLICKER FIX]: IsAnyPlayerNearby() depends on Entities::Get(), a
+// per-region heap scan that does not reliably re-capture the same player on
+// every single pass — live log showed one nearby player's presence flicker
+// between scans just 100-300ms apart (plr count alternating 1<->2, far too
+// fast to be them actually leaving and returning). Each time a scan happened
+// to miss them, this function flipped back to aggressive for that instant,
+// and BOTH movement and entity-scan cadence snapped to the fast floor —
+// live-reported as "speedhack never reverts to the slider speeds even with a
+// player confirmed detected." A brief hold after the last CONFIRMED sighting
+// — the same anti-flap pattern already used elsewhere here
+// (kArcherSafetyBufferTiles, HuntContest bucket memory) — absorbs that scan
+// noise: aggressive speed only resumes once the player has been genuinely
+// absent for the whole hold window, not just missing from one pass. Errs
+// toward the safe (slow) side, which is the correct direction for a bot
+// trying not to look like one.
 inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)
 {
     const bool toggleOn = GetTravelSettings().usePacketJump;
-    const bool playerNearby = toggleOn && IsAnyPlayerNearby(settings);
+    const DWORD now = GetTickCount();
+
+    static DWORD s_lastPlayerSeenTick = 0;
+    if (toggleOn && IsAnyPlayerNearby(settings))
+        s_lastPlayerSeenTick = now;
+
+    constexpr DWORD kPlayerNearbyHoldMs = 1500;
+    const bool playerNearby = toggleOn && s_lastPlayerSeenTick != 0
+        && (now - s_lastPlayerSeenTick) < kPlayerNearbyHoldMs;
     const bool result = toggleOn && !playerNearby;
 
     static DWORD s_lastLogTick = 0;
-    const DWORD now = GetTickCount();
     if (now - s_lastLogTick >= 2000) {
         s_lastLogTick = now;
         spdlog::trace("[speedhack] toggleOn={} playerNearby={} -> aggressive={}", toggleOn, playerNearby, result);

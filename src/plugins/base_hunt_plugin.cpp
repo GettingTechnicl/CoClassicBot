@@ -2722,18 +2722,22 @@ void BaseHuntPlugin::RenderDebugSection()
 
     // Session 13: live readout for the speedhack player-detection gate —
     // added after a live report that movement stayed fast even with a
-    // player well within Detection Range. Every code path was re-audited
-    // and looked correctly wired, so rather than guess further this shows
-    // ground truth: whether the toggle is even on, whether a player is
-    // currently being detected, and the interval that decision produces.
+    // player well within Detection Range. Root cause found: the per-region
+    // heap scan doesn't reliably re-capture the same player on every pass,
+    // so raw playerNearby flickers true/false every ~100-300ms — a debounce
+    // hold now smooths that into a stable "aggressive" decision (see
+    // ShouldUseAggressiveSpeeds' [FLICKER FIX] comment). Both the raw,
+    // un-debounced scan result AND the debounced decision are shown so a
+    // flickering "raw" alongside a steady "aggressive=no" is the expected,
+    // working signature — not a bug.
     {
         const bool toggleOn = GetTravelSettings().usePacketJump;
-        const bool playerNearby = IsAnyPlayerNearby(settings);
+        const bool rawPlayerNearby = IsAnyPlayerNearby(settings);
         const bool aggressive = ShouldUseAggressiveSpeeds(settings);
         const DWORD effInterval = GetMovementIntervalMs(settings);
         ImGui::TextColored(aggressive ? ImVec4(1, 0.7f, 0.3f, 1) : ImVec4(0.4f, 1, 0.4f, 1),
-            "Speedhack: toggle=%s playerNearby=%s -> aggressive=%s  interval=%ums",
-            toggleOn ? "on" : "off", playerNearby ? "yes" : "no",
+            "Speedhack: toggle=%s rawPlayerNearby=%s -> aggressive=%s  interval=%ums",
+            toggleOn ? "on" : "off", rawPlayerNearby ? "yes" : "no",
             aggressive ? "yes" : "no", effInterval);
     }
 
