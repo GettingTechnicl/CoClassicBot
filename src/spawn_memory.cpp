@@ -32,6 +32,14 @@ namespace
     // design (not persisted): novelty is a trigger, not knowledge.
     constexpr int   kNoveltyObserves   = 600;
     constexpr float kNoveltyScoreShare = 0.9f;  // boosted score = 90% of map max
+    // Session 13 [NOVELTY CAP]: novelty only means something while it's
+    // scarce. First live MapWide run armed 1,073 novel buckets in 5.5 minutes
+    // — every step of travel uncovered more "uncharted" ground, every sampled
+    // explore candidate scored the same near-max boost, and the bot
+    // ping-ponged corner to corner doing nothing but discover more novelty.
+    // A small cap turns it into what it was meant to be: a short queue of
+    // places worth testing next, arming again as earlier entries expire.
+    constexpr int   kMaxNovelBuckets   = 8;
 
     // Session 12: this is the second documented safety rail (header comment,
     // "dropping maps not seen for a long time on load") — it was written
@@ -114,10 +122,12 @@ void Observe(OBJID mapId, const std::vector<Position>& monsterTiles)
         // uncharted bucket — only arm once the map's data is otherwise
         // trusted, so the initial learning flood on a fresh map doesn't
         // mark everything novel at once.
-        if (inserted && mm.observations >= kMinObservations) {
+        if (inserted && mm.observations >= kMinObservations
+            && (int)mm.novelty.size() < kMaxNovelBuckets) {
             mm.novelty[key] = mm.observations + kNoveltyObserves;
-            spdlog::debug("[spawnmem] novelty boost armed: map {} bucket ({},{}) for {} observes",
-                mapId, (int)(key >> 16), (int)(key & 0xFFFF), kNoveltyObserves);
+            spdlog::debug("[spawnmem] novelty boost armed: map {} bucket ({},{}) for {} observes ({}/{} slots)",
+                mapId, (int)(key >> 16), (int)(key & 0xFFFF), kNoveltyObserves,
+                (int)mm.novelty.size(), kMaxNovelBuckets);
         }
         it->second += 1.0f;
         if (it->second > newMax) newMax = it->second;

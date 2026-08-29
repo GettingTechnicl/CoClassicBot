@@ -465,9 +465,20 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
         // heatmap: always walking to the single hottest bucket would abandon
         // the rest of the zone and let the memory go stale everywhere else.
         // Sampling keeps some exploration alive so the map stays current.
+        //
+        // Session 13 [TRAVEL COST]: the exploit pick discounts a candidate's
+        // score by how far away it is — raw argmax treated a bucket 500 tiles
+        // across a MapWide zone as equal to one 20 tiles away, so near-tied
+        // scores (e.g. many novelty-boosted buckets) had the bot ping-ponging
+        // corner to corner doing nothing but travel. Halving distance is 96
+        // tiles: nearby ties win outright, and a far bucket now needs to be
+        // genuinely hotter — not merely tied — to justify the trip. The
+        // exploration roll below stays on RAW score: deliberately going
+        // somewhere far and unknown is that path's entire purpose.
         const float score = SpawnMemory::GetScore(mapId, candidate);
-        if (score > bestScore) {
-            bestScore = score;
+        const float travelDiscounted = score / (1.0f + heroPos.DistanceTo(candidate) / 96.0f);
+        if (travelDiscounted > bestScore) {
+            bestScore = travelDiscounted;
             bestScored = candidate;
         }
         if (score < worstScore) {
