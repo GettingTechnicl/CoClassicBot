@@ -21,13 +21,29 @@ static constexpr int   kLootPickupAttemptLimit   = 2;
 // ignored for the rest of its client-side lifetime. Real pickups resolve in
 // one server round trip — well under a second even on a bad connection.
 static constexpr DWORD kLootGhostConfirmMs       = 800;
-// Session 13 [STALE LOOT SKIP]: real drops despawn server-side within a minute
-// or two — an item still in our heap-scan list this long after we FIRST saw it
-// is stale (or another player's protected drop we can't take either way), so
-// FindBestLoot skips it without ever walking there. Before this, every ghost
-// cost a trip: the bot had to jump to it, stand on it, and fail a pickup
-// before the ghost blacklist could catch it (~190 ghost-trips per session).
-static constexpr DWORD kLootStaleMaxAgeMs        = 180000;
+// Session 13 [STALE LOOT SKIP]: an item still in our heap-scan list this long
+// after we FIRST saw it is stale (or another player's protected drop we can't
+// take either way), so FindBestLoot skips it without ever walking there.
+// Before this, every ghost cost a trip: the bot had to jump to it, stand on
+// it, and fail a pickup before the ghost blacklist could catch it (~190
+// ghost-trips per session).
+//
+// Session 13 [PRECISE DESPAWN TIMES]: originally a conservative 180000ms
+// guess ("a minute or two"). User hand-timed the actual server despawn
+// clocks: gold despawns at 1:10 (70000ms), other items at 1:20 (80000ms)
+// after dropping. A 3-minute cutoff let the bot keep selecting/walking
+// toward items that had ALREADY been gone for well over a minute — exactly
+// the "trying to pick up items that have already been picked up or have
+// de-spawned" behavior reported live. Type-aware cutoffs below use those
+// measured times with a small margin for clock/measurement slack, not the
+// old one-size-fits-all guess. Note: m_lootSeenTicks starts from when OUR
+// scan first notices the item, which can lag the true server drop time if
+// the item existed before it entered scan range — that only makes this
+// UNDER-count age (occasionally still pursuing something already gone,
+// no worse than before), never over-count it, so it can't cause new false
+// positives against real, still-collectible drops.
+static constexpr DWORD kLootStaleMaxAgeMoneyMs   = 68000;   // real despawn 70000ms
+static constexpr DWORD kLootStaleMaxAgeItemMs    = 78000;   // real despawn 80000ms
 static constexpr DWORD kLootTargetSwitchIntervalMs = 100;
 
 static constexpr int kMinLootPickupIgnoreMs = 0;
@@ -137,8 +153,11 @@ CMapItem* HuntLootManager::FindBestLoot(
         const auto seenResult = m_lootSeenTicks.try_emplace(itemRef->m_id, now);
         const DWORD seenAge = now - seenResult.first->second;
         if (seenAge < spawnGraceMs) { ++skippedSpawnGrace; continue; }
-        // Stale skip (see kLootStaleMaxAgeMs): too old to still be real.
-        if (seenAge > kLootStaleMaxAgeMs) { ++skippedStale; continue; }
+        // Stale skip (see [PRECISE DESPAWN TIMES] above): too old to still be
+        // real, using the type-appropriate measured despawn clock.
+        const DWORD staleMaxAge = HuntTownService::GetMoneyTier(*itemRef) >= 0
+            ? kLootStaleMaxAgeMoneyMs : kLootStaleMaxAgeItemMs;
+        if (seenAge > staleMaxAge) { ++skippedStale; continue; }
         if (isLootPickupIgnoredFn && isLootPickupIgnoredFn(itemRef->m_id, now)) { ++skippedIgnored; continue; }
         if (isPointInZoneFn && !isPointInZoneFn(Game::GetCurrentMapId(), itemRef->m_pos)) { ++skippedZone; continue; }
 
