@@ -2751,6 +2751,16 @@ void BaseHuntPlugin::RenderDebugSection()
             "Speedhack: toggle=%s rawPlayerNearby=%s -> aggressive=%s  interval=%ums",
             toggleOn ? "on" : "off", rawPlayerNearby ? "yes" : "no",
             aggressive ? "yes" : "no", effInterval);
+
+        // Session 13 [JUMP VARIANCE]: companion readout for the jump-distance
+        // cap — re-rolled every call, so watching this line while a player is
+        // held nearby should show the tile count moving around inside
+        // 60-90% of MAX_JUMP_DIST rather than sitting fixed.
+        const int jumpCap = GetJumpDistanceCapTiles(settings);
+        const bool jumpCapped = jumpCap < CGameMap::MAX_JUMP_DIST;
+        ImGui::TextColored(jumpCapped ? ImVec4(1, 0.7f, 0.3f, 1) : ImVec4(0.4f, 1, 0.4f, 1),
+            "Jump distance: cap=%d/%d tiles%s",
+            jumpCap, CGameMap::MAX_JUMP_DIST, jumpCapped ? " (varied — player nearby)" : " (uncapped)");
     }
 
     // Effective vs actual position. A mismatch means every range check AND
