@@ -1644,6 +1644,22 @@ void BaseHuntPlugin::Update()
         }
 
         if (!midMovement && !hasEngageableTarget) {
+            // Session 13 [LOOT-BINGE FIX]: with no engageable target, ordinary
+            // loot used to win over walking to the next visible pack — a
+            // drop-rich field kept re-winning until it was picked dry while a
+            // dense clump sat 15 tiles away untouched (live-measured: 89
+            // kills/min during the binge phase vs 243/min in hunt flow, ~30%
+            // of the run at ~40% speed). Drops don't despawn in the next 30s
+            // and the hunt sweep passes back through, so: gold basically
+            // underfoot is still grabbed (a free detour), priority items
+            // (meteors/dragonballs) still stop everything, but anything
+            // further defers to a steerable pack when one exists. Dedicated
+            // hoovering still happens whenever no pack is visible (steer
+            // returns false).
+            constexpr int kLootUnderfootTiles = 3;
+            if (!isPriorityLoot && lootDist > kLootUnderfootTiles
+                && TrySteerTowardZoneClump(hero, map, settings))
+                return;
             if (StartPathNearTarget(hero, map, loot->m_pos, kLootPathStopRange)) {
                 m_targetId = loot->m_id;
                 SetState(AutoHuntState::LootNearby, "Jumping to loot");
@@ -1775,6 +1791,16 @@ void BaseHuntPlugin::Update()
     // ── No target found ─────────────────────────────────────────────────
     m_lastClumpSize = 0;
     if (loot) {
+        // Session 13 [LOOT-BINGE FIX]: same pack-over-distant-loot rule as the
+        // loot-phase block above — non-priority loot beyond underfoot range
+        // defers to a steerable pack when one exists.
+        const int noTargetLootDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
+            loot->m_pos.x, loot->m_pos.y);
+        constexpr int kLootUnderfootTiles = 3;
+        if (noTargetLootDist > kLootUnderfootTiles
+            && !HuntTownService::IsPriorityLootItem(*loot)
+            && TrySteerTowardZoneClump(hero, map, settings))
+            return;
         spdlog::trace("[hunt-loot] No combat target, pathing to loot id={} type={} at ({},{})",
             loot->m_id, loot->m_idType, loot->m_pos.x, loot->m_pos.y);
         const bool startedMove = StartPathNearTarget(hero, map, loot->m_pos, kLootPathStopRange);
