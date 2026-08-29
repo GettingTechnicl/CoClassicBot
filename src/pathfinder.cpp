@@ -66,6 +66,21 @@ bool IsTileOccupied(int tileX, int tileY)
         // snapshot and this loop touching it.
         if (!e || !Entities::IsAlive(e))
             continue;
+        // Session 13: monsters do NOT block movement in this game (confirmed
+        // with the game's own live behavior) — the hero can walk onto,
+        // through, and stack with monster tiles, which is exactly how melee
+        // combat works at all. Counting them as blockers was the root cause
+        // of a live-reported bug where, in a dense pack of 20-40 monsters,
+        // every candidate tile adjacent to a chosen target was occupied by
+        // some OTHER monster, so no combat-approach position could ever be
+        // found — the bot would endlessly re-path around the same pack in
+        // "explore" mode without engaging anything, regardless of leash or
+        // speedhack. Guards/patrols are excluded from IsMonster() and still
+        // count as blockers; so do players and NPCs. IsTileNearMonster()
+        // (the separate mob-AVOIDANCE primitive) is unaffected — that one
+        // deliberately DOES want to find monsters.
+        if (e->IsMonster())
+            continue;
         if (e->m_posMap.x == tileX && e->m_posMap.y == tileY)
             return true;
     }
