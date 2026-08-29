@@ -108,13 +108,24 @@ public:
     // 4=GoldBar, 5=GoldBars. -1 if not a money item at all.
     static int GetMoneyTier(const CMapItem& item);
 
-    // +items (any refine level), Meteor/MeteorTear/DragonBall (including all
-    // star tiers + Epic) — Session 10: these should never be skipped just for
-    // being outside the configured Loot Range (that setting is meant to
-    // control how eagerly to detour for ordinary/money drops, not whether a
-    // rare, high-value item is worth fetching at all). See
-    // IsWithinLootPickupRange in base_hunt_plugin.cpp.
-    static bool IsPriorityLootItem(const CMapItem& item);
+    // Session 13 [RELIABILITY SPLIT]: Meteor/MeteorTear/DragonBall (incl. all
+    // star tiers + Epic) ONLY — identified purely by numeric type ID, never
+    // by CMapItem::GetPlus(). This replaced a broader "+items are priority
+    // too" version (also matching by GetPlus()) after that unreliable byte
+    // read (already proven wrong for money and for EXPEND/consumable items,
+    // see ShouldLootMapItem's plus-check comment) started letting ordinary,
+    // unenchanted equipment bypass the user's ENTIRE quality/list filter via
+    // this function's use as a selection-gate override — live-reported as
+    // "the bot picks up any item type, filling my bag with garbage" right
+    // after that change shipped. The override behavior (bypass Loot Range,
+    // bypass the combat-priority check, stop everything) is reserved for
+    // Meteor/DragonBall specifically per the user's own original framing:
+    // "this behavior is specific to meteors and dragonballs only." A +item
+    // is still real, wanted loot — it's just SELECTED like everything else,
+    // via ShouldLootMapItem's own (equipment-sort-scoped) plus-check, not
+    // granted an override an unverified byte read can trigger by accident.
+    // See IsWithinLootPickupRange in base_hunt_plugin.cpp.
+    static bool IsMeteorOrDragonBallItem(const CMapItem& item);
 
     // Session 13: DragonBall specifically (base + all star tiers/Epic), NOT
     // the broader Meteor/MeteorTear/+items priority-loot bucket above. Used

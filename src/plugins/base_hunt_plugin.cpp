@@ -83,7 +83,7 @@ int GetLootRange(const AutoHuntSettings& settings)
 // extra Loot Range cap specifically.
 bool IsWithinLootPickupRange(const AutoHuntSettings& settings, int distance, const CMapItem& item)
 {
-    if (HuntTownService::IsPriorityLootItem(item))
+    if (HuntTownService::IsMeteorOrDragonBallItem(item))
         return true;
     const int lootRange = GetLootRange(settings);
     return lootRange > 0 ? distance <= lootRange : distance == 0;
@@ -1687,15 +1687,22 @@ void BaseHuntPlugin::Update()
         // engageable monster — only the free/no-detour pickup above
         // (already attempted; it fires regardless of nearby combat) was
         // previously allowed to win against combat. Priority items
-        // (IsPriorityLootItem: +items, Meteor/DragonBall family) are an
-        // explicit exception per the user's own framing — "if a meteor or
-        // dragonball is seen on the ground, stop everything and go get
-        // it" — so they always override an engageable target, restoring
-        // the original "loot always wins" behavior just for these
-        // specific items instead of every ground item. Also skips the
-        // FindBestTarget peek entirely in that case since its result
-        // wouldn't be used anyway.
-        const bool isPriorityLoot = HuntTownService::IsPriorityLootItem(*loot);
+        // (IsMeteorOrDragonBallItem) are an explicit exception per the
+        // user's own framing — "if a meteor or dragonball is seen on the
+        // ground, stop everything and go get it. This behavior is specific
+        // to meteors and dragonballs only" — so they always override an
+        // engageable target, restoring the original "loot always wins"
+        // behavior just for these specific items instead of every ground
+        // item. Also skips the FindBestTarget peek entirely in that case
+        // since its result wouldn't be used anyway.
+        //
+        // Session 13 [RELIABILITY SPLIT]: this used to also cover +items via
+        // the (unreliable) CMapItem::GetPlus() byte read — removed after it
+        // started letting a misread on ordinary equipment override
+        // everything (see IsMeteorOrDragonBallItem's header comment for the
+        // live-reported symptom). A +item is still real, selectable loot —
+        // it just competes normally instead of forcing an override.
+        const bool isPriorityLoot = HuntTownService::IsMeteorOrDragonBallItem(*loot);
 
         // Session 13 [LOOT COMMITMENT]: hasEngageableTarget below is a fresh
         // peek EVERY decision tick (~150ms) — once combat got frequent enough
@@ -1906,7 +1913,7 @@ void BaseHuntPlugin::Update()
             loot->m_pos.x, loot->m_pos.y);
         const int lootUnderfootTiles = ShouldUseAggressiveSpeeds(settings) ? 3 : 0;
         if (noTargetLootDist > lootUnderfootTiles
-            && !HuntTownService::IsPriorityLootItem(*loot)
+            && !HuntTownService::IsMeteorOrDragonBallItem(*loot)
             && TrySteerTowardZoneClump(hero, map, settings))
             return;
         spdlog::trace("[hunt-loot] No combat target, pathing to loot id={} type={} at ({},{})",
