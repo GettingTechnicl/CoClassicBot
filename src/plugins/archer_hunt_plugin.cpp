@@ -415,8 +415,8 @@ bool ArcherHuntPlugin::TryArcherDangerRetreat(CHero* hero, CGameMap* map, const 
     }
     m_retreatCooldownTick = 0;
 
-    const std::vector<CRole*> nearbyTargets = CollectHuntTargets(settings);
     const Position heroPos = GetEffectiveHeroPosition(hero);
+    const std::vector<CRole*> nearbyTargets = CollectHuntTargets(settings, false, false, &heroPos);
     int closestDist = 9999;
     for (CRole* t : nearbyTargets) {
         if (!t)
@@ -524,17 +524,23 @@ CRole* ArcherHuntPlugin::FindBestArcherTarget(CHero* hero, CGameMap* map, const 
     if (!hero || !map)
         return nullptr;
 
+    // Session 13 [MID-JUMP BLINDNESS FIX]: gate mobSearchRange from the same
+    // effective position every shot decision below uses. m_posMap lags a
+    // whole jump behind at speedhack cadence, so the old default gate saw
+    // nothing near the landing tile and this function returned null mid-pack.
+    const Position effectivePos = GetEffectiveHeroPosition(hero);
     const bool hasPreferFilter = settings.monsterPreferNames[0] != '\0';
-    std::vector<CRole*> targets = hasPreferFilter ? CollectHuntTargets(settings, true) : std::vector<CRole*>{};
+    std::vector<CRole*> targets = hasPreferFilter
+        ? CollectHuntTargets(settings, true, false, &effectivePos)
+        : std::vector<CRole*>{};
     if (targets.empty())
-        targets = CollectHuntTargets(settings);
+        targets = CollectHuntTargets(settings, false, false, &effectivePos);
     if (targets.empty())
         return nullptr;
 
     const int regularAttackRange = GetRegularArcherAttackRange(settings);
     const int scatterRange = GetScatterRange(hero);
     const int minimumScatterHits = (std::max)(1, settings.minimumScatterHits);
-    const Position effectivePos = GetEffectiveHeroPosition(hero);
     const DWORD now = GetTickCount();
     const bool retreatHoldActive = TickIsFuture(m_retreatHoldUntilTick, now);
     if (IsScatterLogicEnabled(settings) && settings.prioritizeScatterClumps && scatterRange > 0) {
@@ -896,7 +902,7 @@ void ArcherHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Au
         const int scatterRange = GetScatterRange(hero);
         const int minHits = (std::max)(1, settings.minimumScatterHits);
         if (IsScatterLogicEnabled(settings) && scatterRange > 0) {
-            const std::vector<CRole*> nearby = CollectHuntTargets(settings);
+            const std::vector<CRole*> nearby = CollectHuntTargets(settings, false, false, &stopCheckPos);
             Position castPos = {};
             CRole* shotTarget = nullptr;
             int hits = 0;

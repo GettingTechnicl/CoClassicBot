@@ -166,7 +166,8 @@ Position JitterDestination(const CGameMap* map, const Position& target, int radi
     return target;
 }
 
-std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool preferredOnly, bool ignoreSearchRange)
+std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool preferredOnly, bool ignoreSearchRange,
+    const Position* rangeOrigin)
 {
     // Session 9: CRoleMgr::m_deqRole is not a deque on v1074 — see entities.h.
     const std::vector<CRole*>& roles = Entities::Get();
@@ -212,11 +213,15 @@ std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool pr
         // "Only Target Mobs Within" gates ATTACK targeting (don't scatter/shoot
         // at mobs too far to hit), NOT navigation — steering callers pass
         // ignoreSearchRange=true so they can see, and walk toward, every
-        // in-zone clump the minimap shows.
-        if (!ignoreSearchRange && hero && settings.mobSearchRange > 0
-            && CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
-                role->m_posMap.x, role->m_posMap.y) > settings.mobSearchRange)
-            continue;
+        // in-zone clump the minimap shows. Measured from rangeOrigin (the
+        // caller's effective/jump-destination position) when given — see the
+        // header comment for why measuring from m_posMap mid-jump is wrong.
+        if (!ignoreSearchRange && hero && settings.mobSearchRange > 0) {
+            const Position& origin = rangeOrigin ? *rangeOrigin : hero->m_posMap;
+            if (CGameMap::TileDist(origin.x, origin.y,
+                    role->m_posMap.x, role->m_posMap.y) > settings.mobSearchRange)
+                continue;
+        }
         if (!ignoreFilters.empty() && NameMatchesFilters(role->GetName(), ignoreFilters))
             continue;
         if (!NameMatchesFilters(role->GetName(), includeFilters))

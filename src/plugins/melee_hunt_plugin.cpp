@@ -148,14 +148,18 @@ CRole* MeleeHuntPlugin::FindBestMeleeTarget(CHero* hero, CGameMap* map, const Au
     if (!hero || !map)
         return nullptr;
 
+    // Same mid-jump blindness fix as the archer: gate mobSearchRange from the
+    // effective position the clump/approach math below already uses.
+    const Position effectivePos = GetEffectiveHeroPosition(hero);
     const bool hasPreferFilter = settings.monsterPreferNames[0] != '\0';
-    std::vector<CRole*> targets = hasPreferFilter ? CollectHuntTargets(settings, true) : std::vector<CRole*>{};
+    std::vector<CRole*> targets = hasPreferFilter
+        ? CollectHuntTargets(settings, true, false, &effectivePos)
+        : std::vector<CRole*>{};
     if (targets.empty())
-        targets = CollectHuntTargets(settings);
+        targets = CollectHuntTargets(settings, false, false, &effectivePos);
     if (targets.empty())
         return nullptr;
 
-    const Position effectivePos = GetEffectiveHeroPosition(hero);
     const int actionRadius = (std::max)(1, settings.actionRadius);
     const int clumpRadius = (std::max)(1, settings.clumpRadius);
     const int currentClumpSize = CountTargetsInRadius(targets, effectivePos, (float)clumpRadius);

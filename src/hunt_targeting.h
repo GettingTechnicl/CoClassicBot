@@ -36,8 +36,17 @@ void AppendFilterToken(char* buffer, size_t bufferSize, const char* token);
 // which should see every in-zone monster the minimap shows, even though
 // ATTACK targeting deliberately still gates by mobSearchRange so the bot
 // doesn't fire (e.g. scatter) at things too far to actually hit.
+//
+// rangeOrigin, when non-null, is the position the mobSearchRange gate measures
+// from instead of hero->m_posMap. Combat callers MUST pass their
+// GetEffectiveHeroPosition() here: during a jump the hero's m_posMap is still
+// the departure tile, while every shot/steer decision is made from the jump
+// DESTINATION — measuring the two from different tiles made the bot blind to
+// mobs around where it was landing (it chain-jumped through dense packs
+// without firing, because "in attack range" and "worth shooting" never agreed
+// on where the hero actually was).
 std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool preferredOnly = false,
-    bool ignoreSearchRange = false);
+    bool ignoreSearchRange = false, const Position* rangeOrigin = nullptr);
 
 // ── Archer mode helpers ───────────────────────────────────────────────────
 // Session 12: independently copy-pasted (byte-for-byte identical) across
