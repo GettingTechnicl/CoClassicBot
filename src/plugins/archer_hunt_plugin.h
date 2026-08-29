@@ -75,6 +75,13 @@ private:
     // and actually shoot.
     mutable Position m_committedApproachPos = {};
     mutable DWORD m_committedApproachTick = 0;
+    // Session 13 [DON'T CAMP]: position and start-tick of the current
+    // stationary-fire hold — see the [DON'T CAMP] comment in
+    // HandleCombatApproach. Caps how long "a local shot exists" is allowed to
+    // keep the archer standing dead still repeatedly re-casting at the same
+    // spot, instead of advancing through the pack between shots.
+    Position m_stationaryFirePos = {};
+    DWORD    m_stationaryFireSinceTick = 0;
     // Cycles the patrol band so idle movement drifts inward and outward
     // instead of tracing the zone rim. See FindArcherPatrolPosition.
     mutable int   m_patrolDriftPhase = 0;

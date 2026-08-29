@@ -897,21 +897,73 @@ void ArcherHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Au
     // couple of seconds — it kept pathing toward a "better" clump even while
     // standing in a shootable one. Halting the pathfinder here is what turns
     // that tour into actually clearing the pack it's already in.
+    //
+    // Session 13 [DON'T CAMP]: the fix above had no escape hatch of its own —
+    // as long as SOME target stayed within scatterRange (trivial in a dense
+    // pack with minimumScatterHits=1), it kept re-arming the stop and firing
+    // from the exact same tile indefinitely. Live log: 2 casts, 364ms apart,
+    // zero movement packets, for a full second, then only one real jump. The
+    // user's own play style is continuous jump-and-scatter, never planting —
+    // so cap how long a single spot is allowed to hold the archer: once
+    // exceeded, search for a fresh tile that STILL clears minimumHits (via
+    // FindBestScatterApproach's preferFarTiles bias, which favours genuine
+    // progress over the nearest qualifying tile) and advance to it instead of
+    // re-camping. Firing continues while that hop is in flight (existing
+    // "Casting Scatter during jump" path in HandleCombatAttack) — this turns
+    // stand-and-unload into the fluid cast-then-hop cadence the bot is meant
+    // to have.
     {
         const Position stopCheckPos = GetEffectiveHeroPosition(hero);
         const int scatterRange = GetScatterRange(hero);
         const int minHits = (std::max)(1, settings.minimumScatterHits);
+        const DWORD nowTick = GetTickCount();
         if (IsScatterLogicEnabled(settings) && scatterRange > 0) {
             const std::vector<CRole*> nearby = CollectHuntTargets(settings, false, false, &stopCheckPos);
             Position castPos = {};
             CRole* shotTarget = nullptr;
             int hits = 0;
             if (FindBestScatterShot(nearby, stopCheckPos, scatterRange, minHits, castPos, shotTarget, hits)) {
+                constexpr DWORD kMaxCampMs = 900;
+                constexpr int kSamePosTiles = 2;
+                const bool samePos = !IsZeroPos(m_stationaryFirePos)
+                    && CGameMap::TileDist(m_stationaryFirePos.x, m_stationaryFirePos.y,
+                           stopCheckPos.x, stopCheckPos.y) <= kSamePosTiles;
+                const bool campedTooLong = samePos && (nowTick - m_stationaryFireSinceTick) >= kMaxCampMs;
+
+                if (!campedTooLong) {
+                    if (!samePos) {
+                        m_stationaryFirePos = stopCheckPos;
+                        m_stationaryFireSinceTick = nowTick;
+                    }
+                    if (Pathfinder::Get().IsActive())
+                        Pathfinder::Get().Stop();
+                    return;  // don't start/continue any approach — fire from here
+                }
+
+                // Camped long enough — force an advancing hop that still
+                // fires, instead of falling through to the "already in
+                // range, no approach needed" early-out below.
+                m_stationaryFirePos = {};
+                Position advancePos = {}, advanceCastPos = {};
+                CRole* advanceTarget = nullptr;
+                int advanceHits = 0;
+                if (FindBestScatterApproach(hero, map, settings, nearby, scatterRange, minHits,
+                        advancePos, advanceCastPos, advanceTarget, advanceHits, /*preferFarTiles=*/true)
+                    && StartPathTo(hero, map, advancePos, 0)) {
+                    SetState(AutoHuntState::ApproachTarget, "Jumping to scatter clump");
+                    return;
+                }
+                // No better advance tile found (e.g. boxed in) — fall back to
+                // camping rather than stalling with no action at all.
+                m_stationaryFirePos = stopCheckPos;
+                m_stationaryFireSinceTick = nowTick;
                 if (Pathfinder::Get().IsActive())
                     Pathfinder::Get().Stop();
-                return;  // don't start/continue any approach — fire from here
+                return;
             }
         }
+        // No local shot this tick — any camp hold ends naturally.
+        m_stationaryFirePos = {};
     }
 
     const Position effectiveAttackPos = GetEffectiveHeroPosition(hero);
