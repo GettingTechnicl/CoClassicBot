@@ -129,6 +129,22 @@ CMapItem* HuntLootManager::FindBestLoot(
     const DWORD spawnGraceMs = GetLootSpawnGraceMs(settings);
     CMapItem* best = nullptr;
     float bestDist = (std::numeric_limits<float>::max)();
+    // Session 13 [PRIORITY SELECTION WEIGHT]: tracked separately from `best`
+    // so a priority item (meteor/DragonBall/+gear) always wins the pick,
+    // regardless of distance, once any exists among the passing candidates.
+    // The earlier [PRIORITY SELECTION GAP] fix got a priority item PAST the
+    // confirmed-drop/list/quality gate, but this loop still only tracked a
+    // single nearest-wins `best` — in a dense loot field (200+ ground items
+    // is typical, live-confirmed) an ordinary coin is nearly always closer
+    // than a meteor sitting 20-40 tiles out, so the meteor won for exactly
+    // one decision tick right after a jump happened to land it in the lead,
+    // then instantly lost to nearer clutter on the very next tick. Live log:
+    // a meteor picked at dist=22.8, replaced 108ms later by dist=19, then
+    // 5.1 — never actually pursued long enough to be reached. Both tiers use
+    // nearest-first as their own tie-break; a priority item only loses to
+    // another, closer priority item, never to ordinary loot.
+    CMapItem* bestPriority = nullptr;
+    float bestPriorityDist = (std::numeric_limits<float>::max)();
     int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0, skippedOutOfRange = 0, skippedBagFull = 0, skippedStale = 0;
 
     // True if this is a money drop we actually want (lootMoney on AND at/above
@@ -224,15 +240,30 @@ CMapItem* HuntLootManager::FindBestLoot(
             continue;
         }
 
+        if (isPriorityItem) {
+            if (dist < bestPriorityDist) {
+                bestPriorityDist = dist;
+                bestPriority = itemRef;
+            }
+            continue;  // never lets an ordinary item's `best`/bestDist see this one
+        }
         if (dist < bestDist) {
             bestDist = dist;
             best = itemRef;
         }
     }
 
+    // A priority item always wins, any distance — see [PRIORITY SELECTION
+    // WEIGHT] above.
+    if (bestPriority) {
+        best = bestPriority;
+        bestDist = bestPriorityDist;
+    }
+
     if (best) {
-        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} notOurDrop={} outOfRange={} bagFullSkip={} stale={}",
+        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f}{} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} notOurDrop={} outOfRange={} bagFullSkip={} stale={}",
             best->m_id, best->m_idType, best->m_pos.x, best->m_pos.y, bestDist,
+            best == bestPriority ? " [PRIORITY]" : "",
             totalItems, skippedFilter, skippedIgnored, skippedZone, skippedSpawnGrace, skippedNotOurDrop,
             skippedOutOfRange, skippedBagFull, skippedStale);
     }
