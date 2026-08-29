@@ -1722,8 +1722,24 @@ void BaseHuntPlugin::Update()
             // further defers to a steerable pack when one exists. Dedicated
             // hoovering still happens whenever no pack is visible (steer
             // returns false).
-            constexpr int kLootUnderfootTiles = 3;
-            if (!isPriorityLoot && lootDist > kLootUnderfootTiles
+            //
+            // Session 13 [HUMAN-SPEED LOOT FIX]: the "3 tiles is basically
+            // free" assumption only holds when a jump is nearly instant
+            // (aggressive/speedhack mode). At the user's own human-paced
+            // slider settings a 3-tile detour costs a full movement-interval
+            // slot (~900ms+) — the same order of cost as an actual attack —
+            // while one scatter volley can drop 5+ coins at once. Live
+            // session: ground-item count climbed from ~70 to ~150 over ~6
+            // minutes (collection losing to generation), and a full state-
+            // duration breakdown showed 70% of session TIME in "Loot Nearby"
+            // vs 5.8% actually attacking. Tightened to 0 (truly underfoot,
+            // already-standing-on-it) when not aggressive — the always-on
+            // free pickup above (IsWithinLootPickupRange + TryPickupLootItem)
+            // already covers that case with zero dedicated travel; anything
+            // requiring so much as a single extra step now defers to a
+            // steerable pack, same as the >3 case already did.
+            const int lootUnderfootTiles = ShouldUseAggressiveSpeeds(settings) ? 3 : 0;
+            if (!isPriorityLoot && lootDist > lootUnderfootTiles
                 && TrySteerTowardZoneClump(hero, map, settings))
                 return;
             if (StartPathNearTarget(hero, map, loot->m_pos, kLootPathStopRange)) {
@@ -1859,11 +1875,15 @@ void BaseHuntPlugin::Update()
     if (loot) {
         // Session 13 [LOOT-BINGE FIX]: same pack-over-distant-loot rule as the
         // loot-phase block above — non-priority loot beyond underfoot range
-        // defers to a steerable pack when one exists.
+        // defers to a steerable pack when one exists. Session 13
+        // [HUMAN-SPEED LOOT FIX]: underfoot range is 0 (not 3) when not
+        // aggressive — see the loot-phase block's comment for the full
+        // reasoning (a 3-tile "free" detour costs a real movement-interval
+        // slot at human speed, not the ~0 it costs at speedhack speed).
         const int noTargetLootDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
             loot->m_pos.x, loot->m_pos.y);
-        constexpr int kLootUnderfootTiles = 3;
-        if (noTargetLootDist > kLootUnderfootTiles
+        const int lootUnderfootTiles = ShouldUseAggressiveSpeeds(settings) ? 3 : 0;
+        if (noTargetLootDist > lootUnderfootTiles
             && !HuntTownService::IsPriorityLootItem(*loot)
             && TrySteerTowardZoneClump(hero, map, settings))
             return;
