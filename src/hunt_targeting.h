@@ -31,7 +31,13 @@ void AppendFilterToken(char* buffer, size_t bufferSize, const char* token);
 
 // Collect all live monster targets that satisfy zone/name filters.
 // If preferredOnly is true, only monsters matching monsterPreferNames are returned.
-std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool preferredOnly = false);
+// If ignoreSearchRange is true, the per-hero "Only Target Mobs Within"
+// (mobSearchRange) distance filter is skipped — used for NAVIGATION/steering,
+// which should see every in-zone monster the minimap shows, even though
+// ATTACK targeting deliberately still gates by mobSearchRange so the bot
+// doesn't fire (e.g. scatter) at things too far to actually hit.
+std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool preferredOnly = false,
+    bool ignoreSearchRange = false);
 
 // ── Archer mode helpers ───────────────────────────────────────────────────
 // Session 12: independently copy-pasted (byte-for-byte identical) across

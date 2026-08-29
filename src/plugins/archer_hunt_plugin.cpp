@@ -544,33 +544,72 @@ CRole* ArcherHuntPlugin::FindBestArcherTarget(CHero* hero, CGameMap* map, const 
         const bool hasLocalShot = FindBestScatterShot(targets, effectivePos, scatterRange, minimumScatterHits,
                 scatterCastPos, scatterTarget, scatterHits);
 
+        // Session 13 [FIRE-RATE FIX]: once we've committed to approaching a
+        // clump, keep going to THAT position instead of re-scoring every clump
+        // on the next decision tick (~7ms apart). Re-scoring caused a
+        // jump-storm: the archer bounced between clumps tens of tiles apart,
+        // restarting a path before the previous jump ever settled, and fired
+        // only ~once every 2-4 seconds. The commitment is dropped as soon as
+        // we arrive (within scatter range of it), if it expires, or if a local
+        // shot becomes available — so this never blocks shooting, it only
+        // stops the destination from changing mid-flight.
+        // Session 13 [TOURING FIX]: a shot we can take RIGHT NOW always wins
+        // over travelling to a better one. Without this the commitment above
+        // turned the archer into a tourist: live trace showed it sprinting
+        // ~120 tiles in 3s (15-18 tile jumps back to back) toward a distant
+        // clump, firing a single scatter in passing and immediately jumping
+        // onward mid-cast, blowing straight through monsters it could already
+        // hit. Dropping the commitment the instant a local shot exists is what
+        // makes it stop and actually clear the pack it is standing in.
+        constexpr DWORD kApproachCommitMs = 3000;
+        const bool commitmentActive = !hasLocalShot
+            && !IsZeroPos(m_committedApproachPos)
+            && (now - m_committedApproachTick) < kApproachCommitMs
+            && CGameMap::TileDist(effectivePos.x, effectivePos.y,
+                   m_committedApproachPos.x, m_committedApproachPos.y) > scatterRange;
+
         Position scatterApproachPos = {};
         Position scatterApproachCastPos = {};
         CRole* scatterApproachTarget = nullptr;
         int scatterApproachHits = 0;
         bool hasApproachShot = false;
-        const bool shouldSearchApproach = !retreatHoldActive
+        const bool shouldSearchApproach = !retreatHoldActive && !commitmentActive
             && (!hasLocalShot || (now - m_lastScatterApproachTick >= 500));
         if (shouldSearchApproach) {
             m_lastScatterApproachTick = now;
             hasApproachShot = FindBestScatterApproach(hero, map, settings, targets, scatterRange, minimumScatterHits,
                     scatterApproachPos, scatterApproachCastPos, scatterApproachTarget, scatterApproachHits);
         }
+        // Arrived at (or gave up on) the committed position — clear it so the
+        // next tick is free to pick a new clump.
+        if (!commitmentActive && !IsZeroPos(m_committedApproachPos))
+            m_committedApproachPos = {};
 
-        // Session 10 [ATTACK STARVATION FIX]: only chase a better position when
-        // the shot we already have is weak.
+        // Session 10 [ATTACK STARVATION FIX] + Session 13 refinement: only
+        // chase a better position when the shot we already have is genuinely
+        // weak — otherwise fire from where we stand.
         //
-        // This used to reposition whenever a move caught even ONE more target.
-        // Surrounded by a big group there is almost always some tile that
-        // hits one more, so the bot jumped from clump to clump and never fired
-        // — observed live with 9 targets, nearest 3 tiles away, five monsters
-        // actively hitting the player, state stuck on "Jumping to scatter clump".
-        //
-        // Matches the intended rule: scatter whatever is in the cone, and only
-        // move first if there is a single target and moving would catch that
-        // one plus others.
-        const bool localShotWorthTaking = hasLocalShot && scatterHits >= 2;
-        if (!localShotWorthTaking && hasApproachShot && scatterApproachHits > scatterHits) {
+        // The original fix hardcoded ">= 2" as "worth taking", which ignored
+        // the user's own minimumScatterHits setting. With minimumScatterHits=1
+        // a perfectly valid 1-hit local shot was deemed not-worth-taking, so
+        // the bot kept jumping toward a marginally bigger clump after EVERY
+        // cast. In a dense pack there is always some +1 tile, so it
+        // repositioned endlessly and fired only ~once every 2-4 seconds
+        // (live-measured by arrow count) when it should be scattering
+        // continuously. Now: take the local shot as soon as it meets the
+        // user's own minimum-hits bar, and only reposition when the local shot
+        // is below that bar, or a reachable position is MEANINGFULLY bigger
+        // (>= +2 hits) rather than merely +1 — repositioning for a single
+        // extra target costs a whole jump-and-settle cycle and is what starves
+        // the fire rate.
+        const bool localShotWorthTaking = hasLocalShot && scatterHits >= minimumScatterHits;
+        const bool approachMeaningfullyBetter = hasApproachShot
+            && (scatterApproachHits >= scatterHits + 2 || !hasLocalShot);
+        if (!localShotWorthTaking && approachMeaningfullyBetter) {
+            // Commit to this destination (see kApproachCommitMs above) so the
+            // next decision tick doesn't immediately chase a different clump.
+            m_committedApproachPos = scatterApproachPos;
+            m_committedApproachTick = now;
             if (outApproachPos)
                 *outApproachPos = scatterApproachPos;
             if (outAttackPos)
@@ -593,6 +632,8 @@ CRole* ArcherHuntPlugin::FindBestArcherTarget(CHero* hero, CGameMap* map, const 
         }
 
         if (hasApproachShot) {
+            m_committedApproachPos = scatterApproachPos;
+            m_committedApproachTick = now;
             if (outApproachPos)
                 *outApproachPos = scatterApproachPos;
             if (outAttackPos)
@@ -842,6 +883,30 @@ void ArcherHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Au
 {
     if (!hero || !map || !target)
         return;
+
+    // Session 13 [TOURING FIX]: if a scatter shot is already available from
+    // where we're standing, STOP and take it instead of continuing to travel.
+    // Live trace showed the archer chain-jumping 15-18 tiles at a time across
+    // the whole zone while only squeezing off one scatter in passing every
+    // couple of seconds — it kept pathing toward a "better" clump even while
+    // standing in a shootable one. Halting the pathfinder here is what turns
+    // that tour into actually clearing the pack it's already in.
+    {
+        const Position stopCheckPos = GetEffectiveHeroPosition(hero);
+        const int scatterRange = GetScatterRange(hero);
+        const int minHits = (std::max)(1, settings.minimumScatterHits);
+        if (IsScatterLogicEnabled(settings) && scatterRange > 0) {
+            const std::vector<CRole*> nearby = CollectHuntTargets(settings);
+            Position castPos = {};
+            CRole* shotTarget = nullptr;
+            int hits = 0;
+            if (FindBestScatterShot(nearby, stopCheckPos, scatterRange, minHits, castPos, shotTarget, hits)) {
+                if (Pathfinder::Get().IsActive())
+                    Pathfinder::Get().Stop();
+                return;  // don't start/continue any approach — fire from here
+            }
+        }
+    }
 
     const Position effectiveAttackPos = GetEffectiveHeroPosition(hero);
     const int regularAttackRange = GetRegularArcherAttackRange(settings);
