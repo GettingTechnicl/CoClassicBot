@@ -360,6 +360,21 @@ void MeleeHuntPlugin::NoteMeleeAttackAttempt(OBJID targetId)
 }
 
 
+// ── ComputeMeleeAttackDelayMs ───────────────────────────────────────────────────
+
+DWORD MeleeHuntPlugin::ComputeMeleeAttackDelayMs(CHero* hero, CRole* target, const AutoHuntSettings& settings) const
+{
+    const bool targetChanged = (m_targetId != target->GetID());
+    const bool justFinishedApproach = (m_state == AutoHuntState::ApproachTarget);
+    const DWORD attackInterval = hero->IsCycloneActive()
+        ? GetCycloneAttackIntervalMsNoJitter(settings)
+        : GetAttackIntervalMsNoJitter(settings);
+    return (targetChanged || justFinishedApproach)
+        ? GetTargetSwitchAttackIntervalMsNoJitter(settings)
+        : attackInterval;
+}
+
+
 // ── FindBestTarget override ───────────────────────────────────────────────────
 
 CRole* MeleeHuntPlugin::FindBestTarget(CHero* hero, CGameMap* map, const AutoHuntSettings& settings,
@@ -414,6 +429,23 @@ void MeleeHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Aut
             && approachDist <= localWalkRadius
             && StartWalkTo(hero, map, approachPos, 0);
         const bool startedPath = startedWalk || StartPathTo(hero, map, approachPos, 0);
+        // Session 14 [OSCILLATION DIAGNOSTIC]: user live-reported (video +
+        // log both confirm) stretches of several seconds where the
+        // character repeatedly jumps between two fixed points without
+        // landing an attack, before suddenly resuming fast kills. Not
+        // throttled — this only fires on a genuine "decided to approach"
+        // transition (bounded by the state machine itself), not a per-
+        // candidate scan loop, so volume is not a concern the way
+        // FindBestLoot's per-item trace was (session 14, commit 915fabd).
+        // Once this fires during a live oscillation, comparing consecutive
+        // lines' targetId/committedId/approachPos answers the open question:
+        // same target with an unstable approach search, vs. two different
+        // targets alternating despite the commitment fix.
+        spdlog::info("[hunt-melee] Approach target={} targetPos=({},{}) committed={} hits={}/{} approachPos=({},{}) heroPos=({},{}) moveDist={} approachDist={} clumpSize={} {}",
+            target->GetID(), target->m_posMap.x, target->m_posMap.y,
+            m_committedTargetId, m_hitsOnCommittedTarget, (std::max)(1, settings.meleeMinHitsPerTarget),
+            approachPos.x, approachPos.y, hero->m_posMap.x, hero->m_posMap.y,
+            moveDist, approachDist, clumpSize, startedWalk ? "walk" : "jump");
         if (startedPath) {
             SetState(AutoHuntState::ApproachTarget,
                 startedWalk
@@ -423,11 +455,20 @@ void MeleeHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Aut
             SetState(AutoHuntState::ApproachTarget, "Unable to reach target");
         }
     } else {
-        // No approach pos — path near the target directly
+        // No approach pos — path near the target directly. This branch means
+        // FindBestMeleeApproachPos found NO valid adjacent tile at all (every
+        // candidate blocked/unwalkable/out of zone) — see this function's
+        // header comment. Worth knowing if this is where an oscillation is
+        // actually coming from, since StartPathNearTarget has no position
+        // preference of its own.
         const bool startedWalk = allowWalkToMob
             && moveDist <= localWalkRadius
             && StartWalkTo(hero, map, target->m_posMap, kReliableAttackRange);
         const bool startedPath = startedWalk || StartPathNearTarget(hero, map, target->m_posMap, kReliableAttackRange);
+        spdlog::info("[hunt-melee] Approach(no-pos-found) target={} targetPos=({},{}) committed={} hits={}/{} heroPos=({},{}) moveDist={} clumpSize={} {}",
+            target->GetID(), target->m_posMap.x, target->m_posMap.y,
+            m_committedTargetId, m_hitsOnCommittedTarget, (std::max)(1, settings.meleeMinHitsPerTarget),
+            hero->m_posMap.x, hero->m_posMap.y, moveDist, clumpSize, startedWalk ? "walk" : "path");
         if (startedPath) {
             SetState(AutoHuntState::ApproachTarget,
                 startedWalk ? "Walking to target" : "Closing distance to target");
@@ -467,7 +508,7 @@ void MeleeHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const AutoH
     }
 
     // Determine attack interval
-    const DWORD nextAttackDelay = ComputeNextAttackDelayMs(hero, target, settings);
+    const DWORD nextAttackDelay = ComputeMeleeAttackDelayMs(hero, target, settings);
 
     if (Pathfinder::Get().IsActive())
         Pathfinder::Get().Stop();

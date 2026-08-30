@@ -311,6 +311,36 @@ inline DWORD GetTargetSwitchAttackIntervalMs(const AutoHuntSettings& settings)
         kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs));
 }
 
+// Session 14 [MELEE NO-JITTER ATTACK]: un-jittered twins of the three
+// getters above, added rather than modifying the shared ones (archer also
+// calls those via BaseHuntPlugin::ComputeNextAttackDelayMs). Per the user:
+// jitter exists to keep MOVEMENT/positioning from reading as mechanically
+// periodic (see GetMovementIntervalMs — untouched, still jittered), but a
+// melee character already fixed on a target and attacking it has no
+// equivalent reason to pause between swings — a real player mashing attack
+// on a stationary monster doesn't have randomized hesitation, only the
+// approach/reposition between monsters does. Used only by melee's own
+// ComputeMeleeAttackDelayMs (melee_hunt_plugin.cpp); archer is unaffected.
+inline DWORD GetAttackIntervalMsNoJitter(const AutoHuntSettings& settings)
+{
+    if (ShouldUseAggressiveSpeeds(settings))
+        return kMinAttackIntervalMs;
+    return ClampMs(settings.attackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs);
+}
+inline DWORD GetCycloneAttackIntervalMsNoJitter(const AutoHuntSettings& settings)
+{
+    if (ShouldUseAggressiveSpeeds(settings))
+        return kMinAttackIntervalMs;
+    return ClampMs(settings.cycloneAttackIntervalMs, kMinAttackIntervalMs, kMaxAttackIntervalMs);
+}
+inline DWORD GetTargetSwitchAttackIntervalMsNoJitter(const AutoHuntSettings& settings)
+{
+    if (ShouldUseAggressiveSpeeds(settings))
+        return kMinTargetSwitchAttackIntervalMs;
+    return ClampMs(settings.targetSwitchAttackIntervalMs,
+        kMinTargetSwitchAttackIntervalMs, kMaxTargetSwitchAttackIntervalMs);
+}
+
 constexpr int kMinItemActionIntervalMs = 100;
 constexpr int kMaxItemActionIntervalMs = 5000;
 inline DWORD GetItemActionIntervalMs(const AutoHuntSettings& settings)

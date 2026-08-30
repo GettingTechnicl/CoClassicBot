@@ -55,4 +55,13 @@ private:
     // Called from HandleCombatAttack right after a real attack packet is
     // sent, so the commitment counter reflects actual attempts, not ticks.
     void NoteMeleeAttackAttempt(OBJID targetId);
+
+    // Session 14 [MELEE NO-JITTER ATTACK]: melee-only replacement for the
+    // shared BaseHuntPlugin::ComputeNextAttackDelayMs (archer uses that one
+    // directly, unaffected by this). Same targetChanged/justFinishedApproach
+    // logic, but built on hunt_intervals.h's *NoJitter interval getters —
+    // per the user, a melee character already fixed on and attacking a
+    // target has no reason to pause between swings the way movement between
+    // monsters does; jitter stays for the approach/reposition side only.
+    DWORD ComputeMeleeAttackDelayMs(CHero* hero, CRole* target, const AutoHuntSettings& settings) const;
 };
