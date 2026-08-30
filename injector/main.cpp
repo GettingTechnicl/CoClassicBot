@@ -1327,6 +1327,17 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
     for (;;) {
         printf("[*] Launching fresh %s process...\n", GAME_EXE);
         session->state = SessionState::Launching;
+        // Clear any error status carried over from a PRIOR iteration (e.g.
+        // "Reconnect failed repeatedly — relaunching", set right before the
+        // give-up TerminateProcess that dropped us back here). RefreshRows
+        // shows GetStatus() whenever it's non-empty and only falls back to the
+        // live StateLabel() when it's empty, so a stale error string from a
+        // now-superseded relaunch would otherwise keep displaying "Reconnect
+        // failed…" over an account that has actually relaunched and gone back
+        // to Running — live-observed after an AFK auto-recovery. A fresh
+        // relaunch is a clean slate; the previous error no longer describes
+        // this account's state.
+        session->SetStatus("");
         const DWORD launchTick = GetTickCount();
 
         STARTUPINFOA si{};
