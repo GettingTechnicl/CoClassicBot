@@ -151,7 +151,7 @@ CMapItem* HuntLootManager::FindBestLoot(
     // another, closer priority item, never to ordinary loot.
     CMapItem* bestPriority = nullptr;
     float bestPriorityDist = (std::numeric_limits<float>::max)();
-    int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedNotOurDrop = 0, skippedOutOfRange = 0, skippedBagFull = 0, skippedStale = 0;
+    int totalItems = 0, skippedFilter = 0, skippedIgnored = 0, skippedZone = 0, skippedSpawnGrace = 0, skippedOutOfRange = 0, skippedBagFull = 0, skippedStale = 0;
 
     // True if this is a money drop we actually want (lootMoney on AND at/above
     // the configured minimum tier) — reused below since both the gold-value
@@ -230,13 +230,28 @@ CMapItem* HuntLootManager::FindBestLoot(
         const bool confirmed = IsConfirmedDrop(itemRef->m_pos, now);
         // isPriorityItem computed earlier in this loop (see the stale-age
         // skip above, which also needs it).
-        if (!confirmed && !isPriorityItem) {
-            if (!HuntTownService::ShouldLootMapItem(settings, *itemRef)) { ++skippedFilter; continue; }
-            if (!HuntTownService::IsSelectedLootItem(settings, itemRef->m_idType)
-                && !isWantedMoney(*itemRef)) {
-                ++skippedNotOurDrop;
-                continue;
-            }
+        //
+        // Session 13 [REDUNDANT GATE BUG]: this used to ALSO require
+        // IsSelectedLootItem(...) || isWantedMoney(...) after ShouldLootMapItem
+        // already passed — but ShouldLootMapItem is a complete, self-contained
+        // OR of every valid inclusion path (money, Loot Item List, a checked
+        // quality, or Minimum Loot Plus on real equipment). Re-requiring
+        // list-or-money on top of that silently vetoed anything that passed
+        // ONLY via quality or plus — i.e., every ordinary item the quality
+        // checkboxes and plus slider exist to catch, since the Loot Item List
+        // is realistically only ever populated with meteor/DragonBall IDs.
+        // Live-confirmed: across a full session, ZERO non-money items ever
+        // won selection, including a hand-verified +1 PhoenixHook the user
+        // dropped and stood next to — it never appeared in the log even
+        // once. This bug predates this session's work; it was previously
+        // masked by the broader GetPlus()-inclusive selection-gate bypass
+        // (see IsMeteorOrDragonBallItem's header comment) letting SOME items
+        // through a different, incorrect path, which muddied the picture
+        // until that bypass was narrowed to meteor/DragonBall-only.
+        if (!confirmed && !isPriorityItem
+            && !HuntTownService::ShouldLootMapItem(settings, *itemRef)) {
+            ++skippedFilter;
+            continue;
         }
 
         const float dist = hero->m_posMap.DistanceTo(itemRef->m_pos);
@@ -281,10 +296,10 @@ CMapItem* HuntLootManager::FindBestLoot(
     }
 
     if (best) {
-        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f}{} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} notOurDrop={} outOfRange={} bagFullSkip={} stale={}",
+        spdlog::trace("[hunt-loot] FindBestLoot: picked id={} type={} pos=({},{}) dist={:.1f}{} | ground={} filteredOut={} ignored={} outOfZone={} spawnGrace={} outOfRange={} bagFullSkip={} stale={}",
             best->m_id, best->m_idType, best->m_pos.x, best->m_pos.y, bestDist,
             best == bestPriority ? " [PRIORITY]" : "",
-            totalItems, skippedFilter, skippedIgnored, skippedZone, skippedSpawnGrace, skippedNotOurDrop,
+            totalItems, skippedFilter, skippedIgnored, skippedZone, skippedSpawnGrace,
             skippedOutOfRange, skippedBagFull, skippedStale);
     }
 
