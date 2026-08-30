@@ -965,6 +965,23 @@ bool BaseHuntPlugin::StartPathNearTarget(CHero* hero, CGameMap* map, const Posit
 
     for (int dx = -searchRadius; dx <= searchRadius; ++dx) {
         for (int dy = -searchRadius; dy <= searchRadius; ++dy) {
+            // Session 14 [ON-TARGET-TILE FIX]: user directly observed this
+            // live — the bot lands EXACTLY on a monster's tile, which
+            // forces the monster to relocate ("jump") off it, so the bot's
+            // next re-approach chases a moved target and can land on it
+            // again, repeating. Root cause: this loop's own ranking always
+            // prefers the smallest targetDist, and the target's own tile
+            // (dx=0,dy=0) has targetDist=0 — the best possible score — and
+            // is never excluded, because IsTileOccupied below deliberately
+            // doesn't count monsters as blockers (see that function's own
+            // comment: needed so combat can approach INTO a dense pack at
+            // all). That's correct and necessary for loot pickup, which
+            // calls this with desiredRange=0 specifically to walk onto the
+            // item's own tile — but any caller wanting to stay NEAR a
+            // target (desiredRange > 0, e.g. melee/archer's combat-approach
+            // fallback) never wants the target's own tile as the answer.
+            if (desiredRange > 0 && dx == 0 && dy == 0)
+                continue;
             const Position candidate = {targetPos.x + dx, targetPos.y + dy};
             const int targetDist = CGameMap::TileDist(candidate.x, candidate.y, targetPos.x, targetPos.y);
             if (targetDist > searchRadius)
@@ -987,8 +1004,27 @@ bool BaseHuntPlugin::StartPathNearTarget(CHero* hero, CGameMap* map, const Posit
         }
     }
 
-    if (!found)
+    if (!found) {
+        spdlog::trace("[hunt] StartPathNearTarget: no candidate found targetPos=({},{}) desiredRange={} searchRadius={} heroPos=({},{})",
+            targetPos.x, targetPos.y, desiredRange, searchRadius, hero->m_posMap.x, hero->m_posMap.y);
         return false;
+    }
+
+    // Session 14 [DEADLOCK DIAGNOSTIC]: this search picks the CLOSEST-TO-
+    // TARGET walkable+unoccupied tile within searchRadius, but never
+    // verifies that tile actually satisfies desiredRange — a live-reported
+    // melee deadlock (kill counter frozen, attacks firing from 3 tiles away
+    // for 2+ seconds with hero position never changing) is suspected to
+    // trace back to exactly that gap: bestTargetDist ends up > desiredRange,
+    // hero settles there, and every subsequent call recomputes the same
+    // inadequate bestPos forever. Logged here (not just at the melee call
+    // site) since this function is shared with archer/loot pathing too —
+    // this line alone will show whether that's really what's happening,
+    // without changing behavior for anyone yet.
+    const bool satisfiesRange = bestTargetDist <= desiredRange;
+    spdlog::trace("[hunt] StartPathNearTarget: targetPos=({},{}) bestPos=({},{}) bestTargetDist={} desiredRange={} satisfiesRange={} heroPos=({},{})",
+        targetPos.x, targetPos.y, bestPos.x, bestPos.y, bestTargetDist, desiredRange,
+        satisfiesRange ? "yes" : "NO", hero->m_posMap.x, hero->m_posMap.y);
 
     return StartPathTo(hero, map, bestPos, 0);
 }
