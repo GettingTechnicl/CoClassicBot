@@ -55,6 +55,11 @@ static constexpr DWORD kLootGhostConfirmMs       = 800;
 // still giving up sooner than 50s of true age), never over-count it.
 static constexpr DWORD kLootStaleMaxAgeMs        = 50000;
 static constexpr DWORD kLootTargetSwitchIntervalMs = 100;
+// Session 14 [SKIP-TRACE THROTTLE]: see ShouldLogSkip / m_lootSkipLogState
+// in hunt_loot.h for why this exists at all — without it, FindBestLoot's
+// per-item skip trace running at ~150Hz collapsed 4 log files' worth of
+// retention to about 4 seconds on first live use.
+static constexpr DWORD kSkipLogRefreshMs = 5000;
 
 static constexpr int kMinLootPickupIgnoreMs = 0;
 static constexpr int kMaxLootPickupIgnoreMs = 300000;
@@ -204,6 +209,16 @@ void DebugDumpNearestGroundItem(CHero* hero)
 
 // ── HuntLootManager implementation ───────────────────────────────────────────
 
+bool HuntLootManager::ShouldLogSkip(OBJID itemId, const char* reason, DWORD now) const
+{
+    SkipLogState& st = m_lootSkipLogState[itemId];
+    if (st.reason == reason && (now - st.tick) < kSkipLogRefreshMs)
+        return false;
+    st.reason = reason;
+    st.tick = now;
+    return true;
+}
+
 CMapItem* HuntLootManager::FindBestLoot(
     CHero* hero, CGameMap* map, const AutoHuntSettings& settings,
     std::function<bool(OBJID, DWORD)> isLootPickupIgnoredFn,
@@ -260,7 +275,9 @@ CMapItem* HuntLootManager::FindBestLoot(
     // seen. This logs one line per rejected candidate, same trace level as
     // everything else in this loop, so a specific dropped item can be
     // grepped by type/id and its exact rejection reason read directly.
-    auto traceSkip = [](const CMapItem& item, const char* reason) {
+    auto traceSkip = [this, now](const CMapItem& item, const char* reason) {
+        if (!ShouldLogSkip(item.m_id, reason, now))
+            return;
         spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason={}",
             item.m_id, item.m_idType, item.m_pos.x, item.m_pos.y, reason);
     };
@@ -288,8 +305,9 @@ CMapItem* HuntLootManager::FindBestLoot(
         const DWORD seenAge = now - seenResult.first->second;
         if (seenAge < spawnGraceMs) {
             ++skippedSpawnGrace;
-            spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=spawn_grace age={}ms grace={}ms",
-                itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, seenAge, spawnGraceMs);
+            if (ShouldLogSkip(itemRef->m_id, "spawn_grace", now))
+                spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=spawn_grace age={}ms grace={}ms",
+                    itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, seenAge, spawnGraceMs);
             continue;
         }
         // Stale skip: too old to still be worth considering. Session 13
@@ -305,8 +323,9 @@ CMapItem* HuntLootManager::FindBestLoot(
         // risks abandoning a still-real one for no proven reason.
         if (!isPriorityItem && seenAge > kLootStaleMaxAgeMs) {
             ++skippedStale;
-            spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=stale age={}ms max={}ms",
-                itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, seenAge, kLootStaleMaxAgeMs);
+            if (ShouldLogSkip(itemRef->m_id, "stale", now))
+                spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=stale age={}ms max={}ms",
+                    itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, seenAge, kLootStaleMaxAgeMs);
             continue;
         }
         if (isLootPickupIgnoredFn && isLootPickupIgnoredFn(itemRef->m_id, now)) {
@@ -329,9 +348,10 @@ CMapItem* HuntLootManager::FindBestLoot(
             const ItemTypeInfo* info = GetItemTypeInfo(itemRef->m_idType);
             if (info && info->price < (uint32_t)settings.minimumLootGoldValue) {
                 ++skippedFilter;
-                spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=below_gold_value_floor price={} min={}",
-                    itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y,
-                    info->price, settings.minimumLootGoldValue);
+                if (ShouldLogSkip(itemRef->m_id, "below_gold_value_floor", now))
+                    spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=below_gold_value_floor price={} min={}",
+                        itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y,
+                        info->price, settings.minimumLootGoldValue);
                 continue;
             }
         }
@@ -384,10 +404,18 @@ CMapItem* HuntLootManager::FindBestLoot(
             // Session 14: logs the item's own GetPlus() read alongside the
             // rejection so a drop-test can tell "the bot never considered
             // this a candidate item at all" (reason=not_wanted, plus=N) apart
-            // from any of the other skip reasons above it in the loop.
-            spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=not_wanted plus={}",
-                itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y,
-                (int)itemRef->GetPlus());
+            // from any of the other skip reasons above it in the loop. The
+            // plus VALUE is folded into the throttle key (not just the bare
+            // "not_wanted" string) so a flickering GetPlus() read — itself a
+            // live data point about the offset's reliability — re-logs
+            // immediately on a change instead of being hidden by the throttle
+            // for up to kSkipLogRefreshMs.
+            const int plus = (int)itemRef->GetPlus();
+            char reasonBuf[24];
+            snprintf(reasonBuf, sizeof(reasonBuf), "not_wanted:plus=%d", plus);
+            if (ShouldLogSkip(itemRef->m_id, reasonBuf, now))
+                spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=not_wanted plus={}",
+                    itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, plus);
             continue;
         }
 
@@ -409,8 +437,9 @@ CMapItem* HuntLootManager::FindBestLoot(
             && dist > (float)lootRange
             && !isPriorityItem) {
             ++skippedOutOfRange;
-            spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=out_of_loot_range dist={:.1f} lootRange={}",
-                itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, dist, lootRange);
+            if (ShouldLogSkip(itemRef->m_id, "out_of_loot_range", now))
+                spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=out_of_loot_range dist={:.1f} lootRange={}",
+                    itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, dist, lootRange);
             continue;
         }
 
@@ -496,7 +525,8 @@ void HuntLootManager::RecordLootPickupAttempt(OBJID itemId, DWORD now,
 
 void HuntLootManager::PruneLootPickupAttempts(CHero* hero, CGameMap* map)
 {
-    if (m_lootPickupAttempts.empty() && m_lootSeenTicks.empty() && m_lootArrivedTicks.empty())
+    if (m_lootPickupAttempts.empty() && m_lootSeenTicks.empty() && m_lootArrivedTicks.empty()
+        && m_lootSkipLogState.empty())
         return;
     if (!map) {
         ResetLootPickupAttempts();
@@ -574,6 +604,14 @@ void HuntLootManager::PruneLootPickupAttempts(CHero* hero, CGameMap* map)
             ++it;
         }
     }
+
+    for (auto it = m_lootSkipLogState.begin(); it != m_lootSkipLogState.end();) {
+        if (activeItemIds.find(it->first) == activeItemIds.end()) {
+            it = m_lootSkipLogState.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 void HuntLootManager::ResetLootPickupAttempts()
@@ -581,6 +619,7 @@ void HuntLootManager::ResetLootPickupAttempts()
     m_lootPickupAttempts.clear();
     m_lootSeenTicks.clear();
     m_lootArrivedTicks.clear();
+    m_lootSkipLogState.clear();
     m_lastLootItemId = 0;
 }
 

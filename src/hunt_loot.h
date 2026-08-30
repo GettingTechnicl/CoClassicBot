@@ -3,6 +3,7 @@
 #include "hunt_settings.h"
 #include <functional>
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 class CHero;
@@ -66,6 +67,26 @@ public:
     mutable std::unordered_map<OBJID, DWORD> m_lootSeenTicks;
 
 private:
+    // Session 14 [SKIP-TRACE THROTTLE]: the per-item skip trace added this
+    // session (FindBestLoot) collapsed the ENTIRE 4-file log retention
+    // window to ~4 SECONDS on first live use — FindBestLoot runs once per
+    // rendered frame (~150Hz, see the Session 10 comment on the decision
+    // loop in base_hunt_plugin.cpp), and was logging every rejected
+    // candidate on every single call. A dense loot field (200+ items is
+    // typical, per this file's own PRIORITY SELECTION WEIGHT comment) turns
+    // into thousands of near-identical lines per second for items whose
+    // fate hasn't changed at all. Gates each item+reason pair to log once,
+    // then stay silent until either the reason changes or kSkipLogRefreshMs
+    // has passed — keeps the useful signal (a specific item's current fate,
+    // and transitions) while cutting volume by roughly two orders of
+    // magnitude. Not pruned independently; piggybacks on
+    // PruneLootPickupAttempts' existing activeItemIds pass.
+    struct SkipLogState { std::string reason; DWORD tick = 0; };
+    mutable std::unordered_map<OBJID, SkipLogState> m_lootSkipLogState;
+    // const: called from FindBestLoot(), which is itself const. Mutates only
+    // the mutable m_lootSkipLogState map, same pattern as m_lootSeenTicks.
+    bool ShouldLogSkip(OBJID itemId, const char* reason, DWORD now) const;
+
     struct LootPickupAttemptState {
         uint8_t attempts       = 0;
         DWORD   ignoreUntilTick = 0;
