@@ -284,23 +284,23 @@ bool HuntTownService::ShouldLootMapItem(const AutoHuntSettings& settings, const 
         return true;
     if (MatchesSelectedLootQuality(settings, item))
         return true;
-    // Session 14 [RE-DISABLED — DATA CAME BACK CONCLUSIVE]: was temporarily
-    // re-enabled (see commit a66d420) specifically to gather live pickup
-    // cross-verify data. That data is now in, and it's not ambiguous:
-    //   Plus verify id=2125272726 type=111543 (SyeniticHelmet) plus_ground=80 plus_bag=0 match=NO
-    //   Plus verify id=2125287423 type=561017 (SlantWand)      plus_ground=64 plus_bag=0 match=NO
-    // Both bag-confirmed genuinely UNENCHANTED (plus_bag=0, static_assert-
-    // verified CItem::m_nAddition), but the ground read at MapItemInfo+0x48
-    // returned 80 and 64 — nowhere near a valid plus range (real levels top
-    // out around 8-12). This isn't "occasionally misreads +0 vs +1," it's
-    // reading garbage/misaligned memory outright, which also explains why
-    // zero genuine +1 pickups landed during the whole test window: a real
-    // +1 item would need to coincidentally ALSO land in that noise near the
-    // 1-8 range, which is a much smaller target than 80/64 hit by chance.
-    // Disabled again — see commit 5937cf3 for the original disable and its
-    // reasoning, which this fully reconfirms rather than overturns. Do not
-    // re-enable without either a verified correct offset, or overwhelming
-    // new data (which this session's data does not provide).
+    // Session 14 [RE-ENABLED — read is now self-validating]: this branch was
+    // disabled twice before (5937cf3, then again after a66d420) because
+    // CMapItem::GetPlus() returned garbage (80, 64) during live hunting on
+    // genuinely-unenchanted items. The "Dump nearest (plus RE)" tool then
+    // proved the offset itself is CORRECT for stable items (a +0 BreastPlate
+    // read 0, a +1 BroadSword read 1) — the garbage was GetPlus() reading a
+    // stale/reused ground-item heap entry mid-churn, not a wrong offset.
+    // GetPlus() now validates the pointer (MapItemInfo+0x44 must equal this
+    // item's type id) and clamps to a plausible range before trusting the
+    // plus, so a bad read returns 0 instead of a garbage value. With that,
+    // the equipment-sort-scoped plus check is safe to run again: a genuine
+    // +1 (reads exactly 1) is looted; a stale/garbage read (rejected by the
+    // validation) is not.
+    if (settings.minimumLootPlus > 0
+        && IsEquipmentQualitySort(GetItemSort(item.m_idType))
+        && item.GetPlus() >= settings.minimumLootPlus)
+        return true;
     return false;
 }
 

@@ -2635,7 +2635,7 @@ void BaseHuntPlugin::RenderLootSection()
     ImGui::Combo("Minimum Gold Tier", &settings.minimumGoldTier, kGoldTierNames, IM_ARRAYSIZE(kGoldTierNames));
     HelpMarkerOnSameLine("Money drops below this tier are ignored entirely.");
     ImGui::SliderInt("Loot Range", &settings.lootRange, 0, CGameMap::MAX_JUMP_DIST);
-    HelpMarkerOnSameLine("Only limits how far to detour for money drops. Meteors/DragonBalls are always fetched regardless of range and interrupt everything else to go get it. Plussed gear would be ordinary selectable loot, same as Loot Range and other priorities, once ground-item plus detection is re-enabled (see the Loot +1 Items checkbox below).");
+    HelpMarkerOnSameLine("Only limits how far to detour for money drops. Meteors/DragonBalls are always fetched regardless of range and interrupt everything else to go get it. Plussed gear is ordinary selectable loot, same as Loot Range and other priorities (see the Loot +1 Items checkbox below).");
     // Session 13 [UI GROUPING]: these three each carry different priority
     // rules from ordinary quality-checkbox loot (see IsMeteorOrDragonBallItem
     // and ShouldLootMapItem's plus-check), so they're grouped together rather
@@ -2663,7 +2663,7 @@ void BaseHuntPlugin::RenderLootSection()
         // again (commit e50dbbd... see hunt_town.cpp's ShouldLootMapItem for
         // the exact numbers and reasoning). Setting/checkbox still kept for
         // when the real offset gets verified.
-        HelpMarkerOnSameLine("Currently has no effect — ground-item +N detection is disabled pending a verified memory offset. The one in use was tested live and proven wrong twice over: it read implausible values (80, 64) on items a bag-side check confirmed were genuinely unenchanted. The setting is kept and saved for when it's re-enabled. Only +1 ever drops from monsters in this game; higher plus levels come from player crafting, never a ground find.");
+        HelpMarkerOnSameLine("Picks up +1 (and higher) equipment from the ground. The ground-item plus read is now self-validating (it confirms the memory it reads actually belongs to the item before trusting the value), after live byte-dumps proved the offset correct for stable items and traced the earlier junk pickups to stale reads during fast hunting. Only +1 ever drops from monsters in this game; higher plus levels come from player crafting, never a ground find.");
     }
     ImGui::SameLine();
     ImGui::Checkbox("Loot Meteors##prioritymeteor", &settings.lootMeteor);

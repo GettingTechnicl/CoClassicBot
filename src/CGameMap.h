@@ -54,21 +54,41 @@ struct CMapItem
     void*    m_pInfoCtrl;       // +0x18  shared_ptr control block
 
     int  GetQuality() const { return m_idType % 10; }
-    // Plus is at MapItemInfo+0x48
+    // Plus level. MapItemInfo layout (Session 14, live-verified via the
+    // "Dump nearest (plus RE)" tool on a stable +0 BreastPlate and +1
+    // BroadSword): +0x44 = the item's own type id, +0x48 = the plus (0-N).
     //
     // Session 10 [CRASH HARDENING]: this dereferenced m_pInfo unguarded.
     // m_pInfo (+0x10) is NOT part of the heap-scanner's signature check
     // (map_items.cpp validates id/idType/position, not this field), so a
     // false-positive scan hit — or a genuine item whose m_pInfo hasn't been
     // populated yet, or an item mid-teardown — could read an arbitrary
-    // pointer here with no safety net. Called on every scanned item whenever
-    // minimumLootPlus > 0, so this ran far more often than the pickup path
-    // itself. SEH-guarded now; a bad read returns 0 (never loots by plus)
-    // instead of crashing the process.
+    // pointer here with no safety net. SEH-guarded; a bad read returns 0.
+    //
+    // Session 14 [SELF-VALIDATING READ]: the raw +0x48 read was live-proven
+    // CORRECT for stable items (0 for a +0, 1 for a +1) but earlier read
+    // implausible garbage (80, 64) during fast live hunting — the ground-item
+    // heap entries churn/reuse constantly, so GetPlus() was occasionally
+    // reading +0x48 of a stale-or-reused MapItemInfo rather than this item's.
+    // Fixed by validating the pointer before trusting the plus: read the type
+    // id the MapItemInfo stores at +0x44 and require it to equal THIS item's
+    // m_idType. A stale/reused/half-populated m_pInfo won't match (its +0x44
+    // holds some other item's type, or garbage), so the bad read is rejected
+    // precisely — including garbage that would happen to land in a plausible
+    // 1-N range, which a value-range clamp alone would miss. Belt-and-braces:
+    // a plausibility clamp too, since real plus never exceeds kMaxRealPlus.
+    // On any mismatch/unreadable/implausible read, returns 0 (= "not plussed",
+    // the safe direction: miss a real +1 rather than loot garbage).
+    static constexpr int kMaxRealPlus = 12;
     uint8_t GetPlus() const {
         if (!m_pInfo) return 0;
         __try {
-            return *(volatile uint8_t*)((uintptr_t)m_pInfo + 0x48);
+            const uintptr_t info = (uintptr_t)m_pInfo;
+            const uint32_t infoType = *(volatile uint32_t*)(info + 0x44);
+            if (infoType != m_idType) return 0;  // stale/reused m_pInfo — not our item
+            const uint8_t plus = *(volatile uint8_t*)(info + 0x48);
+            if (plus > kMaxRealPlus) return 0;   // implausible — a bad read
+            return plus;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return 0;
         }
