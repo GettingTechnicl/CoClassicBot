@@ -1364,7 +1364,7 @@ void BaseHuntPlugin::Update()
     // how often the rest of the decision logic runs.
     TryRandomWalk(hero, map, settings, GetTickCount());
 
-    m_lootMgr.PruneLootPickupAttempts(map);
+    m_lootMgr.PruneLootPickupAttempts(hero, map);
     PruneLootDropRecords();
 
     // Session 10: the state machine below (zone/death/safety checks, target
@@ -3022,6 +3022,15 @@ void BaseHuntPlugin::RenderDebugSection()
                                          : ImVec4(1, 0.6f, 0.2f, 1),
             "ground items: %d (scan #%u, %ums)",
             ms2.total, ms2.scans, ms2.lastScanMs);
+        ImGui::SameLine();
+        // Session 14 [PLUS RE]: one-off tool for finding the real ground-item
+        // plus offset — dumps raw bytes for the item nearest the hero (stand
+        // right on/next to a known +0 or +1 item, click, repeat for the
+        // other). Output goes to coclassic.log at info level, tagged
+        // "[hunt-loot] Dump ...". See hunt_loot.h's DebugDumpNearestGroundItem
+        // for what's captured and why.
+        if (ImGui::SmallButton("Dump nearest (plus RE)"))
+            DebugDumpNearestGroundItem(hero);
     }
 
     ImGui::Separator();

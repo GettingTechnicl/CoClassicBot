@@ -9,10 +9,14 @@
 #include "CGameMap.h"
 #include "CItem.h"
 #include "itemtype.h"
+#include "inventory_utils.h"
 #include "pathfinder.h"
 #include "log.h"
 #include <algorithm>
 #include <unordered_set>
+#include <cstdio>
+#include <cstdint>
+#include <string>
 
 // ── File-local constants ──────────────────────────────────────────────────────
 static constexpr int   kLootPickupAttemptLimit   = 2;
@@ -108,7 +112,95 @@ bool IsMovementCommandStillAdvancing(const CHero* hero)
     return cmd.posTarget.x != hero->m_posMap.x || cmd.posTarget.y != hero->m_posMap.y;
 }
 
+// Session 14 [PLUS RE]: reads `len` bytes from `addr` into `out`, SEH-guarded
+// exactly like CMapItem::GetPlus() — same untrusted-heap-pointer situation.
+// Returns bytes actually read (0 on fault; never partial, since a fault
+// during memcpy leaves no defined progress to trust).
+size_t SafeReadBytes(uintptr_t addr, uint8_t* out, size_t len)
+{
+    __try {
+        memcpy(out, (const void*)addr, len);
+        return len;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+std::string BytesToHex(const uint8_t* bytes, size_t len, size_t bracketAt = SIZE_MAX)
+{
+    std::string out;
+    char buf[6];
+    for (size_t i = 0; i < len; ++i) {
+        if (i == bracketAt) {
+            snprintf(buf, sizeof(buf), "[%02X]", bytes[i]);
+        } else {
+            snprintf(buf, sizeof(buf), "%02X", bytes[i]);
+        }
+        out += buf;
+        out += ' ';
+    }
+    return out;
+}
+
 } // namespace
+
+void DebugDumpNearestGroundItem(CHero* hero)
+{
+    if (!hero) {
+        spdlog::warn("[hunt-loot] Dump: no hero");
+        return;
+    }
+
+    CMapItem* nearest = nullptr;
+    float bestDist = (std::numeric_limits<float>::max)();
+    for (CMapItem* itemRef : MapItems::Get()) {
+        if (!itemRef || !MapItems::IsAlive(itemRef))
+            continue;
+        const float d = hero->m_posMap.DistanceTo(itemRef->m_pos);
+        if (d < bestDist) {
+            bestDist = d;
+            nearest = itemRef;
+        }
+    }
+    if (!nearest) {
+        spdlog::warn("[hunt-loot] Dump: no ground items in scan");
+        return;
+    }
+    // Re-validate right before every raw read below — MapItems::Get() is a
+    // snapshot, and the item can be freed by the game between the scan above
+    // and here (same hazard FindBestLoot's loop comment documents).
+    if (!MapItems::IsAlive(nearest)) {
+        spdlog::warn("[hunt-loot] Dump: nearest item id={} freed before it could be read", nearest->m_id);
+        return;
+    }
+
+    uint8_t itemBytes[0x40] = {};
+    const size_t itemLen = SafeReadBytes((uintptr_t)nearest, itemBytes, sizeof(itemBytes));
+
+    uint8_t infoBytes[0x80] = {};
+    size_t infoLen = 0;
+    if (nearest->m_pInfo)
+        infoLen = SafeReadBytes((uintptr_t)nearest->m_pInfo, infoBytes, sizeof(infoBytes));
+
+    spdlog::info("[hunt-loot] Dump id={} type={} pos=({},{}) dist={:.1f} plus_0x48={} m_pInfo={:#x} m_pInfoCtrl={:#x}",
+        nearest->m_id, nearest->m_idType, nearest->m_pos.x, nearest->m_pos.y, bestDist,
+        (int)nearest->GetPlus(), (uintptr_t)nearest->m_pInfo, (uintptr_t)nearest->m_pInfoCtrl);
+
+    if (itemLen > 0) {
+        spdlog::info("[hunt-loot] Dump id={} CMapItem bytes [0x00-{:#x}]: {}",
+            nearest->m_id, itemLen, BytesToHex(itemBytes, itemLen));
+    } else {
+        spdlog::warn("[hunt-loot] Dump id={} CMapItem struct unreadable", nearest->m_id);
+    }
+
+    if (infoLen > 0) {
+        spdlog::info("[hunt-loot] Dump id={} MapItemInfo bytes [0x00-{:#x}] (0x48 bracketed = current GetPlus() offset): {}",
+            nearest->m_id, infoLen, BytesToHex(infoBytes, infoLen, 0x48));
+    } else {
+        spdlog::warn("[hunt-loot] Dump id={} MapItemInfo unreadable (m_pInfo={:#x})",
+            nearest->m_id, (uintptr_t)nearest->m_pInfo);
+    }
+}
 
 // ── HuntLootManager implementation ───────────────────────────────────────────
 
@@ -402,7 +494,7 @@ void HuntLootManager::RecordLootPickupAttempt(OBJID itemId, DWORD now,
     }
 }
 
-void HuntLootManager::PruneLootPickupAttempts(CGameMap* map)
+void HuntLootManager::PruneLootPickupAttempts(CHero* hero, CGameMap* map)
 {
     if (m_lootPickupAttempts.empty() && m_lootSeenTicks.empty() && m_lootArrivedTicks.empty())
         return;
@@ -434,6 +526,33 @@ void HuntLootManager::PruneLootPickupAttempts(CGameMap* map)
 
     for (auto it = m_lootPickupAttempts.begin(); it != m_lootPickupAttempts.end();) {
         if (activeItemIds.find(it->first) == activeItemIds.end()) {
+            // Session 14 [PLUS VERIFY]: an attempt record that (a) actually
+            // sent a pickup packet and (b) never got flagged a ghost, then
+            // vanished from the live ground scan, is what a real successful
+            // pickup looks like from here — a natural despawn would be a
+            // much rarer coincidence (the despawn clock is 50s+; this window
+            // is at most a few pickup-interval ticks). If the game reuses
+            // the same OBJID across the ground->bag transition (the whole
+            // premise FindInventoryItemById is built on, already used
+            // elsewhere for this exact lookup shape), the bag item carrying
+            // this id right now is the same item, and its CItem::m_nAddition
+            // (static_assert-verified, +0x6B) is ground truth for what the
+            // ground-side CMapItem::GetPlus() SHOULD have read. Logged at
+            // info level (rare, high-value) so it's visible without wading
+            // through this file's much noisier trace-level lines.
+            const LootPickupAttemptState& state = it->second;
+            if (state.firstOnTileSendTick != 0 && !state.ghostLogged) {
+                const CItem* bagItem = hero ? FindInventoryItemById(hero, it->first) : nullptr;
+                if (bagItem) {
+                    const int bagPlus = bagItem->GetPlus();
+                    spdlog::info("[hunt-loot] Plus verify id={} type={} plus_ground={} plus_bag={} match={}",
+                        it->first, state.typeId, state.groundPlus, bagPlus,
+                        state.groundPlus == bagPlus ? "yes" : "NO");
+                } else {
+                    spdlog::trace("[hunt-loot] Plus verify id={} type={} plus_ground={} plus_bag=not_found",
+                        it->first, state.typeId, state.groundPlus);
+                }
+            }
             it = m_lootPickupAttempts.erase(it);
         } else {
             ++it;
@@ -547,10 +666,23 @@ bool HuntLootManager::TryPickupLootItem(CHero* hero, const AutoHuntSettings& set
         return false;
     }
 
+    // Session 14 [PLUS VERIFY]: captured BEFORE PickupItem/erasure — item is
+    // guaranteed valid here (IsAlive() checked at function entry), but won't
+    // be by the time PruneLootPickupAttempts later notices it's gone from the
+    // ground scan. Stashed on the attempt-state record so it can be logged
+    // next to the resulting bag item's verified CItem::m_nAddition once the
+    // pickup is confirmed (not a ghost) — see PruneLootPickupAttempts.
+    const int groundPlus = (int)item->GetPlus();
+
     hero->PickupItem(*item);
     m_lastLootTick   = now;
     m_lastLootItemId = item->m_id;
     RecordLootPickupAttempt(item->m_id, now, settings);
+    {
+        LootPickupAttemptState& state = m_lootPickupAttempts[item->m_id];
+        state.typeId     = item->m_idType;
+        state.groundPlus = groundPlus;
+    }
     // Arm the ghost timer (see LootPickupAttemptState): dist==0 is guaranteed
     // here by the not_on_tile check above. Skipped when the bag is full — a
     // full bag makes a REAL item fail pickup too, and we don't want to brand
@@ -562,8 +694,8 @@ bool HuntLootManager::TryPickupLootItem(CHero* hero, const AutoHuntSettings& set
         if (ghostState.firstOnTileSendTick == 0)
             ghostState.firstOnTileSendTick = now;
     }
-    spdlog::trace("[hunt-loot] PickupItem id={} type={} pos=({},{}) sent_on_tile",
-        item->m_id, item->m_idType, item->m_pos.x, item->m_pos.y);
+    spdlog::trace("[hunt-loot] PickupItem id={} type={} pos=({},{}) plus_ground={} sent_on_tile",
+        item->m_id, item->m_idType, item->m_pos.x, item->m_pos.y, groundPlus);
     return true;
 }
 

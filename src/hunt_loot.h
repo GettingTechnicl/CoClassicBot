@@ -38,7 +38,12 @@ public:
     bool IsLootPickupIgnored(OBJID itemId, DWORD now);
     void RecordLootPickupAttempt(OBJID itemId, DWORD now,
         const AutoHuntSettings& settings);
-    void PruneLootPickupAttempts(CGameMap* map);
+    // Session 14 [PLUS VERIFY]: hero param added so a confirmed pickup (item
+    // vanishes from the ground scan without ever ghosting) can look up the
+    // resulting bag item and log its verified CItem::m_nAddition next to the
+    // ground-side CMapItem::GetPlus() read captured at pickup time — see
+    // TryPickupLootItem and this function's body for the full mechanism.
+    void PruneLootPickupAttempts(CHero* hero, CGameMap* map);
     void ResetLootPickupAttempts();
 
     // ── Phase 2a: bag-full trash drop ─────────────────────────────────────────
@@ -75,6 +80,14 @@ private:
         // entry stays in our list (pruned with it in PruneLootPickupAttempts).
         DWORD   firstOnTileSendTick = 0;
         bool    ghostLogged = false;
+
+        // Session 14 [PLUS VERIFY]: captured at the moment the pickup packet
+        // is sent (TryPickupLootItem), while the ground CMapItem is still a
+        // valid pointer — by the time PruneLootPickupAttempts notices the
+        // item is gone, it's already freed and can't be re-read. groundPlus
+        // stays -1 (never captured) unless a pickup was actually attempted.
+        uint32_t typeId     = 0;
+        int      groundPlus = -1;
     };
 
     std::unordered_map<OBJID, LootPickupAttemptState> m_lootPickupAttempts;
@@ -91,3 +104,12 @@ private:
     DWORD m_lastTrashDropTick   = 0;
     OBJID m_lastTrashDropItemId = 0;
 };
+
+// Session 14 [PLUS RE]: debug-triggered dump of the nearest live ground item
+// — raw CMapItem bytes AND the MapItemInfo it points to — so a known-+0 and
+// known-+1 instance of the identical type ID can be byte-diffed offline to
+// find where the real plus level actually lives (GetPlus()'s current
+// MapItemInfo+0x48 read is proven wrong, see ShouldLootMapItem's disable
+// comment in hunt_town.cpp). Free function, not a HuntLootManager method —
+// it's a one-off RE tool, not part of the hunt loop's normal operation.
+void DebugDumpNearestGroundItem(CHero* hero);
