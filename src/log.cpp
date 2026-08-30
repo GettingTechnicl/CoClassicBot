@@ -26,7 +26,21 @@ void Init(const char* logPath, size_t maxSizeMb, size_t maxFiles)
         auto pos = path.find_last_of("\\/");
         if (pos != std::string::npos)
             path = path.substr(0, pos + 1);
-        path += "coclassic.log";
+        // Session 14 [PER-PROCESS LOG SEPARATION]: was a fixed "coclassic.log"
+        // regardless of which account/process wrote it. Live-confirmed this
+        // session: running two ImConquer.exe instances (two accounts)
+        // simultaneously interleaves BOTH characters' log lines into the
+        // identical file, since rotating_file_sink_mt opens with shared
+        // read/write and both processes happily append to the same path.
+        // That made a melee-vs-archer live-behavior investigation require
+        // filtering by content (plugin-specific state-reason phrases)
+        // instead of just reading the file for the account being debugged.
+        // PID is unique per running process and needs no account-name
+        // plumbing this early in init (well before login/account selection
+        // is known) — spdlog's own rotation then appends ".1"/".2"/etc. to
+        // THIS name, so "coclassic_<pid>.1.log" stays unambiguous against
+        // this suffix rather than colliding with it.
+        path += "coclassic_" + std::to_string(GetCurrentProcessId()) + ".log";
     }
 
     try {
