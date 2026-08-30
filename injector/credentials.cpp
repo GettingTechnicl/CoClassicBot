@@ -169,6 +169,29 @@ std::string DpapiEncrypt(const std::string& plaintext)
     return encoded;
 }
 
+// Session 14 [USERNAME ENCRYPTION]: username and proxyUser used to be stored
+// as plaintext JSON alongside their now-encrypted passwords. They're now
+// DPAPI-encrypted the same way. This reader migrates existing stores
+// transparently: try to decrypt the stored value as an encrypted+base64
+// blob, and if that fails, treat the raw stored string as an old-format
+// PLAINTEXT value (which the next SaveAll re-encrypts, silently migrating
+// it). Mirrors exactly how the password field's entropy fallback already
+// handles an old-format store (DpapiDecrypt above). Unlike the password —
+// where a decrypt failure MUST skip the account rather than risk an
+// auto-login with a garbage credential — a non-decryptable username is
+// almost certainly just an old plaintext entry, and login identifiers
+// aren't dangerous the way a wrong password is, so plaintext fallback here
+// is the safe, lock-nobody-out choice.
+std::string DecryptOrPlaintext(const std::string& stored)
+{
+    if (stored.empty())
+        return std::string();
+    auto decrypted = DpapiDecrypt(Base64Decode(stored));
+    if (decrypted)
+        return std::move(*decrypted);
+    return stored;  // old-format plaintext — migrated on next SaveAll
+}
+
 }  // namespace
 
 namespace Credentials {
@@ -198,7 +221,7 @@ std::vector<AccountProfile> LoadAll()
     for (const auto& entry : root) {
         AccountProfile profile;
         profile.label = entry.value("label", "");
-        profile.username = entry.value("username", "");
+        profile.username = DecryptOrPlaintext(entry.value("username", ""));
         profile.server = entry.value("server", "");
 
         const std::string encoded = entry.value("password", "");
@@ -209,7 +232,7 @@ std::vector<AccountProfile> LoadAll()
 
         profile.useProxy = entry.value("useProxy", false);
         profile.proxyHostPort = entry.value("proxyHostPort", "");
-        profile.proxyUser = entry.value("proxyUser", "");
+        profile.proxyUser = DecryptOrPlaintext(entry.value("proxyUser", ""));
 
         const std::string encodedProxyPassword = entry.value("proxyPassword", "");
         auto proxyPassword = DpapiDecrypt(Base64Decode(encodedProxyPassword));
@@ -230,13 +253,13 @@ bool SaveAll(const std::vector<AccountProfile>& profiles)
     json root = json::array();
     for (const auto& profile : profiles) {
         json entry;
-        entry["label"] = profile.label;
-        entry["username"] = profile.username;
+        entry["label"] = profile.label;  // nickname — intentionally NOT encrypted (it's the UI display name, not a credential)
+        entry["username"] = DpapiEncrypt(profile.username);
         entry["server"] = profile.server;
         entry["password"] = DpapiEncrypt(profile.password);
         entry["useProxy"] = profile.useProxy;
         entry["proxyHostPort"] = profile.proxyHostPort;
-        entry["proxyUser"] = profile.proxyUser;
+        entry["proxyUser"] = DpapiEncrypt(profile.proxyUser);
         entry["proxyPassword"] = DpapiEncrypt(profile.proxyPassword);
         root.push_back(std::move(entry));
     }

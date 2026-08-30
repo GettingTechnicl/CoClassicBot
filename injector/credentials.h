@@ -7,10 +7,14 @@
 // credentials.h — locally-stored login profiles for launcher.exe's
 // character-select screen.
 //
-// Passwords are encrypted at rest via Windows DPAPI (CryptProtectData),
-// which ties the encryption to the current Windows user account — no
-// separate key/passphrase to manage, and the file is useless if copied
-// to another machine or user account. This is NOT a hardware-key-grade
+// Usernames AND passwords (account and proxy both) are encrypted at rest
+// via Windows DPAPI (CryptProtectData), which ties the encryption to the
+// current Windows user account — no separate key/passphrase to manage, and
+// the file is useless if copied to another machine or user account. Only
+// the `label` (nickname) is stored in the clear, since it's purely the UI
+// display name and never a credential. Stores written by older versions
+// (plaintext usernames) are migrated transparently on first load — see
+// DecryptOrPlaintext in credentials.cpp. This is NOT a hardware-key-grade
 // secret vault; it's the same trust model most local single-user tools
 // use (anything already running as this Windows user could decrypt it).
 // =====================================================================
