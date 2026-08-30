@@ -481,6 +481,7 @@ static std::string BuildCurrentConfigSnapshot()
     AppendIntSnapshot(snapshot, "minimumScatterHits", autoHunt.minimumScatterHits);
     AppendIntSnapshot(snapshot, "scatterRangeOverride", autoHunt.scatterRangeOverride);
     AppendIntSnapshot(snapshot, "actionRadius", autoHunt.actionRadius);
+    AppendIntSnapshot(snapshot, "meleeMinHitsPerTarget", autoHunt.meleeMinHitsPerTarget);
     AppendIntSnapshot(snapshot, "rangedAttackRange", autoHunt.rangedAttackRange);
     AppendIntSnapshot(snapshot, "archerSafetyDistance", autoHunt.archerSafetyDistance);
     AppendIntSnapshot(snapshot, "lootRange", autoHunt.lootRange);
@@ -691,6 +692,7 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "minimumScatterHits", autoHunt.minimumScatterHits);
     WriteInt(file, section, "scatterRangeOverride", autoHunt.scatterRangeOverride);
     WriteInt(file, section, "actionRadius", autoHunt.actionRadius);
+    WriteInt(file, section, "meleeMinHitsPerTarget", autoHunt.meleeMinHitsPerTarget);
     WriteInt(file, section, "rangedAttackRange", autoHunt.rangedAttackRange);
     WriteInt(file, section, "archerSafetyDistance", autoHunt.archerSafetyDistance);
     WriteInt(file, section, "lootRange", autoHunt.lootRange);
@@ -879,6 +881,11 @@ static void LoadAutoHuntSection(const char* file, const char* section)
         autoHunt.actionRadius = 1;
     if (autoHunt.actionRadius > 18)
         autoHunt.actionRadius = 18;
+    autoHunt.meleeMinHitsPerTarget = ReadInt(file, section, "meleeMinHitsPerTarget", 3);
+    if (autoHunt.meleeMinHitsPerTarget < 1)
+        autoHunt.meleeMinHitsPerTarget = 1;
+    if (autoHunt.meleeMinHitsPerTarget > 10)
+        autoHunt.meleeMinHitsPerTarget = 10;
     autoHunt.rangedAttackRange = ReadInt(file, section, "rangedAttackRange", 0);
     if (autoHunt.rangedAttackRange < 0)
         autoHunt.rangedAttackRange = 0;

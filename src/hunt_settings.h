@@ -175,6 +175,18 @@ struct AutoHuntSettings
     int minimumScatterHits = 1;
     int scatterRangeOverride = 0;
     int actionRadius = 6;
+    // Session 14 [MELEE TARGET COMMITMENT]: melee's clump-clearing target
+    // pick randomizes every decision tick while an AoE buff (Cyclone/
+    // Superman) is active, to spread damage — but with no minimum-hits
+    // floor, a dense pack meant a genuinely different random target most
+    // ticks, forcing a fresh approach-position computation (and often a
+    // real reposition jump) before a single attack landed. Live-confirmed:
+    // "Jumping to mob clump" immediately followed by "Attacking..." on
+    // almost every state-transition pair for a full 3-minute session. This
+    // caps how many attack ATTEMPTS (not confirmed hits — melee doesn't
+    // land every swing, sent packets are what's countable) land on one
+    // target before the next randomize is allowed to pick someone else.
+    int meleeMinHitsPerTarget = 3;
     int rangedAttackRange = 0;
     int archerSafetyDistance = 0;
     int lootRange = 5;

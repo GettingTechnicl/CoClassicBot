@@ -167,13 +167,58 @@ CRole* MeleeHuntPlugin::FindBestMeleeTarget(CHero* hero, CGameMap* map, const Au
     Position singleTargetApproachPos;
 
     // 1. Clear all mobs within action radius first.
-    // Randomize target when AoE buffs are active to spread damage across the clump
-    const bool randomize = settings.usePacketJump
-        && (hero->IsCycloneActive() || hero->IsSupermanActive());
-    if (CRole* actionTarget = randomize
-            ? FindRandomTarget(targets, effectivePos, actionRadius)
-            : FindClosestTarget(targets, effectivePos, actionRadius)) {
-        if (FindBestSingleTargetApproach(hero, map, settings, actionTarget, effectivePos, singleTargetApproachPos, kReliableAttackRange)
+    //
+    // Session 14 [MELEE TARGET COMMITMENT]: this used to re-randomize on
+    // EVERY decision tick, unconditionally, whenever Cyclone OR Superman was
+    // active — no floor — live-confirmed via a 3-minute video+log review:
+    // "Jumping to mob clump" immediately followed by "Attacking..." on
+    // nearly every state-transition pair, because a fresh random target most
+    // ticks meant a fresh approach-position computation (often a real
+    // reposition jump) before a single attack landed.
+    //
+    // Per the user (who knows the two skills' actual mechanics): Superman's
+    // "Snow" is a genuine multi-target AoE hit — which specific monster is
+    // nominally "selected" barely matters, since a cast near the cluster
+    // hits several regardless, so per-tick randomizing is CORRECT there and
+    // deliberately left untouched. Cyclone is a pure speed buff with no
+    // built-in multi-target hit — for it (and the no-buff case, which was
+    // already effectively single-target via FindClosestTarget) the user
+    // wants the opposite: land settings.meleeMinHitsPerTarget attack
+    // ATTEMPTS (not confirmed hits — melee doesn't land every swing, and
+    // attempts are what's actually countable) on one target, back-to-back
+    // with no artificial pause, before considering anyone else. This also
+    // fixes a second-order bug: re-entering ApproachTarget state on every
+    // random switch made HandleCombatAttack/ComputeNextAttackDelayMs think a
+    // target switch had just happened on nearly every cycle, which falls
+    // back to a slower post-switch attack interval instead of the fast
+    // Cyclone one — sticking with the same target keeps that fast path live
+    // for the whole commitment burst.
+    CRole* actionTarget = nullptr;
+    if (settings.usePacketJump && hero->IsSupermanActive()) {
+        actionTarget = FindRandomTarget(targets, effectivePos, actionRadius);
+        m_committedTargetId = actionTarget ? actionTarget->GetID() : 0;
+        m_hitsOnCommittedTarget = 0;
+    } else {
+        CRole* committedTarget = nullptr;
+        if (m_committedTargetId != 0
+            && m_hitsOnCommittedTarget < (std::max)(1, settings.meleeMinHitsPerTarget)) {
+            for (CRole* candidate : targets) {
+                if (candidate && candidate->GetID() == m_committedTargetId
+                    && CGameMap::TileDist(effectivePos.x, effectivePos.y,
+                           candidate->m_posMap.x, candidate->m_posMap.y) <= actionRadius) {
+                    committedTarget = candidate;
+                    break;
+                }
+            }
+        }
+        actionTarget = committedTarget ? committedTarget : FindClosestTarget(targets, effectivePos, actionRadius);
+        if (actionTarget && actionTarget->GetID() != m_committedTargetId) {
+            m_committedTargetId = actionTarget->GetID();
+            m_hitsOnCommittedTarget = 0;
+        }
+    }
+    if (actionTarget) {
+        if (FindBestMeleeApproachPos(hero, map, settings, actionTarget, targets, effectivePos, singleTargetApproachPos, kReliableAttackRange)
             && outApproachPos) {
             *outApproachPos = singleTargetApproachPos;
         }
@@ -185,7 +230,7 @@ CRole* MeleeHuntPlugin::FindBestMeleeTarget(CHero* hero, CGameMap* map, const Au
     // 2. Already inside a large enough local clump — clear it.
     if (currentClumpSize >= configuredClumpSize) {
         if (CRole* localAoeTarget = FindClosestTarget(targets, effectivePos, clumpRadius)) {
-            if (FindBestSingleTargetApproach(hero, map, settings, localAoeTarget, effectivePos, singleTargetApproachPos, kReliableAttackRange)
+            if (FindBestMeleeApproachPos(hero, map, settings, localAoeTarget, targets, effectivePos, singleTargetApproachPos, kReliableAttackRange)
                 && outApproachPos) {
                 *outApproachPos = singleTargetApproachPos;
             }
@@ -228,7 +273,7 @@ CRole* MeleeHuntPlugin::FindBestMeleeTarget(CHero* hero, CGameMap* map, const Au
     if (!closest)
         return nullptr;
 
-    if (FindBestSingleTargetApproach(hero, map, settings, closest, effectivePos, singleTargetApproachPos, kReliableAttackRange)
+    if (FindBestMeleeApproachPos(hero, map, settings, closest, targets, effectivePos, singleTargetApproachPos, kReliableAttackRange)
         && outApproachPos) {
         *outApproachPos = singleTargetApproachPos;
     }
@@ -236,6 +281,82 @@ CRole* MeleeHuntPlugin::FindBestMeleeTarget(CHero* hero, CGameMap* map, const Au
         *outClumpSize = currentClumpSize;
 
     return closest;
+}
+
+
+// ── FindBestMeleeApproachPos ──────────────────────────────────────────────────
+
+bool MeleeHuntPlugin::FindBestMeleeApproachPos(CHero* hero, CGameMap* map, const AutoHuntSettings& settings,
+    CRole* target, const std::vector<CRole*>& allTargets, const Position& heroPos,
+    Position& outApproachPos, int attackRange) const
+{
+    outApproachPos = {};
+    if (!hero || !map || !target || attackRange <= 0)
+        return false;
+
+    const Position jumpOrigin = heroPos;
+    if (CGameMap::TileDist(jumpOrigin.x, jumpOrigin.y, target->m_posMap.x, target->m_posMap.y) <= attackRange)
+        return false;
+
+    bool found = false;
+    int bestDensity = -1;
+    float bestMoveDist = (std::numeric_limits<float>::max)();
+    const float densityRadius = (float)(std::max)(1, settings.clumpRadius);
+
+    for (int dx = -attackRange; dx <= attackRange; ++dx) {
+        for (int dy = -attackRange; dy <= attackRange; ++dy) {
+            // Session 14 [MELEE APPROACH FIX]: never the target's own tile —
+            // see this function's header comment (melee_hunt_plugin.h) for
+            // why the shared FindBestSingleTargetApproach can't be reused
+            // as-is for melee.
+            if (dx == 0 && dy == 0)
+                continue;
+            const Position candidate = {target->m_posMap.x + dx, target->m_posMap.y + dy};
+            const int attackDist = CGameMap::TileDist(candidate.x, candidate.y, target->m_posMap.x, target->m_posMap.y);
+            if (attackDist > attackRange)
+                continue;
+            if (!IsPointInHuntZone(settings, settings.zoneMapId, candidate))
+                continue;
+            if (!map->IsWalkable(candidate.x, candidate.y))
+                continue;
+            if ((candidate.x != jumpOrigin.x || candidate.y != jumpOrigin.y) && IsTileOccupied(candidate.x, candidate.y))
+                continue;
+            if (!map->CanJump(jumpOrigin.x, jumpOrigin.y, candidate.x, candidate.y, CGameMap::GetHeroAltThreshold()))
+                continue;
+
+            // Prefer the side of the target with the most OTHER monsters
+            // nearby — positions the hero toward the density of the pack
+            // instead of an arbitrary adjacent tile.
+            const int density = CountTargetsInRadius(allTargets, candidate, densityRadius);
+            const float moveDist = jumpOrigin.DistanceTo(candidate);
+            if (!found
+                || density > bestDensity
+                || (density == bestDensity && moveDist < bestMoveDist)) {
+                found = true;
+                outApproachPos = candidate;
+                bestDensity = density;
+                bestMoveDist = moveDist;
+            }
+        }
+    }
+
+    return found;
+}
+
+
+// ── NoteMeleeAttackAttempt ─────────────────────────────────────────────────────
+
+void MeleeHuntPlugin::NoteMeleeAttackAttempt(OBJID targetId)
+{
+    if (targetId != m_committedTargetId) {
+        // Out of sync with FindBestMeleeTarget's own commitment tracking
+        // (shouldn't normally happen — resync rather than silently
+        // under/over-counting against the wrong target).
+        m_committedTargetId = targetId;
+        m_hitsOnCommittedTarget = 0;
+    }
+    if (m_hitsOnCommittedTarget < (std::numeric_limits<int>::max)())
+        ++m_hitsOnCommittedTarget;
 }
 
 
@@ -354,6 +475,7 @@ void MeleeHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const AutoH
     if (now - m_lastAttackTick >= nextAttackDelay) {
         hero->AttackTarget(target->GetID(), target->m_posMap);
         m_lastAttackTick = now;
+        NoteMeleeAttackAttempt(target->GetID());
     }
 
     if (movementCommitted && moveDist > kReliableAttackRange) {
@@ -381,4 +503,6 @@ void MeleeHuntPlugin::RenderCombatUI(AutoHuntSettings& settings)
     ImGui::SliderInt("Minimum Mob Clump", &settings.minimumMobClump, 2, 12);
     ImGui::TextDisabled("Prefer nearby targets inside Stay Within Zone Radius before chasing distant mob clumps.");
     ImGui::TextDisabled("If enough mobs are already inside Clump Radius, auto hunt clears that local pack first.");
+    ImGui::SliderInt("Min Attacks Per Target", &settings.meleeMinHitsPerTarget, 1, 10);
+    ImGui::TextDisabled("With Cyclone/Superman active, target choice normally randomizes every tick to spread damage across the clump. This many attack ATTEMPTS (not confirmed hits — melee doesn't land every swing) land on one target before the next randomize is allowed to pick someone else.");
 }
