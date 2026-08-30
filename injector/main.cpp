@@ -1674,11 +1674,17 @@ void RebuildRows(HWND hwnd)
     int y = kRowTopMargin;
     for (size_t i = 0; i < g_sessions.size(); ++i) {
         AccountSession& session = *g_sessions[i];
-        char labelText[300];
-        snprintf(labelText, sizeof(labelText), "%s  (%s)",
-            session.profile.label.c_str(), session.profile.username.c_str());
-
-        HWND label = CreateWindowA("STATIC", labelText, WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS,
+        // Credential privacy: accounts are identified in the UI by their
+        // nickname (AccountProfile::label — the first value entered when
+        // adding an account) ONLY. The username and password are never
+        // displayed anywhere after entry — this used to append the username
+        // in parentheses here, which was the single place either credential
+        // reached a visible surface (all other .username/.password uses are
+        // the functional login request and the SOCKS5 proxy handshake, none
+        // of them display paths). Storage stays DPAPI-encrypted at rest
+        // (see credentials.h); this is purely the display layer.
+        HWND label = CreateWindowA("STATIC", session.profile.label.c_str(),
+            WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS,
             10, y + 8, 260, 20, hwnd, nullptr, hInst, nullptr);
         HWND status = CreateWindowA("STATIC", StateLabel(session.state.load()), WS_CHILD | WS_VISIBLE | SS_LEFT,
             280, y + 8, 140, 20, hwnd,
