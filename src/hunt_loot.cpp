@@ -571,13 +571,36 @@ void HuntLootManager::PruneLootPickupAttempts(CHero* hero, CGameMap* map)
             // info level (rare, high-value) so it's visible without wading
             // through this file's much noisier trace-level lines.
             const LootPickupAttemptState& state = it->second;
-            if (state.firstOnTileSendTick != 0 && !state.ghostLogged) {
+            // Session 14 [MONEY EXCLUSION]: money never occupies a bag slot
+            // (goes straight to the silver counter), so plus_bag is
+            // GUARANTEED not_found for it — pure noise on the info channel,
+            // not a real signal. Same range check map_items.cpp's
+            // LooksLikeMapItem/hunt_town.cpp's IsMoneyMapItem already use.
+            const bool isMoney = state.typeId >= 1090000 && state.typeId <= 1091020;
+            if (!isMoney && state.firstOnTileSendTick != 0 && !state.ghostLogged) {
+                // Session 14 [ID-MATCH FALLBACK]: first live use found the
+                // exact-id lookup (FindInventoryItemById) coming back
+                // not_found on a pickup the user directly confirmed
+                // succeeded and was genuinely +1 (GoldHalbert) — meaning the
+                // premise this whole cross-verify leans on (ground CMapItem
+                // m_id == bag CItem GetID() for the same physical item) may
+                // not actually hold, not that the ground read was wrong.
+                // Falls back to matching by TYPE ID when the exact id misses
+                // — less precise if multiple of the same type are already in
+                // the bag (tagged "by_type" so that ambiguity is visible in
+                // the log, not silently assumed away), but still real signal
+                // instead of a dead end.
                 const CItem* bagItem = hero ? FindInventoryItemById(hero, it->first) : nullptr;
+                const char* matchKind = "by_id";
+                if (!bagItem && hero) {
+                    bagItem = FindInventoryItemByType(hero, state.typeId);
+                    matchKind = "by_type";
+                }
                 if (bagItem) {
                     const int bagPlus = bagItem->GetPlus();
-                    spdlog::info("[hunt-loot] Plus verify id={} type={} plus_ground={} plus_bag={} match={}",
+                    spdlog::info("[hunt-loot] Plus verify id={} type={} plus_ground={} plus_bag={} match={} ({})",
                         it->first, state.typeId, state.groundPlus, bagPlus,
-                        state.groundPlus == bagPlus ? "yes" : "NO");
+                        state.groundPlus == bagPlus ? "yes" : "NO", matchKind);
                 } else {
                     spdlog::trace("[hunt-loot] Plus verify id={} type={} plus_ground={} plus_bag=not_found",
                         it->first, state.typeId, state.groundPlus);

@@ -54,6 +54,25 @@ namespace
         return true;
     }
 
+    // Session 14 [SCAN CAP INVESTIGATION]: was 1024. A user report of a
+    // manually-dropped, confirmed-on-screen "+1" item never appearing ANYWHERE
+    // in FindBestLoot's per-item trace (not even a skip line — meaning
+    // MapItems::Get() itself never returned it, not that it was returned and
+    // filtered) raised the question of whether this scan silently runs out of
+    // its 1024-slot budget before reaching every real item. The scan walks
+    // the WHOLE process's committed PAGE_READWRITE/MEM_PRIVATE address space
+    // and counts any byte pattern that merely LOOKS like a CMapItem — that
+    // includes stale, already-freed memory that hasn't been overwritten yet,
+    // not just live items, so the true "distinct plausible matches in one
+    // pass" count could exceed 1024 well before 200+ real live items alone
+    // would. Raised 4x defensively (trivial cost — `seen` is a stack array,
+    // `found` is already heap-allocated regardless of this constant) and
+    // paired with a throttled warning below so a future cap-hit is visible
+    // in the log instead of silently dropping unscanned items with no trace
+    // at all. TODO: if the warning never fires in a future session, this
+    // wasn't the actual explanation for the missed item — look elsewhere.
+    constexpr int kMaxSeenItems = 4096;
+
     void Rescan()
     {
         const DWORD t0 = GetTickCount();
@@ -69,7 +88,7 @@ namespace
         const int mapW = grid->GetWidth();
         const int mapH = grid->GetHeight();
 
-        uint32_t seen[1024];
+        static uint32_t seen[kMaxSeenItems];
         int nseen = 0;
 
         MEMORY_BASIC_INFORMATION mbi{};
@@ -77,7 +96,7 @@ namespace
         uint64_t scanned = 0;
         const uint64_t kScanCap = 40000000ull;
 
-        while (addr < 0x7FFFFFFF0000ull && nseen < 1024 && scanned < kScanCap) {
+        while (addr < 0x7FFFFFFF0000ull && nseen < kMaxSeenItems && scanned < kScanCap) {
             if (!VirtualQuery((void*)addr, &mbi, sizeof(mbi)))
                 break;
             const uintptr_t rbase = (uintptr_t)mbi.BaseAddress;
@@ -87,7 +106,7 @@ namespace
                              && (mbi.Protect == PAGE_READWRITE || mbi.Protect == PAGE_EXECUTE_READWRITE);
 
             if (usable && rsize > 0x20 && rsize < 0x4000000) {
-                for (uintptr_t a = rbase; a + 0x20 < rbase + rsize && nseen < 1024; a += 0x10) {
+                for (uintptr_t a = rbase; a + 0x20 < rbase + rsize && nseen < kMaxSeenItems; a += 0x10) {
                     ++scanned;
                     if (!LooksLikeMapItem(a, mapW, mapH))
                         continue;
@@ -120,6 +139,20 @@ namespace
             g_stats = { nseen, elapsed, s_scans };
         }
         g_backReady.store(true, std::memory_order_release);
+
+        // Session 14 [SCAN CAP INVESTIGATION]: see kMaxSeenItems' comment.
+        // Throttled the same way hunt_loot.cpp's skip trace is — a sustained
+        // cap-hit would otherwise log every ~500ms (the default refresh
+        // interval) forever.
+        if (nseen >= kMaxSeenItems) {
+            static DWORD s_lastCapWarnTick = 0;
+            const DWORD nowTick = GetTickCount();
+            if (nowTick - s_lastCapWarnTick > 5000) {
+                s_lastCapWarnTick = nowTick;
+                spdlog::warn("[mapitems] Rescan HIT THE {}-ITEM CAP — some real ground items may be going unscanned this pass",
+                    kMaxSeenItems);
+            }
+        }
 
         static bool loggedOnce = false;
         if (!loggedOnce) {
