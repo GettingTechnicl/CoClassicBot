@@ -31,19 +31,25 @@ static constexpr DWORD kLootGhostConfirmMs       = 800;
 // Session 13 [PRECISE DESPAWN TIMES]: originally a conservative 180000ms
 // guess ("a minute or two"). User hand-timed the actual server despawn
 // clocks: gold despawns at 1:10 (70000ms), other items at 1:20 (80000ms)
-// after dropping. A 3-minute cutoff let the bot keep selecting/walking
-// toward items that had ALREADY been gone for well over a minute — exactly
-// the "trying to pick up items that have already been picked up or have
-// de-spawned" behavior reported live. Type-aware cutoffs below use those
-// measured times with a small margin for clock/measurement slack, not the
-// old one-size-fits-all guess. Note: m_lootSeenTicks starts from when OUR
-// scan first notices the item, which can lag the true server drop time if
-// the item existed before it entered scan range — that only makes this
-// UNDER-count age (occasionally still pursuing something already gone,
-// no worse than before), never over-count it, so it can't cause new false
-// positives against real, still-collectible drops.
-static constexpr DWORD kLootStaleMaxAgeMoneyMs   = 68000;   // real despawn 70000ms
-static constexpr DWORD kLootStaleMaxAgeItemMs    = 78000;   // real despawn 80000ms
+// after dropping — the first version of this constant used those measured
+// times (minus a small margin), split by type.
+//
+// Session 13 [EFFICIENCY TUNING]: user's follow-up call, given how fast the
+// bot moves: don't wait anywhere near the full despawn window before giving
+// up — a flat 50000ms for both gold and ordinary items, tightened from the
+// measured-despawn-derived 68000/78000ms split. Trades a little real,
+// still-collectible loot in the 50-70/80s range for not continuing to
+// consider/re-evaluate something increasingly likely to be gone or
+// unreachable. Meteors/DragonBalls are exempt from this check entirely (see
+// its use site) rather than getting their own longer number — their real
+// despawn timer has never been measured, so "give up early" has no evidence
+// behind it for them the way it does for ordinary drops, and they're
+// priority items specifically because they're worth fetching regardless of
+// age. Note: m_lootSeenTicks starts from when OUR scan first notices the
+// item, which can lag the true server drop time if the item existed before
+// it entered scan range — that only makes this UNDER-count age (occasionally
+// still giving up sooner than 50s of true age), never over-count it.
+static constexpr DWORD kLootStaleMaxAgeMs        = 50000;
 static constexpr DWORD kLootTargetSwitchIntervalMs = 100;
 
 static constexpr int kMinLootPickupIgnoreMs = 0;
@@ -166,14 +172,24 @@ CMapItem* HuntLootManager::FindBestLoot(
         ++totalItems;
         // Bag-full money-only mode (see the bagFull comment above).
         if (bagFull && !isWantedMoney(*itemRef)) { ++skippedBagFull; continue; }
+        // Computed early (moved up from the confirmed-drop gate below) so the
+        // stale-age skip just below can exempt it too — see that comment.
+        const bool isPriorityItem = HuntTownService::IsMeteorOrDragonBallItem(*itemRef);
         const auto seenResult = m_lootSeenTicks.try_emplace(itemRef->m_id, now);
         const DWORD seenAge = now - seenResult.first->second;
         if (seenAge < spawnGraceMs) { ++skippedSpawnGrace; continue; }
-        // Stale skip (see [PRECISE DESPAWN TIMES] above): too old to still be
-        // real, using the type-appropriate measured despawn clock.
-        const DWORD staleMaxAge = HuntTownService::GetMoneyTier(*itemRef) >= 0
-            ? kLootStaleMaxAgeMoneyMs : kLootStaleMaxAgeItemMs;
-        if (seenAge > staleMaxAge) { ++skippedStale; continue; }
+        // Stale skip: too old to still be worth considering. Session 13
+        // [EFFICIENCY TUNING]: tightened from the measured-despawn-minus-
+        // margin values (68000/78000ms) to a flat 50000ms per the user's own
+        // call — give up on stale gold/items sooner to keep the bot focused
+        // on fresher loot and hunting rather than continuing to consider
+        // something that's probably going stale soon anyway. Meteors/
+        // DragonBalls are exempt entirely: they're priority items precisely
+        // because they're rare and worth fetching regardless of age, and
+        // unlike ordinary drops their real despawn timer has never been
+        // measured — assuming they follow the same clock and giving up early
+        // risks abandoning a still-real one for no proven reason.
+        if (!isPriorityItem && seenAge > kLootStaleMaxAgeMs) { ++skippedStale; continue; }
         if (isLootPickupIgnoredFn && isLootPickupIgnoredFn(itemRef->m_id, now)) { ++skippedIgnored; continue; }
         if (isPointInZoneFn && !isPointInZoneFn(Game::GetCurrentMapId(), itemRef->m_pos)) { ++skippedZone; continue; }
 
@@ -212,7 +228,8 @@ CMapItem* HuntLootManager::FindBestLoot(
         // which the user described as meteor/DragonBall-specific from the
         // start.
         const bool confirmed = IsConfirmedDrop(itemRef->m_pos, now);
-        const bool isPriorityItem = HuntTownService::IsMeteorOrDragonBallItem(*itemRef);
+        // isPriorityItem computed earlier in this loop (see the stale-age
+        // skip above, which also needs it).
         if (!confirmed && !isPriorityItem) {
             if (!HuntTownService::ShouldLootMapItem(settings, *itemRef)) { ++skippedFilter; continue; }
             if (!HuntTownService::IsSelectedLootItem(settings, itemRef->m_idType)
