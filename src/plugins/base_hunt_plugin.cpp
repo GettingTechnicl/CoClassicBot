@@ -2635,7 +2635,7 @@ void BaseHuntPlugin::RenderLootSection()
     ImGui::Combo("Minimum Gold Tier", &settings.minimumGoldTier, kGoldTierNames, IM_ARRAYSIZE(kGoldTierNames));
     HelpMarkerOnSameLine("Money drops below this tier are ignored entirely.");
     ImGui::SliderInt("Loot Range", &settings.lootRange, 0, CGameMap::MAX_JUMP_DIST);
-    HelpMarkerOnSameLine("Only limits how far to detour for money drops. Meteors/DragonBalls are always fetched regardless of range and interrupt everything else to go get it. Plussed gear is not — it's ordinary selectable loot, same as Loot Range and other priorities (currently back on for accuracy testing, see the Loot +1 Items checkbox below).");
+    HelpMarkerOnSameLine("Only limits how far to detour for money drops. Meteors/DragonBalls are always fetched regardless of range and interrupt everything else to go get it. Plussed gear would be ordinary selectable loot, same as Loot Range and other priorities, once ground-item plus detection is re-enabled (see the Loot +1 Items checkbox below).");
     // Session 13 [UI GROUPING]: these three each carry different priority
     // rules from ordinary quality-checkbox loot (see IsMeteorOrDragonBallItem
     // and ShouldLootMapItem's plus-check), so they're grouped together rather
@@ -2655,15 +2655,15 @@ void BaseHuntPlugin::RenderLootSection()
         bool lootPlusItems = settings.minimumLootPlus > 0;
         if (ImGui::Checkbox("Loot +1 Items##priorityplus", &lootPlusItems))
             settings.minimumLootPlus = lootPlusItems ? 1 : 0;
-        // Session 14 [TEMPORARILY RE-ENABLED FOR LIVE DATA GATHERING]: was
-        // disabled (honesty-updated tooltip to say so) after GetPlus() was
-        // proven wrong on genuine equipment; re-enabled again on the user's
-        // own call so item 27's pickup cross-verify tooling (hunt_loot.cpp —
-        // logs "Plus verify ... plus_ground=X plus_bag=Y match=yes/NO" on
-        // every real pickup) has data to work with. See hunt_town.cpp's
-        // ShouldLootMapItem for the full history — do not read this tooltip
-        // as "confirmed working," it's back on specifically to be tested.
-        HelpMarkerOnSameLine("Ground-item +N detection is temporarily back on for live accuracy testing — the memory offset it reads was previously proven wrong (confirmed false positives on non-plussed gear), so expect it to still pick up some junk right now. Every real pickup is automatically cross-verified against the item's own (trusted) bag data and logged as a match/mismatch — that log is what determines whether this stays on or goes back off. Only +1 ever drops from monsters in this game; higher plus levels come from player crafting, never a ground find.");
+        // Session 14 [RE-DISABLED — DATA CAME BACK CONCLUSIVE]: was
+        // temporarily re-enabled for live cross-verify testing (commit
+        // a66d420); the data settled it rather than clearing it — two
+        // bag-confirmed-unenchanted pickups (SyeniticHelmet, SlantWand) read
+        // 80 and 64 on the ground, nowhere near a valid plus range. Disabled
+        // again (commit e50dbbd... see hunt_town.cpp's ShouldLootMapItem for
+        // the exact numbers and reasoning). Setting/checkbox still kept for
+        // when the real offset gets verified.
+        HelpMarkerOnSameLine("Currently has no effect — ground-item +N detection is disabled pending a verified memory offset. The one in use was tested live and proven wrong twice over: it read implausible values (80, 64) on items a bag-side check confirmed were genuinely unenchanted. The setting is kept and saved for when it's re-enabled. Only +1 ever drops from monsters in this game; higher plus levels come from player crafting, never a ground find.");
     }
     ImGui::SameLine();
     ImGui::Checkbox("Loot Meteors##prioritymeteor", &settings.lootMeteor);

@@ -284,28 +284,24 @@ bool HuntTownService::ShouldLootMapItem(const AutoHuntSettings& settings, const 
         return true;
     if (MatchesSelectedLootQuality(settings, item))
         return true;
-    // Session 14 [TEMPORARY RE-ENABLE — LIVE DATA GATHERING]: this branch was
-    // disabled last session (commit 5937cf3) after CMapItem::GetPlus()'s
-    // MapItemInfo+0x48 read was proven wrong on genuine equipment (two
-    // ground PhoenixHooks, identical type ID, one really +1 and one really
-    // plain — tooltip-confirmed). Re-enabled here on the user's own call,
-    // specifically so item 27's tooling (commit 7df363e — PruneLootPickupAttempts'
-    // automatic ground-vs-bag plus cross-verify, logged as "Plus verify
-    // ... plus_ground=X plus_bag=Y match=yes/NO") has real pickups to work
-    // with: with this OFF, nothing ever reaches TryPickupLootItem via plus
-    // alone, so there's nothing to cross-verify. This is a deliberate,
-    // consented trade — expect some false-positive junk pickups during this
-    // testing window, that's the whole point, the cross-verify log is now
-    // the arbiter of correctness, not blind trust in this offset. DO NOT
-    // treat this re-enable as "the offset turned out fine after all" — flip
-    // it back to `return false;` (see commit 5937cf3 for that exact form)
-    // once enough "Plus verify" data has been gathered, unless the data
-    // itself shows the offset is actually reliable (in which case update
-    // this comment to say so, with the evidence, rather than silently
-    // reverting).
-    return settings.minimumLootPlus > 0
-        && IsEquipmentQualitySort(GetItemSort(item.m_idType))
-        && item.GetPlus() >= settings.minimumLootPlus;
+    // Session 14 [RE-DISABLED — DATA CAME BACK CONCLUSIVE]: was temporarily
+    // re-enabled (see commit a66d420) specifically to gather live pickup
+    // cross-verify data. That data is now in, and it's not ambiguous:
+    //   Plus verify id=2125272726 type=111543 (SyeniticHelmet) plus_ground=80 plus_bag=0 match=NO
+    //   Plus verify id=2125287423 type=561017 (SlantWand)      plus_ground=64 plus_bag=0 match=NO
+    // Both bag-confirmed genuinely UNENCHANTED (plus_bag=0, static_assert-
+    // verified CItem::m_nAddition), but the ground read at MapItemInfo+0x48
+    // returned 80 and 64 — nowhere near a valid plus range (real levels top
+    // out around 8-12). This isn't "occasionally misreads +0 vs +1," it's
+    // reading garbage/misaligned memory outright, which also explains why
+    // zero genuine +1 pickups landed during the whole test window: a real
+    // +1 item would need to coincidentally ALSO land in that noise near the
+    // 1-8 range, which is a much smaller target than 80/64 hit by chance.
+    // Disabled again — see commit 5937cf3 for the original disable and its
+    // reasoning, which this fully reconfirms rather than overturns. Do not
+    // re-enable without either a verified correct offset, or overwhelming
+    // new data (which this session's data does not provide).
+    return false;
 }
 
 bool HuntTownService::CanAffordArrowPurchase(const CHero* hero)
