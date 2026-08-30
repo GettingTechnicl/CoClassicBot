@@ -284,31 +284,28 @@ bool HuntTownService::ShouldLootMapItem(const AutoHuntSettings& settings, const 
         return true;
     if (MatchesSelectedLootQuality(settings, item))
         return true;
-    // Session 13 [DISABLED — UNVERIFIED OFFSET, PROVEN WRONG]: this used to
-    // also match settings.minimumLootPlus > 0 && GetPlus() >= threshold on
-    // equipment-sort items. CMapItem::GetPlus() reads a raw info-struct byte
-    // at (MapItemInfo*)+0x48 — never verified against real data, just a
-    // comment asserting it. We'd already proven it wrong for money and for
-    // EXPEND/consumable items (both scoped out via IsEquipmentQualitySort),
-    // but live testing then directly disproved it for real EQUIPMENT too:
-    // the user compared in-game item tooltips against what the bot picked
-    // up — LeafBlade, PhoenixHook, and OxhideArmor showed NO "(+N)" in their
-    // names at all (genuinely unenchanted) yet GetPlus() read nonzero for
-    // all three. Conclusively: the user had TWO PhoenixHooks on the ground,
-    // identical type ID, one genuinely "+1" and one genuinely plain — proof
-    // type ID can never distinguish them, and GetPlus() at this offset can't
-    // either. Contrast with CItem::m_nAddition (the BAG-item plus field,
-    // CItem.h) at +0x6B, which IS static_assert-verified and correct — this
-    // ground-item offset was evidently guessed by analogy and never actually
-    // checked. Disabled rather than left shipping false positives; the
-    // "Loot +1 Items" checkbox remains in the UI (harmless while this is a
-    // no-op) for when the real ground-item plus offset gets live-verified.
-    // TODO(unverified): live-verify the correct ground-item plus offset —
-    // compare raw bytes of a known-"+0" item against a known-"+1" item of
-    // the identical type ID, the way this session compared two PhoenixHook
-    // instances by eye — before ever re-enabling this. settings.minimumLootPlus
-    // and its UI checkbox stay as-is; this function just doesn't act on it yet.
-    return false;
+    // Session 14 [TEMPORARY RE-ENABLE — LIVE DATA GATHERING]: this branch was
+    // disabled last session (commit 5937cf3) after CMapItem::GetPlus()'s
+    // MapItemInfo+0x48 read was proven wrong on genuine equipment (two
+    // ground PhoenixHooks, identical type ID, one really +1 and one really
+    // plain — tooltip-confirmed). Re-enabled here on the user's own call,
+    // specifically so item 27's tooling (commit 7df363e — PruneLootPickupAttempts'
+    // automatic ground-vs-bag plus cross-verify, logged as "Plus verify
+    // ... plus_ground=X plus_bag=Y match=yes/NO") has real pickups to work
+    // with: with this OFF, nothing ever reaches TryPickupLootItem via plus
+    // alone, so there's nothing to cross-verify. This is a deliberate,
+    // consented trade — expect some false-positive junk pickups during this
+    // testing window, that's the whole point, the cross-verify log is now
+    // the arbiter of correctness, not blind trust in this offset. DO NOT
+    // treat this re-enable as "the offset turned out fine after all" — flip
+    // it back to `return false;` (see commit 5937cf3 for that exact form)
+    // once enough "Plus verify" data has been gathered, unless the data
+    // itself shows the offset is actually reliable (in which case update
+    // this comment to say so, with the evidence, rather than silently
+    // reverting).
+    return settings.minimumLootPlus > 0
+        && IsEquipmentQualitySort(GetItemSort(item.m_idType))
+        && item.GetPlus() >= settings.minimumLootPlus;
 }
 
 bool HuntTownService::CanAffordArrowPurchase(const CHero* hero)
