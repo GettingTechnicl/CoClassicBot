@@ -7,7 +7,67 @@
 #include "log.h"
 #include "imgui.h"
 #include <algorithm>
+#include <cstdio>
+#include <cstring>
 #include <string>
+
+// =====================================================================
+// Session 14 [ARTISAN LEVEL-FIELD RE]: user-reported "stop on level-up"
+// never triggers. Cross-referencing the log against real test data showed
+// why: every real attempt's outcome resolved in ~50ms when it was a
+// failure (durability drop, correctly detected), but ~2.4s (the full
+// timeout) whenever it WASN'T a failure — meaning those were very likely
+// genuine successes that CItem::GetPlus() (m_nAddition, the verified
+// ordinary "+N" enchant field) never reflected. "Item level" in the
+// Artisan Wind mechanic is probably a different stat than the combat-drop
+// +N — CItem has a large (0x28-0x62) never-individually-mapped byte range
+// that's the likely home for it. Same RE methodology as the earlier
+// ground-item plus investigation (hunt_loot.cpp): dump raw bytes before
+// and after a real attempt so the actual changed byte can be found by
+// diffing, instead of guessing another offset.
+namespace {
+
+size_t SafeReadItemBytes(uintptr_t addr, uint8_t* out, size_t len)
+{
+    __try {
+        memcpy(out, (const void*)addr, len);
+        return len;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+std::string ItemBytesToHex(const uint8_t* bytes, size_t len)
+{
+    std::string out;
+    char buf[4];
+    for (size_t i = 0; i < len; ++i) {
+        snprintf(buf, sizeof(buf), "%02X ", bytes[i]);
+        out += buf;
+    }
+    return out;
+}
+
+// Dumps a generous window (0x00-0x100) — well past the last individually
+// mapped field (m_nAddition at 0x6B) — since the real "level" field's
+// location is exactly what's unknown here.
+void DumpArtisanItemBytes(const char* tag, CItem* item)
+{
+    if (!item)
+        return;
+    uint8_t bytes[0x100] = {};
+    const size_t len = SafeReadItemBytes((uintptr_t)item, bytes, sizeof(bytes));
+    if (len > 0) {
+        spdlog::info("[artisan] Dump({}) id={} type={} name={} plus={} dur={}/{} bytes[0x00-{:#x}]: {}",
+            tag, item->GetID(), item->GetTypeID(), item->GetName(),
+            item->GetPlus(), item->GetDurabilityRaw(), item->GetMaxDurabilityRaw(),
+            len, ItemBytesToHex(bytes, len));
+    } else {
+        spdlog::warn("[artisan] Dump({}) id={} unreadable", tag, item->GetID());
+    }
+}
+
+} // namespace
 
 // =====================================================================
 // Varint writer (same encoding as packets.cpp)
@@ -157,6 +217,7 @@ void ArtisanSpammerPlugin::Update()
             const OBJID materialId = m_materialQueue.back();
             m_materialQueue.pop_back();
 
+            DumpArtisanItemBytes("before", item);
             if (SendArtisanPacket(m_currentTargetId, materialId, GetArtisanAction(m_materialType))) {
                 m_sentCount++;
                 spdlog::debug("[artisan] Sent #{} target={} mat={} prevPlus={} prevDur={}/{}",
@@ -185,6 +246,7 @@ void ArtisanSpammerPlugin::Update()
             if (curPlus > m_prevPlus) {
                 m_successCount++;
                 spdlog::info("[artisan] SUCCESS: item {} +{} -> +{}", m_currentTargetId, m_prevPlus, curPlus);
+                DumpArtisanItemBytes("after-success", item);
                 m_phase = ArtisanPhase::Idle;
                 // Durability stays full on success, so staying on this item
                 // (m_currentTargetId left set) just re-enters Idle and sends
@@ -198,6 +260,7 @@ void ArtisanSpammerPlugin::Update()
             if (curDur < m_prevDurabilityRaw) {
                 spdlog::info("[artisan] FAILED: item {} durability {} -> {}",
                     m_currentTargetId, m_prevDurabilityRaw, curDur);
+                DumpArtisanItemBytes("after-failed", item);
                 // Idle will see the reduced durability next pass and repair
                 // (or skip, if Auto-Repair is off) before trying again.
                 m_phase = ArtisanPhase::Idle;
@@ -207,8 +270,9 @@ void ArtisanSpammerPlugin::Update()
             // No change observed yet — keep polling up to the timeout.
             if (now - m_phaseStartTick > kArtisanWaitStepMs) {
                 if (++m_phaseFailCount >= kArtisanMaxWaitSteps) {
-                    spdlog::warn("[artisan] No result observed for item {} after {} polls, moving on",
+                    spdlog::warn("[artisan] No result observed for item {} after {} polls, moving on — likely an undetected success, see the dump below",
                         m_currentTargetId, m_phaseFailCount);
+                    DumpArtisanItemBytes("after-timeout", item);
                     m_phase = ArtisanPhase::Idle;
                     return;
                 }
