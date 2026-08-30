@@ -4,6 +4,20 @@
 #include <vector>
 #include <utility>
 
+// Session 14 [ARTISAN AUTO-REPAIR + STOP-ON-LEVEL-UP]: drives one item at a
+// time through the game's own compose-and-check cycle instead of blind-
+// firing a whole 1:1-paired queue. Idle decides what to do next for the
+// current item (repair if durability dropped, send another material if
+// full), then hands off to one of the two Wait* phases to poll for the
+// actual outcome (level-up vs durability-drop vs repaired) via CItem's own
+// verified fields (GetPlus()/GetDurabilityRaw() — same fields already
+// static_assert-checked and relied on elsewhere in this codebase).
+enum class ArtisanPhase {
+    Idle,
+    WaitUpgradeResult,
+    WaitRepairResult,
+};
+
 class ArtisanSpammerPlugin : public IPlugin {
 public:
     const char* GetName() const override { return "Artisan Spammer"; }
@@ -16,10 +30,27 @@ private:
     int  m_selectedTarget = -1;     // index into unique equipment type list
     int  m_materialType = 0;        // 0=Meteor, 1=MeteorScroll, 2=DragonBall
 
+    // User-facing toggles for the two originally-missing pieces.
+    bool m_autoRepair = true;
+    bool m_stopOnLevelChange = false;
+
     bool m_spamming = false;
-    std::vector<std::pair<OBJID, OBJID>> m_queue;  // (target, material) pairs
-    int  m_sentCount = 0;
-    int  m_totalCount = 0;
-    DWORD m_lastSendTick = 0;
-    int  m_delayMs = 100;           // ms between packets
+    ArtisanPhase m_phase = ArtisanPhase::Idle;
+
+    std::vector<OBJID> m_targetQueue;    // remaining target items still to process
+    std::vector<OBJID> m_materialQueue;  // shared material pool, consumed as we go
+
+    OBJID m_currentTargetId  = 0;
+    int   m_prevPlus         = 0;  // snapshot taken right before sending an attempt
+    int   m_prevDurabilityRaw = 0;
+    DWORD m_phaseStartTick   = 0;  // when the current Wait* phase started (for timeout)
+    int   m_phaseFailCount   = 0;  // consecutive no-result timeouts in the current Wait* phase
+
+    int  m_sentCount     = 0;  // upgrade attempts sent
+    int  m_successCount  = 0;  // confirmed level-ups
+    int  m_repairCount   = 0;  // confirmed repairs
+    int  m_totalTargets  = 0;  // target items queued this run
+
+    DWORD m_lastActionTick = 0;
+    int  m_delayMs = 100;           // ms between packets (also gates repair sends)
 };

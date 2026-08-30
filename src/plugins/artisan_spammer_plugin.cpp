@@ -2,6 +2,7 @@
 #include "game.h"
 #include "CHero.h"
 #include "CItem.h"
+#include "inventory_utils.h"
 #include "packets.h"
 #include "log.h"
 #include "imgui.h"
@@ -69,32 +70,185 @@ static uint32_t GetArtisanAction(int materialType)
     return materialType == 2 ? 19 : 20;
 }
 
+// Session 14: how long to keep polling for an outcome (level-up or
+// durability-drop) before giving up on THIS attempt and moving on anyway —
+// mirrors hunt_town.cpp's repair-wait convention (~2.5s, a few retries)
+// rather than inventing a new magnitude. The server action here is
+// presumably near-instant like the rest of this game's actions, so these
+// are generous, not tight.
+static constexpr DWORD kArtisanWaitStepMs   = 800;
+static constexpr int   kArtisanMaxWaitSteps = 3;   // ~2.4s total per outcome
+
 // =====================================================================
-// Update — drains the paired queue one packet per tick
+// Update — drives one target item at a time through repair/upgrade
 // =====================================================================
 void ArtisanSpammerPlugin::Update()
 {
-    if (!m_spamming || m_queue.empty())
+    if (!m_spamming)
         return;
 
-    const DWORD now = GetTickCount();
-    if (now - m_lastSendTick < static_cast<DWORD>(m_delayMs))
+    CHero* hero = Game::GetHero();
+    if (!hero) {
+        m_spamming = false;
         return;
-
-    auto [targetId, materialId] = m_queue.back();
-    m_queue.pop_back();
-
-    if (SendArtisanPacket(targetId, materialId, GetArtisanAction(m_materialType))) {
-        m_sentCount++;
-        spdlog::debug("[artisan] Sent {}/{} target={} mat={}",
-            m_sentCount, m_totalCount, targetId, materialId);
     }
 
-    m_lastSendTick = now;
+    const DWORD now = GetTickCount();
 
-    if (m_queue.empty()) {
-        m_spamming = false;
-        spdlog::info("[artisan] Done — sent {} packets", m_sentCount);
+    switch (m_phase) {
+        case ArtisanPhase::Idle: {
+            // Need a new current target item?
+            if (m_currentTargetId == 0) {
+                if (m_targetQueue.empty()) {
+                    m_spamming = false;
+                    spdlog::info("[artisan] Done — {} attempts, {} successes, {} repairs",
+                        m_sentCount, m_successCount, m_repairCount);
+                    return;
+                }
+                m_currentTargetId = m_targetQueue.back();
+                m_targetQueue.pop_back();
+            }
+
+            CItem* item = FindInventoryItemById(hero, m_currentTargetId);
+            if (!item) {
+                // Item vanished from the bag (unexpected — moved on regardless
+                // of why, rather than getting stuck on a ghost id).
+                spdlog::warn("[artisan] Item {} no longer in bag, skipping", m_currentTargetId);
+                m_currentTargetId = 0;
+                return;
+            }
+
+            // Needs repair before another attempt can be made.
+            if (item->GetDurabilityRaw() < item->GetMaxDurabilityRaw()) {
+                if (!m_autoRepair) {
+                    spdlog::info("[artisan] Item {} needs repair and Auto-Repair is off, skipping",
+                        m_currentTargetId);
+                    m_currentTargetId = 0;
+                    return;
+                }
+                if (now - m_lastActionTick < (DWORD)m_delayMs)
+                    return;
+                hero->RepairItem(m_currentTargetId);
+                m_lastActionTick = now;
+                m_phaseStartTick = now;
+                m_phaseFailCount = 0;
+                m_phase = ArtisanPhase::WaitRepairResult;
+                spdlog::info("[artisan] Repairing item {} (durability {}/{})",
+                    m_currentTargetId, item->GetDurabilityRaw(), item->GetMaxDurabilityRaw());
+                return;
+            }
+
+            // Full durability — send another material if any remain.
+            if (m_materialQueue.empty()) {
+                m_currentTargetId = 0;
+                if (m_targetQueue.empty()) {
+                    m_spamming = false;
+                    spdlog::info("[artisan] Done — out of materials. {} attempts, {} successes, {} repairs",
+                        m_sentCount, m_successCount, m_repairCount);
+                }
+                return;
+            }
+
+            if (now - m_lastActionTick < (DWORD)m_delayMs)
+                return;
+
+            m_prevPlus = item->GetPlus();
+            m_prevDurabilityRaw = item->GetDurabilityRaw();
+            const OBJID materialId = m_materialQueue.back();
+            m_materialQueue.pop_back();
+
+            if (SendArtisanPacket(m_currentTargetId, materialId, GetArtisanAction(m_materialType))) {
+                m_sentCount++;
+                spdlog::debug("[artisan] Sent #{} target={} mat={} prevPlus={} prevDur={}/{}",
+                    m_sentCount, m_currentTargetId, materialId, m_prevPlus,
+                    m_prevDurabilityRaw, item->GetMaxDurabilityRaw());
+            }
+            m_lastActionTick = now;
+            m_phaseStartTick = now;
+            m_phaseFailCount = 0;
+            m_phase = ArtisanPhase::WaitUpgradeResult;
+            return;
+        }
+
+        case ArtisanPhase::WaitUpgradeResult: {
+            CItem* item = FindInventoryItemById(hero, m_currentTargetId);
+            if (!item) {
+                spdlog::warn("[artisan] Item {} vanished mid-attempt, moving on", m_currentTargetId);
+                m_currentTargetId = 0;
+                m_phase = ArtisanPhase::Idle;
+                return;
+            }
+
+            const int curPlus = item->GetPlus();
+            const int curDur = item->GetDurabilityRaw();
+
+            if (curPlus > m_prevPlus) {
+                m_successCount++;
+                spdlog::info("[artisan] SUCCESS: item {} +{} -> +{}", m_currentTargetId, m_prevPlus, curPlus);
+                m_phase = ArtisanPhase::Idle;
+                // Durability stays full on success, so staying on this item
+                // (m_currentTargetId left set) just re-enters Idle and sends
+                // the next material immediately — unless the user wants to
+                // bank this win and move to the next item instead.
+                if (m_stopOnLevelChange)
+                    m_currentTargetId = 0;
+                return;
+            }
+
+            if (curDur < m_prevDurabilityRaw) {
+                spdlog::info("[artisan] FAILED: item {} durability {} -> {}",
+                    m_currentTargetId, m_prevDurabilityRaw, curDur);
+                // Idle will see the reduced durability next pass and repair
+                // (or skip, if Auto-Repair is off) before trying again.
+                m_phase = ArtisanPhase::Idle;
+                return;
+            }
+
+            // No change observed yet — keep polling up to the timeout.
+            if (now - m_phaseStartTick > kArtisanWaitStepMs) {
+                if (++m_phaseFailCount >= kArtisanMaxWaitSteps) {
+                    spdlog::warn("[artisan] No result observed for item {} after {} polls, moving on",
+                        m_currentTargetId, m_phaseFailCount);
+                    m_phase = ArtisanPhase::Idle;
+                    return;
+                }
+                m_phaseStartTick = now;
+            }
+            return;
+        }
+
+        case ArtisanPhase::WaitRepairResult: {
+            CItem* item = FindInventoryItemById(hero, m_currentTargetId);
+            if (!item) {
+                spdlog::warn("[artisan] Item {} vanished mid-repair, moving on", m_currentTargetId);
+                m_currentTargetId = 0;
+                m_phase = ArtisanPhase::Idle;
+                return;
+            }
+
+            if (item->GetDurabilityRaw() >= item->GetMaxDurabilityRaw()) {
+                m_repairCount++;
+                spdlog::info("[artisan] Repaired item {}", m_currentTargetId);
+                m_phase = ArtisanPhase::Idle;
+                return;
+            }
+
+            if (now - m_phaseStartTick > kArtisanWaitStepMs) {
+                if (++m_phaseFailCount >= kArtisanMaxWaitSteps) {
+                    spdlog::warn("[artisan] Repair of item {} never confirmed, skipping item",
+                        m_currentTargetId);
+                    m_currentTargetId = 0;
+                    m_phase = ArtisanPhase::Idle;
+                    return;
+                }
+                if (now - m_lastActionTick >= (DWORD)m_delayMs) {
+                    hero->RepairItem(m_currentTargetId);
+                    m_lastActionTick = now;
+                }
+                m_phaseStartTick = now;
+            }
+            return;
+        }
     }
 }
 
@@ -171,6 +325,14 @@ void ArtisanSpammerPlugin::RenderUI()
         ImGui::Text("Available: %d", matCount);
     }
 
+    // -- Behavior toggles (the two originally-missing pieces) --
+    if (ImGui::CollapsingHeader("Behavior", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Auto-Repair on Failed Upgrade", &m_autoRepair);
+        ImGui::TextDisabled("A failed attempt cuts durability in half. When on, repairs automatically (an NPC next to Artisan Wind handles it) before trying that item again.");
+        ImGui::Checkbox("Stop Feeding an Item Once It Levels Up", &m_stopOnLevelChange);
+        ImGui::TextDisabled("Off: keeps spending materials on the same item after a success, as long as materials remain. On: moves to the next item the moment this one's level increases.");
+    }
+
     // -- Delay --
     ImGui::SliderInt("Delay (ms)", &m_delayMs, 0, 1000);
 
@@ -178,10 +340,18 @@ void ArtisanSpammerPlugin::RenderUI()
 
     // -- Spam button --
     if (m_spamming) {
-        ImGui::Text("Sending %d / %d ...", m_sentCount, m_totalCount);
+        const char* phaseText = m_phase == ArtisanPhase::WaitRepairResult ? "repairing"
+            : m_phase == ArtisanPhase::WaitUpgradeResult ? "awaiting result"
+            : "deciding";
+        ImGui::Text("Item %d / %d (%s) — %d attempts, %d successes, %d repairs",
+            m_totalTargets - (int)m_targetQueue.size(), m_totalTargets, phaseText,
+            m_sentCount, m_successCount, m_repairCount);
         if (ImGui::Button("Stop")) {
             m_spamming = false;
-            m_queue.clear();
+            m_phase = ArtisanPhase::Idle;
+            m_targetQueue.clear();
+            m_materialQueue.clear();
+            m_currentTargetId = 0;
         }
     } else {
         const bool canSpam = m_selectedTarget >= 0
@@ -191,42 +361,39 @@ void ArtisanSpammerPlugin::RenderUI()
         if (ImGui::Button("Spam All")) {
             const std::string& targetName = equipTypes[m_selectedTarget].name;
 
-            // Collect matching equipment item IDs
-            std::vector<OBJID> targetIds;
+            m_targetQueue.clear();
             for (auto& pi : hero->m_deqItem) {
                 CItem* it = pi.get();
                 if (it && it->IsEquipment() && it->GetName() == targetName)
-                    targetIds.push_back(it->GetID());
+                    m_targetQueue.push_back(it->GetID());
             }
 
-            // Collect matching material item IDs
-            std::vector<OBJID> materialIds;
+            m_materialQueue.clear();
             for (auto& pi : hero->m_deqItem) {
                 CItem* it = pi.get();
                 if (it && IsMaterialMatch(it, m_materialType))
-                    materialIds.push_back(it->GetID());
+                    m_materialQueue.push_back(it->GetID());
             }
 
-            // Zip 1:1 — min(targets, materials) pairs
-            const int pairCount = (std::min)((int)targetIds.size(), (int)materialIds.size());
-            m_queue.clear();
-            for (int i = 0; i < pairCount; i++)
-                m_queue.push_back({ targetIds[i], materialIds[i] });
-
-            if (!m_queue.empty()) {
-                m_totalCount = (int)m_queue.size();
+            if (!m_targetQueue.empty() && !m_materialQueue.empty()) {
+                m_totalTargets = (int)m_targetQueue.size();
                 m_sentCount = 0;
-                m_lastSendTick = 0;
+                m_successCount = 0;
+                m_repairCount = 0;
+                m_lastActionTick = 0;
+                m_currentTargetId = 0;
+                m_phase = ArtisanPhase::Idle;
                 m_spamming = true;
-                spdlog::info("[artisan] Queued {} pairs for '{}'",
-                    m_totalCount, targetName);
+                spdlog::info("[artisan] Queued {} items x {} materials ('{}')",
+                    m_totalTargets, (int)m_materialQueue.size(), targetName);
             }
         }
         if (!canSpam) ImGui::EndDisabled();
 
         if (m_sentCount > 0 && !m_spamming) {
             ImGui::SameLine();
-            ImGui::Text("Last run: %d sent", m_sentCount);
+            ImGui::Text("Last run: %d sent, %d successes, %d repairs",
+                m_sentCount, m_successCount, m_repairCount);
         }
     }
 }
