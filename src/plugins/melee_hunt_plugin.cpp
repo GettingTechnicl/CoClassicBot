@@ -525,26 +525,10 @@ void MeleeHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const AutoH
     // Determine attack interval
     const DWORD nextAttackDelay = ComputeMeleeAttackDelayMs(hero, target, settings);
 
-    // Session 14 [DEADLOCK FIX]: this used to stop the pathfinder
-    // UNCONDITIONALLY on every call, before even checking whether an attack
-    // was about to fire. With Instant Attack reaching this function almost
-    // every tick regardless of actual distance, that killed any in-progress
-    // approach movement before it could take a single step — live-confirmed:
-    // a target sat at a frozen position for a full 54 seconds, "path"/"jump"
-    // reporting success every cycle in the approach trace yet heroPos never
-    // actually changing, while the attack-attempt counter climbed past 500
-    // (~7ms between attempts — far tighter than the intended attack-interval
-    // floor, because this ran essentially every decision tick regardless of
-    // the throttle). Swapping which function CHOSE the approach destination
-    // (StartPathTo vs StartPathNearTarget) made no difference because the
-    // movement never got a chance to execute either way. Now only stops an
-    // in-progress path when genuinely within melee range and actually about
-    // to attack — a speculative Instant Attack potshot from further out has
-    // no reason to interrupt an approach that's still making real progress.
-    const bool inMeleeRange = moveDist <= kReliableAttackRange;
+    if (Pathfinder::Get().IsActive())
+        Pathfinder::Get().Stop();
+
     if (now - m_lastAttackTick >= nextAttackDelay) {
-        if (inMeleeRange && Pathfinder::Get().IsActive())
-            Pathfinder::Get().Stop();
         hero->AttackTarget(target->GetID(), target->m_posMap);
         m_lastAttackTick = now;
         NoteMeleeAttackAttempt(target->GetID());
