@@ -160,6 +160,19 @@ CMapItem* HuntLootManager::FindBestLoot(
         return settings.lootMoney && HuntTownService::GetMoneyTier(item) >= settings.minimumGoldTier;
     };
 
+    // Session 14 [PER-ITEM SKIP TRACE]: FindBestLoot previously only logged
+    // the item it picked, with aggregate skip counts — enough to see THAT
+    // items were filtered, never WHICH one or WHY. User report ("dropped
+    // items don't get picked up") couldn't be verified against the log at
+    // all: no line named the dropped item as seen-and-rejected vs. never
+    // seen. This logs one line per rejected candidate, same trace level as
+    // everything else in this loop, so a specific dropped item can be
+    // grepped by type/id and its exact rejection reason read directly.
+    auto traceSkip = [](const CMapItem& item, const char* reason) {
+        spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason={}",
+            item.m_id, item.m_idType, item.m_pos.x, item.m_pos.y, reason);
+    };
+
     for (CMapItem* itemRef : MapItems::Get()) {
         if (!itemRef) continue;
         // Session 11 [CRASH FIX]: the later IsAlive() check (base_hunt_plugin.cpp,
@@ -171,13 +184,22 @@ CMapItem* HuntLootManager::FindBestLoot(
         if (!MapItems::IsAlive(itemRef)) continue;
         ++totalItems;
         // Bag-full money-only mode (see the bagFull comment above).
-        if (bagFull && !isWantedMoney(*itemRef)) { ++skippedBagFull; continue; }
+        if (bagFull && !isWantedMoney(*itemRef)) {
+            ++skippedBagFull;
+            traceSkip(*itemRef, "bag_full_money_only");
+            continue;
+        }
         // Computed early (moved up from the confirmed-drop gate below) so the
         // stale-age skip just below can exempt it too — see that comment.
         const bool isPriorityItem = HuntTownService::IsMeteorOrDragonBallItem(settings, *itemRef);
         const auto seenResult = m_lootSeenTicks.try_emplace(itemRef->m_id, now);
         const DWORD seenAge = now - seenResult.first->second;
-        if (seenAge < spawnGraceMs) { ++skippedSpawnGrace; continue; }
+        if (seenAge < spawnGraceMs) {
+            ++skippedSpawnGrace;
+            spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=spawn_grace age={}ms grace={}ms",
+                itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, seenAge, spawnGraceMs);
+            continue;
+        }
         // Stale skip: too old to still be worth considering. Session 13
         // [EFFICIENCY TUNING]: tightened from the measured-despawn-minus-
         // margin values (68000/78000ms) to a flat 50000ms per the user's own
@@ -189,9 +211,22 @@ CMapItem* HuntLootManager::FindBestLoot(
         // unlike ordinary drops their real despawn timer has never been
         // measured — assuming they follow the same clock and giving up early
         // risks abandoning a still-real one for no proven reason.
-        if (!isPriorityItem && seenAge > kLootStaleMaxAgeMs) { ++skippedStale; continue; }
-        if (isLootPickupIgnoredFn && isLootPickupIgnoredFn(itemRef->m_id, now)) { ++skippedIgnored; continue; }
-        if (isPointInZoneFn && !isPointInZoneFn(Game::GetCurrentMapId(), itemRef->m_pos)) { ++skippedZone; continue; }
+        if (!isPriorityItem && seenAge > kLootStaleMaxAgeMs) {
+            ++skippedStale;
+            spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=stale age={}ms max={}ms",
+                itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, seenAge, kLootStaleMaxAgeMs);
+            continue;
+        }
+        if (isLootPickupIgnoredFn && isLootPickupIgnoredFn(itemRef->m_id, now)) {
+            ++skippedIgnored;
+            traceSkip(*itemRef, "pickup_ignored");
+            continue;
+        }
+        if (isPointInZoneFn && !isPointInZoneFn(Game::GetCurrentMapId(), itemRef->m_pos)) {
+            ++skippedZone;
+            traceSkip(*itemRef, "out_of_zone");
+            continue;
+        }
 
         // Phase 2a: gold-value floor.  Universal pickup filter — applies even
         // to confirmed drops.  Items explicitly listed in lootItemIds bypass
@@ -202,6 +237,9 @@ CMapItem* HuntLootManager::FindBestLoot(
             const ItemTypeInfo* info = GetItemTypeInfo(itemRef->m_idType);
             if (info && info->price < (uint32_t)settings.minimumLootGoldValue) {
                 ++skippedFilter;
+                spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=below_gold_value_floor price={} min={}",
+                    itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y,
+                    info->price, settings.minimumLootGoldValue);
                 continue;
             }
         }
@@ -251,6 +289,13 @@ CMapItem* HuntLootManager::FindBestLoot(
         if (!confirmed && !isPriorityItem
             && !HuntTownService::ShouldLootMapItem(settings, *itemRef)) {
             ++skippedFilter;
+            // Session 14: logs the item's own GetPlus() read alongside the
+            // rejection so a drop-test can tell "the bot never considered
+            // this a candidate item at all" (reason=not_wanted, plus=N) apart
+            // from any of the other skip reasons above it in the loop.
+            spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=not_wanted plus={}",
+                itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y,
+                (int)itemRef->GetPlus());
             continue;
         }
 
@@ -272,6 +317,8 @@ CMapItem* HuntLootManager::FindBestLoot(
             && dist > (float)lootRange
             && !isPriorityItem) {
             ++skippedOutOfRange;
+            spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=out_of_loot_range dist={:.1f} lootRange={}",
+                itemRef->m_id, itemRef->m_idType, itemRef->m_pos.x, itemRef->m_pos.y, dist, lootRange);
             continue;
         }
 

@@ -284,32 +284,31 @@ bool HuntTownService::ShouldLootMapItem(const AutoHuntSettings& settings, const 
         return true;
     if (MatchesSelectedLootQuality(settings, item))
         return true;
-    // Session 13 [PLUS-CHECK SCOPE FIX]: CMapItem::GetPlus() reads a raw
-    // info-struct byte (+0x48) that only means "plus level" on actual
-    // wearable equipment. We already proved this offset reads unrelated
-    // garbage for money (IsMeteorOrDragonBallItem's money exclusion,
-    // originally landed as IsPriorityLootItem in commit 85fa61d) — money and
-    // ordinary consumables/materials share the same EXPEND item-sort group,
-    // and this check had no such guard: live log showed an EXPEND-type item
-    // (type=1000020, plain consumable) picked up as "plussed". Scoped to the
-    // same IsEquipmentQualitySort check MatchesSelectedLootQuality above
-    // already uses. NOTE: this alone did not fully explain a follow-up
-    // report of ordinary, genuinely-unplussed equipment (PearlHelmet,
-    // LongBow, IvoryRing, etc. — confirmed by name against the game's own
-    // itemtype.json, not guessed from type ID) also being picked up — the
-    // bigger vector turned out to be a since-removed selection-GATE bypass
-    // (see IsMeteorOrDragonBallItem's header comment) that let a GetPlus()
-    // misread on ANY item skip this whole function. Whether GetPlus() is
-    // ALSO occasionally unreliable on genuine equipment (not just outside
-    // it) remains unverified — this scoping is confirmed-correct as far as
-    // it goes, not confirmed-sufficient on its own.
-    // TODO(unverified): live-verify CMapItem+0x48 against a known-unplussed
-    // piece of real equipment if junk pickup recurs after the gate-bypass
-    // removal — this offset has never been confirmed against ground truth,
-    // only inferred from behavior.
-    return settings.minimumLootPlus > 0
-        && IsEquipmentQualitySort(GetItemSort(item.m_idType))
-        && item.GetPlus() >= settings.minimumLootPlus;
+    // Session 13 [DISABLED — UNVERIFIED OFFSET, PROVEN WRONG]: this used to
+    // also match settings.minimumLootPlus > 0 && GetPlus() >= threshold on
+    // equipment-sort items. CMapItem::GetPlus() reads a raw info-struct byte
+    // at (MapItemInfo*)+0x48 — never verified against real data, just a
+    // comment asserting it. We'd already proven it wrong for money and for
+    // EXPEND/consumable items (both scoped out via IsEquipmentQualitySort),
+    // but live testing then directly disproved it for real EQUIPMENT too:
+    // the user compared in-game item tooltips against what the bot picked
+    // up — LeafBlade, PhoenixHook, and OxhideArmor showed NO "(+N)" in their
+    // names at all (genuinely unenchanted) yet GetPlus() read nonzero for
+    // all three. Conclusively: the user had TWO PhoenixHooks on the ground,
+    // identical type ID, one genuinely "+1" and one genuinely plain — proof
+    // type ID can never distinguish them, and GetPlus() at this offset can't
+    // either. Contrast with CItem::m_nAddition (the BAG-item plus field,
+    // CItem.h) at +0x6B, which IS static_assert-verified and correct — this
+    // ground-item offset was evidently guessed by analogy and never actually
+    // checked. Disabled rather than left shipping false positives; the
+    // "Loot +1 Items" checkbox remains in the UI (harmless while this is a
+    // no-op) for when the real ground-item plus offset gets live-verified.
+    // TODO(unverified): live-verify the correct ground-item plus offset —
+    // compare raw bytes of a known-"+0" item against a known-"+1" item of
+    // the identical type ID, the way this session compared two PhoenixHook
+    // instances by eye — before ever re-enabling this. settings.minimumLootPlus
+    // and its UI checkbox stay as-is; this function just doesn't act on it yet.
+    return false;
 }
 
 bool HuntTownService::CanAffordArrowPurchase(const CHero* hero)
