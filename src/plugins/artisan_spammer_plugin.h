@@ -41,7 +41,13 @@ private:
     std::vector<OBJID> m_materialQueue;  // shared material pool, consumed as we go
 
     OBJID m_currentTargetId  = 0;
-    int   m_prevPlus         = 0;  // snapshot taken right before sending an attempt
+    // Session 14 [REAL LEVEL FIELD]: "item level" in the Artisan Wind
+    // mechanic turned out to be neither GetPlus() nor a hidden byte
+    // anywhere in CItem — live-confirmed via before/after dumps that a
+    // successful upgrade changes the item's TYPE ID (and name) to a
+    // different item outright, e.g. ApeCoat(133443) -> Gambeson(133453).
+    // A failed attempt keeps the same type id and only reduces durability.
+    OBJID m_prevTypeId       = 0;  // snapshot taken right before sending an attempt
     int   m_prevDurabilityRaw = 0;
     DWORD m_phaseStartTick   = 0;  // when the current Wait* phase started (for timeout)
     int   m_phaseFailCount   = 0;  // consecutive no-result timeouts in the current Wait* phase
