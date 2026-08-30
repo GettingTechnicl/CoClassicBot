@@ -123,9 +123,25 @@ namespace
             ++len;
         if (len < 3)
             return false;
+        // Session 14 [APPEARANCE-OBJECT FALSE POSITIVE]: this used to accept
+        // any printable ASCII (0x20-0x7E), which let non-character game
+        // objects whose descriptor string happened to sit at +0x94 pass as
+        // real entities. Live-caught: equipped-weapon "appearance" objects
+        // showing up named "~appearance~of~a~blade." — and one of them, with
+        // an id >= 1,000,000, was classified a Player (IsPlayer() is a pure
+        // id-range test) and tripped every player-detection consumer (Safety,
+        // Paranoia, and melee's Instant-Attack suppression) as if a real
+        // player were nearby. Real Conquer character/NPC/monster names are
+        // letters, digits, and — for multi-word NPCs like "Artisan Wind" —
+        // spaces. The '~' and '.' in those descriptor strings never appear in
+        // a real name, so restricting to that alphabet filters the garbage at
+        // the source without rejecting any genuine entity (players are
+        // alphanumeric; NPC/monster names are letters/spaces).
         for (int i = 0; i < len; ++i) {
             const unsigned char c = (unsigned char)name[i];
-            if (c < 0x20 || c > 0x7E)
+            const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                         || (c >= '0' && c <= '9') || c == ' ';
+            if (!ok)
                 return false;
         }
         return true;
