@@ -51,14 +51,18 @@ inline DWORD ClampMs(int value, int minValue, int maxValue)
 // a second, redundant "how close counts as nearby" setting — this is
 // independent of settings.safetyEnabled itself, so the speed behavior works
 // whether or not the safety-rest feature is separately turned on.
-inline bool IsAnyPlayerNearby(const AutoHuntSettings& settings)
+// range: 0 = unlimited (any client-visible non-whitelisted player), matching
+// safetyPlayerRange's own semantics. Session 14: factored out of
+// IsAnyPlayerNearby so melee's Instant-Attack suppression can reuse the exact
+// same scan/whitelist logic with its OWN range (meleePlayerDetectRange)
+// rather than the shared safetyPlayerRange.
+inline bool IsAnyPlayerWithinRange(const AutoHuntSettings& settings, int range)
 {
     CHero* hero = Game::GetHero();
     if (!hero)
         return false;
 
     const OBJID heroId = hero->GetID();
-    const int range = settings.safetyPlayerRange;  // 0 = unlimited, matches CheckPlayerSafety's own semantics
     const std::vector<std::string> whitelist = ParseTokens(settings.playerWhitelist);
 
     for (CRole* role : Entities::Get()) {
@@ -72,6 +76,11 @@ inline bool IsAnyPlayerNearby(const AutoHuntSettings& settings)
         return true;
     }
     return false;
+}
+
+inline bool IsAnyPlayerNearby(const AutoHuntSettings& settings)
+{
+    return IsAnyPlayerWithinRange(settings, settings.safetyPlayerRange);
 }
 
 // Session 11: Paranoia Mode's detection step — same scan/whitelist/range

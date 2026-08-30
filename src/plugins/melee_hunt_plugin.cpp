@@ -194,7 +194,7 @@ CRole* MeleeHuntPlugin::FindBestMeleeTarget(CHero* hero, CGameMap* map, const Au
     // Cyclone one — sticking with the same target keeps that fast path live
     // for the whole commitment burst.
     CRole* actionTarget = nullptr;
-    if (settings.usePacketJump && hero->IsSupermanActive()) {
+    if (IsInstantAttackActive(settings) && hero->IsSupermanActive()) {
         actionTarget = FindRandomTarget(targets, effectivePos, actionRadius);
         m_committedTargetId = actionTarget ? actionTarget->GetID() : 0;
         m_hitsOnCommittedTarget = 0;
@@ -375,6 +375,30 @@ DWORD MeleeHuntPlugin::ComputeMeleeAttackDelayMs(CHero* hero, CRole* target, con
 }
 
 
+// ── IsInstantAttackActive ───────────────────────────────────────────────────────
+
+bool MeleeHuntPlugin::IsInstantAttackActive(const AutoHuntSettings& settings) const
+{
+    if (!settings.usePacketJump)
+        return false;  // Instant Attack off entirely — nothing to suppress.
+
+    // Melee's OWN player detection (independent of the Speedhack toggle),
+    // using meleePlayerDetectRange (0 = any client-visible player). Debounced
+    // with a 1.5s hold so a player flickering in/out of the per-region entity
+    // scan doesn't rapidly toggle the combat style — same value/reasoning as
+    // IsPlayerNearbyDebounced (hunt_intervals.h).
+    constexpr DWORD kInstantAttackPlayerHoldMs = 1500;
+    const DWORD now = GetTickCount();
+    if (IsAnyPlayerWithinRange(settings, settings.meleePlayerDetectRange))
+        m_instantAttackPlayerSeenTick = now;
+    const bool playerNearby = m_instantAttackPlayerSeenTick != 0
+        && (now - m_instantAttackPlayerSeenTick) < kInstantAttackPlayerHoldMs;
+
+    // Instant Attack is active only when NO player is (debounced) nearby.
+    return !playerNearby;
+}
+
+
 // ── FindBestTarget override ───────────────────────────────────────────────────
 
 CRole* MeleeHuntPlugin::FindBestTarget(CHero* hero, CGameMap* map, const AutoHuntSettings& settings,
@@ -409,8 +433,11 @@ void MeleeHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Aut
     const int clumpRadius = (std::max)(1, settings.clumpRadius);
     const int localWalkRadius = (std::max)(actionRadius, clumpRadius);
 
-    // Normal mode (Instant Attack off) always walks to nearby mobs
-    const bool allowWalkToMob = !settings.usePacketJump;
+    // Normal mode (Instant Attack off) always walks to nearby mobs. Session
+    // 14: uses the player-aware effective state, so a detected player flips
+    // melee into walk-up-and-attack even while the Instant Attack checkbox
+    // stays on (see IsInstantAttackActive).
+    const bool allowWalkToMob = !IsInstantAttackActive(settings);
 
     // If already in attack range, no approach needed
     if (moveDist <= kReliableAttackRange && IsZeroPos(approachPos))
@@ -504,7 +531,9 @@ void MeleeHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const AutoH
 
     // Normal mode: only attack when within 1 tile (adjacent).
     // Instant Attack mode: attack immediately at any distance.
-    if (!settings.usePacketJump) {
+    // Session 14: player-aware — a detected player forces the adjacent-only
+    // behavior even with Instant Attack checked (see IsInstantAttackActive).
+    if (!IsInstantAttackActive(settings)) {
         const int actualDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
             target->m_posMap.x, target->m_posMap.y);
         if (actualDist > 1) {
@@ -546,7 +575,13 @@ void MeleeHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const AutoH
 void MeleeHuntPlugin::RenderCombatUI(AutoHuntSettings& settings)
 {
     ImGui::Checkbox("Instant Attack (Skip Distance Check)", &settings.usePacketJump);
-    ImGui::TextDisabled("Attacks fire immediately instead of waiting to be adjacent, and approach uses jump-only movement (no walk animation). Falls back to normal behavior when players are nearby.");
+    ImGui::TextDisabled("Attacks fire immediately instead of waiting to be adjacent, and approach uses jump-only movement (no walk animation).");
+    if (settings.usePacketJump) {
+        ImGui::Indent();
+        ImGui::SliderInt("Disable when player within (tiles)", &settings.meleePlayerDetectRange, 0, CGameMap::MAX_JUMP_DIST);
+        ImGui::TextDisabled("While a non-whitelisted player is this close, Instant Attack turns off automatically so the character walks up and attacks with randomized jumps (looks like a normal player) instead of the fast jump-combat. 0 = any player the client can see. Only affects behavior while a player is nearby; solo hunting is unchanged.");
+        ImGui::Unindent();
+    }
     ImGui::SliderInt("Stay Within Zone Radius", &settings.actionRadius, 1, CGameMap::MAX_JUMP_DIST);
     ImGui::Checkbox("Prioritize Mob Clumps", &settings.prioritizeMobClumps);
     ImGui::SliderInt("Clump Radius", &settings.clumpRadius, 1, 18);

@@ -307,6 +307,19 @@ struct AutoHuntSettings
     // its own speed semantics — kept as-is per user request (2026-08-26),
     // just renamed for clarity since it does more than adjust speed.
     bool usePacketJump = false;
+    // Session 14 [MELEE INSTANT-ATTACK PLAYER SUPPRESSION]: when a
+    // non-whitelisted player is detected within this range, melee treats
+    // Instant Attack as OFF (walk up to mobs, attack when adjacent, no
+    // cyclone-randomize), so a character being watched moves like a normal
+    // player — walking + randomized jump sizes — instead of freezing/
+    // stuttering at crawl speed the way instant-attack combat logic does
+    // once its own speed reverts near a player. Melee's OWN detection,
+    // independent of the Speedhack toggle and Safety/Paranoia's shared
+    // range: 0 (default) = any client-visible player triggers it (max
+    // detection range), matching safetyPlayerRange's own "0 = unlimited"
+    // semantics. Respects playerWhitelist. Only affects melee, and only
+    // when a player is actually nearby — solo hunting is untouched.
+    int meleePlayerDetectRange = 0;
     bool safetyEnabled = false;
     bool safetyNotifyDiscord = false;
     int safetyPlayerRange = 15;
