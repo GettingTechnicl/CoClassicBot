@@ -1776,19 +1776,30 @@ void BaseHuntPlugin::Update()
                 SetState(AutoHuntState::LootNearby, "Jumping to loot");
                 return;
             }
-            if (IsWithinLootPickupRange(settings, lootDist, *loot)) {
-                // Session 10: reaching here means dist != 0 (the pickup
-                // attempt above already handles dist==0) AND the pathfinder
-                // failed to queue a route to close that gap. Previously this
-                // just re-tried every frame (~150Hz) and usually self-corrected
-                // within milliseconds; with the new decisionThrottleMs slider,
-                // retries only happen every throttle interval, so a genuinely
-                // unreachable item's exact tile (corner-blocked, occupied,
-                // etc.) now visibly "sticks" for seconds at a time instead of
-                // resolving invisibly fast. Feed it into the same
-                // attempt-limit/ignore mechanism pickup failures already use,
-                // so it gets deprioritized instead of fixated on regardless
-                // of throttle setting.
+            // Session 10: this branch means dist != 0 (the pickup attempt
+            // above already handles dist==0) AND the pathfinder failed to
+            // queue a route to close that gap — genuinely stuck (corner-
+            // blocked, occupied, etc.), so feed it into the same
+            // attempt-limit/ignore mechanism pickup failures already use.
+            //
+            // Session 13 [PRIORITY-ITEM FALSE-STUCK FIX]: the lootDist > 0
+            // guard is load-bearing, not redundant with the comment above —
+            // IsWithinLootPickupRange returns true at ANY distance for a
+            // priority item (meteor/DragonBall), so with dist==0 this branch
+            // used to fire anyway, misreading "the free-grab attempt above
+            // was blocked by a normal ~500ms post-jump settle timer" as
+            // "stuck," burning both pickup attempts in the same tick and
+            // blacklisting the item for lootPickupIgnoreMs (~19.5s in this
+            // user's config) while the hero was standing directly on top of
+            // it. Live-reported: an archer's priority jumps chain-land
+            // straight onto a meteor from a long approach, which is exactly
+            // when the settle timer is still counting down, so this raced
+            // almost every single arrival — "ran past a meteor about 6
+            // times." A real stuck condition always has dist > 0 (can't path
+            // the remaining gap); dist==0 means the hero already arrived and
+            // just needs the settle timer to finish, which the free-grab
+            // check above will complete on its own within ~500ms.
+            if (lootDist > 0 && IsWithinLootPickupRange(settings, lootDist, *loot)) {
                 m_lootMgr.RecordLootPickupAttempt(loot->m_id, now, settings);
                 m_targetId = loot->m_id;
                 SetState(AutoHuntState::LootNearby, "Settling on nearby loot");
