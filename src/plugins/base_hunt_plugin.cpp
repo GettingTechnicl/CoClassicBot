@@ -83,7 +83,10 @@ int GetLootRange(const AutoHuntSettings& settings)
 // extra Loot Range cap specifically.
 bool IsWithinLootPickupRange(const AutoHuntSettings& settings, int distance, const CMapItem& item)
 {
-    if (HuntTownService::IsMeteorOrDragonBallItem(settings, item))
+    // Session 14: urgent loot (meteor/DragonBall + wanted quality/+1) is
+    // fetched regardless of Loot Range, matching its selection-side range
+    // bypass in FindBestLoot.
+    if (HuntTownService::IsUrgentLootItem(settings, item))
         return true;
     const int lootRange = GetLootRange(settings);
     return lootRange > 0 ? distance <= lootRange : distance == 0;
@@ -1644,17 +1647,17 @@ void BaseHuntPlugin::Update()
         MapItems::Invalidate();   // don't wait out the rest of the interval
     }
 
-    // Session 13 [Paranoia active evasion]: while a threat is detected,
-    // ordinary loot doesn't get to detour the hero either — only a
-    // DragonBall does, per explicit user direction ("a detected player
-    // should interrupt everything except for picking up a DragonBall").
-    // Treating it as if nothing was found here makes the entire loot-phase
-    // block below naturally no-op and fall through to the evasion check
-    // further down, without duplicating any of its logic. Gated on
-    // settings.lootDragonBall too — with that toggle off, a DragonBall gets
-    // no special treatment anywhere, including here.
-    if (loot && paranoiaEvading
-        && !(settings.lootDragonBall && HuntTownService::IsDragonBallMapItem(*loot)))
+    // Session 13/14 [Paranoia active evasion]: while a threat is detected,
+    // NO loot gets to detour the hero — evasion wins over everything,
+    // including meteors and DragonBalls. Session 14 change, per explicit
+    // user direction: "if a player is detected nearby, the bot should evade
+    // over picking up the meteor or DragonBall, or any wanted item when
+    // paranoid mode is enabled." (Previously a DragonBall was the one
+    // exception; that carve-out is removed.) Treating it as if nothing was
+    // found here makes the entire loot-phase block below naturally no-op and
+    // fall through to the evasion check further down, without duplicating any
+    // of its logic.
+    if (loot && paranoiaEvading)
         loot = nullptr;
 
     const bool midMovement = hero->IsJumping() || Pathfinder::Get().IsActive();
@@ -1699,13 +1702,15 @@ void BaseHuntPlugin::Update()
         // item. Also skips the FindBestTarget peek entirely in that case
         // since its result wouldn't be used anyway.
         //
-        // Session 13 [RELIABILITY SPLIT]: this used to also cover +items via
-        // the (unreliable) CMapItem::GetPlus() byte read — removed after it
-        // started letting a misread on ordinary equipment override
-        // everything (see IsMeteorOrDragonBallItem's header comment for the
-        // live-reported symptom). A +item is still real, selectable loot —
-        // it just competes normally instead of forcing an override.
-        const bool isPriorityLoot = HuntTownService::IsMeteorOrDragonBallItem(settings, *loot);
+        // Session 14 [URGENT LOOT]: urgent loot (meteor/DragonBall + wanted
+        // quality/+1, see IsUrgentLootItem) does NOT defer to a newly-
+        // engageable combat target — it's worth interrupting the hunt for.
+        // Session 13 had removed +items from this override because the plus
+        // read was unreliable (a misread let ordinary equipment override
+        // everything); that reliability problem is fixed (GetPlus() now
+        // self-validates), so wanted quality/+1 correctly get the urgency
+        // again, alongside the meteor/DragonBall it always covered.
+        const bool isPriorityLoot = HuntTownService::IsUrgentLootItem(settings, *loot);
 
         // Session 13 [LOOT COMMITMENT]: hasEngageableTarget below is a fresh
         // peek EVERY decision tick (~150ms) — once combat got frequent enough
@@ -1927,7 +1932,7 @@ void BaseHuntPlugin::Update()
             loot->m_pos.x, loot->m_pos.y);
         const int lootUnderfootTiles = ShouldUseAggressiveSpeeds(settings) ? 3 : 0;
         if (noTargetLootDist > lootUnderfootTiles
-            && !HuntTownService::IsMeteorOrDragonBallItem(settings, *loot)
+            && !HuntTownService::IsUrgentLootItem(settings, *loot)
             && TrySteerTowardZoneClump(hero, map, settings))
             return;
         spdlog::trace("[hunt-loot] No combat target, pathing to loot id={} type={} at ({},{})",

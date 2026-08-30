@@ -304,6 +304,24 @@ bool HuntTownService::ShouldLootMapItem(const AutoHuntSettings& settings, const 
     return false;
 }
 
+bool HuntTownService::IsUrgentLootItem(const AutoHuntSettings& settings, const CMapItem& item)
+{
+    // Meteor/DragonBall — the original urgency bucket.
+    if (IsMeteorOrDragonBallItem(settings, item))
+        return true;
+    // A wanted quality-tier match (ticked refined/unique/elite/super box).
+    if (MatchesSelectedLootQuality(settings, item))
+        return true;
+    // A wanted +1 (the +1 box on). Same equipment-sort-scoped, self-validating
+    // plus check ShouldLootMapItem uses — mirrored here rather than calling
+    // ShouldLootMapItem so money and bare list entries stay NON-urgent.
+    if (settings.minimumLootPlus > 0
+        && IsEquipmentQualitySort(GetItemSort(item.m_idType))
+        && item.GetPlus() >= settings.minimumLootPlus)
+        return true;
+    return false;
+}
+
 bool HuntTownService::CanAffordArrowPurchase(const CHero* hero)
 {
     return hero && hero->GetSilver() >= kArrowCost;

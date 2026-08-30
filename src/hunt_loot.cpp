@@ -300,7 +300,15 @@ CMapItem* HuntLootManager::FindBestLoot(
         }
         // Computed early (moved up from the confirmed-drop gate below) so the
         // stale-age skip just below can exempt it too — see that comment.
+        // isPriorityItem = meteor/DragonBall ONLY (drives the selection-gate
+        // bypass and stale-age exemption — behaviors that must stay narrow).
+        // isUrgentItem is the broader "stop the hunt and go get it" set
+        // (meteor/DragonBall + wanted quality + wanted +1, see
+        // IsUrgentLootItem) — drives Loot-Range bypass and the always-wins
+        // selection slot, but NOT the gate bypass (quality/+1 pass the filter
+        // on their own) and NOT the stale exemption (quality/+1 respect it).
         const bool isPriorityItem = HuntTownService::IsMeteorOrDragonBallItem(settings, *itemRef);
+        const bool isUrgentItem = HuntTownService::IsUrgentLootItem(settings, *itemRef);
         const auto seenResult = m_lootSeenTicks.try_emplace(itemRef->m_id, now);
         const DWORD seenAge = now - seenResult.first->second;
         if (seenAge < spawnGraceMs) {
@@ -435,7 +443,7 @@ CMapItem* HuntLootManager::FindBestLoot(
         const int lootRange = std::clamp(settings.lootRange, 0, (int)CGameMap::MAX_JUMP_DIST);
         if (lootRange > 0
             && dist > (float)lootRange
-            && !isPriorityItem) {
+            && !isUrgentItem) {
             ++skippedOutOfRange;
             if (ShouldLogSkip(itemRef->m_id, "out_of_loot_range", now))
                 spdlog::trace("[hunt-loot] Skip id={} type={} pos=({},{}) reason=out_of_loot_range dist={:.1f} lootRange={}",
@@ -443,7 +451,7 @@ CMapItem* HuntLootManager::FindBestLoot(
             continue;
         }
 
-        if (isPriorityItem) {
+        if (isUrgentItem) {
             if (dist < bestPriorityDist) {
                 bestPriorityDist = dist;
                 bestPriority = itemRef;

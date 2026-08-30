@@ -144,6 +144,24 @@ public:
     static bool IsDragonBallMapItem(const CMapItem& item);
 
     static bool ShouldLootMapItem(const AutoHuntSettings& settings, const CMapItem& item);
+
+    // Session 14 [URGENT LOOT]: items worth STOPPING the hunt to go grab
+    // right now — the "drop everything, ignore Loot Range, don't defer to
+    // combat, steer to it" urgency that was meteor/DragonBall-only. Per user:
+    // a wanted quality-tier match (a ticked refined/unique/elite/super box)
+    // and a wanted +1 (the +1 box, now that GetPlus() is self-validating —
+    // this exact combination regressed before ONLY because the plus read was
+    // unreliable, see IsMeteorOrDragonBallItem's header) get the same urgency
+    // as meteor/DragonBall. Deliberately NARROWER than ShouldLootMapItem:
+    // money/gold is NOT urgent (stays ordinary Loot-Range loot), and neither
+    // is a bare Loot-Item-List entry. This drives the go-get-it-now behaviors
+    // only; it does NOT bypass the selection filter (quality/+1 pass
+    // ShouldLootMapItem on their own) and does NOT override Paranoia evasion
+    // (a detected player interrupts EVEN this — see base_hunt_plugin.cpp) or
+    // the stale-age skip (a quality/+1 item sitting past the despawn cutoff
+    // is likely gone/protected; only meteor/DragonBall are age-exempt).
+    static bool IsUrgentLootItem(const AutoHuntSettings& settings, const CMapItem& item);
+
     static bool CanAffordArrowPurchase(const CHero* hero);
 
     bool IsTreasureBankDragonBallFamily(const CItem& item) const;
