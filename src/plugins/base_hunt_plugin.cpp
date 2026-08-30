@@ -917,6 +917,18 @@ bool BaseHuntPlugin::StartWalkTo(CHero* hero, CGameMap* map, const Position& des
 
     for (int dx = -searchRadius; dx <= searchRadius; ++dx) {
         for (int dy = -searchRadius; dy <= searchRadius; ++dy) {
+            // Session 14 [ON-TARGET-TILE FIX]: same bug and same fix as
+            // StartPathNearTarget above — this candidate loop always prefers
+            // the smallest targetDist, and the destination's own tile
+            // (dx=0,dy=0) always scores best (targetDist=0) since
+            // IsTileOccupied deliberately doesn't count monsters as
+            // blockers. Correct and required when stopRange==0 (walk onto
+            // the destination exactly — e.g. TryRandomWalk's random hop
+            // target, or an already-computed safe approach position), wrong
+            // whenever the caller wants to stay NEAR a target instead
+            // (stopRange > 0 — e.g. melee's combat-approach fallback).
+            if (stopRange > 0 && dx == 0 && dy == 0)
+                continue;
             const Position candidate = {destination.x + dx, destination.y + dy};
             const int targetDist = CGameMap::TileDist(candidate.x, candidate.y, destination.x, destination.y);
             if (targetDist > stopRange)

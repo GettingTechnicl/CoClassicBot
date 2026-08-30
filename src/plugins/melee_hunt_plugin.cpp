@@ -455,16 +455,31 @@ void MeleeHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Aut
             SetState(AutoHuntState::ApproachTarget, "Unable to reach target");
         }
     } else {
-        // No approach pos — path near the target directly. This branch means
-        // FindBestMeleeApproachPos found NO valid adjacent tile at all (every
-        // candidate blocked/unwalkable/out of zone) — see this function's
-        // header comment. Worth knowing if this is where an oscillation is
-        // actually coming from, since StartPathNearTarget has no position
-        // preference of its own.
+        // No approach pos — FindBestMeleeApproachPos found NO valid adjacent
+        // tile at all (every candidate blocked/unwalkable/out of zone, or
+        // no DIRECT jump reaches one from here — see this function's header
+        // comment). Session 14 [DEADLOCK FIX]: this used to fall to
+        // StartPathNearTarget, which picks a "best nearby tile" via its own
+        // distance-ranked candidate search — live-confirmed still landing
+        // the deadlock (hit counter into the hundreds, position frozen 3-8
+        // tiles out) even after that function's own on-target-tile fix,
+        // because the real problem was upstream: FindBestMeleeApproachPos
+        // only checks a single DIRECT jump from the hero's CURRENT position,
+        // so anything blocking that one line fails the whole search even
+        // when a completely ordinary multi-hop walk would reach the target
+        // fine. Switched to StartPathTo aimed at the target's own position
+        // directly — it already does real A* pathfinding around obstacles
+        // (not just a direct-jump check) when a straight jump isn't
+        // possible, and naturally stops once in range: HandleCombatAttack
+        // stops any in-progress path the moment combat next decides it's
+        // close enough to attack, before the path ever reaches the target's
+        // own tile. No "which nearby tile is best" computation at all in
+        // this fallback, so there's no candidate ranking left that could
+        // ever select the target's own square.
         const bool startedWalk = allowWalkToMob
             && moveDist <= localWalkRadius
             && StartWalkTo(hero, map, target->m_posMap, kReliableAttackRange);
-        const bool startedPath = startedWalk || StartPathNearTarget(hero, map, target->m_posMap, kReliableAttackRange);
+        const bool startedPath = startedWalk || StartPathTo(hero, map, target->m_posMap, kReliableAttackRange);
         spdlog::info("[hunt-melee] Approach(no-pos-found) target={} targetPos=({},{}) committed={} hits={}/{} heroPos=({},{}) moveDist={} clumpSize={} {}",
             target->GetID(), target->m_posMap.x, target->m_posMap.y,
             m_committedTargetId, m_hitsOnCommittedTarget, (std::max)(1, settings.meleeMinHitsPerTarget),
