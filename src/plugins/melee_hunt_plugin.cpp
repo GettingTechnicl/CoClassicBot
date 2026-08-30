@@ -455,14 +455,23 @@ void MeleeHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Aut
             SetState(AutoHuntState::ApproachTarget, "Unable to reach target");
         }
     } else {
-        // No approach pos — path near the target directly. This branch means
-        // FindBestMeleeApproachPos found NO valid adjacent tile at all (every
-        // candidate blocked/unwalkable/out of zone) — see this function's
-        // header comment. Worth knowing if this is where an oscillation is
-        // actually coming from, since StartPathNearTarget has no position
-        // preference of its own.
-        const bool startedWalk = allowWalkToMob
-            && moveDist <= localWalkRadius
+        // No approach pos — FindBestMeleeApproachPos found NO valid adjacent
+        // tile at all (every candidate blocked/unwalkable/out of zone) — see
+        // this function's header comment.
+        //
+        // Session 14 [WALK-AND-ATTACK]: per the user's own original idea —
+        // when no valid jump-based position exists, don't keep re-searching
+        // for a "better" one (repeated attempts at that, across several
+        // fixes, is what was causing multi-second stalls and a runaway
+        // attack-attempt counter with the character frozen in place). Just
+        // walk toward the monster, like a real player closing the last
+        // couple tiles by hand, attacking along the way. Normally walking is
+        // suppressed here when Instant Attack is on (jump-only movement),
+        // but that's specifically the situation this branch exists for — the
+        // jump-based search already failed, so walking is what's left, and
+        // Instant Attack already fires attacks regardless of distance, so
+        // they land naturally as the character closes the gap.
+        const bool startedWalk = moveDist <= localWalkRadius
             && StartWalkTo(hero, map, target->m_posMap, kReliableAttackRange);
         const bool startedPath = startedWalk || StartPathNearTarget(hero, map, target->m_posMap, kReliableAttackRange);
         spdlog::info("[hunt-melee] Approach(no-pos-found) target={} targetPos=({},{}) committed={} hits={}/{} heroPos=({},{}) moveDist={} clumpSize={} {}",
