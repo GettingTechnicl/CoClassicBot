@@ -246,21 +246,23 @@ int HuntTownService::GetMoneyTier(const CMapItem& item)
     }
 }
 
-bool HuntTownService::IsMeteorOrDragonBallItem(const CMapItem& item)
+bool HuntTownService::IsMeteorOrDragonBallItem(const AutoHuntSettings& settings, const CMapItem& item)
 {
     // See the header comment: this used to also match "+items" via
     // CMapItem::GetPlus(), an unverified raw byte read already proven wrong
     // for money and for EXPEND/consumable items — live-reported to be
     // sweeping up ordinary, unenchanted equipment (PearlHelmet, LongBow,
     // etc.) as "priority" and bypassing the user's quality/list filter
-    // entirely. Now purely type-ID based: base DragonBall/Meteor/MeteorTear
-    // trio (contiguous IDs) plus the separately-numbered star-tiered/Epic
-    // DragonBalls — CItem::IsTreasureItem() only covers the base trio, which
-    // is correct for its own (treasure-bank storage) purpose but not broad
-    // enough for "is this worth detouring for".
-    if (item.m_idType >= ItemTypeId::DRAGONBALL && item.m_idType <= ItemTypeId::METEOR_TEAR)
+    // entirely. Purely type-ID based: DragonBall (base + all star tiers/
+    // Epic, delegated to IsDragonBallMapItem so there's one definition) and
+    // Meteor/MeteorTear separately, each independently toggleable —
+    // CItem::IsTreasureItem() only covers the base DragonBall/Meteor/
+    // MeteorTear trio, which is correct for its own (treasure-bank storage)
+    // purpose but not broad enough for "is this worth detouring for".
+    if (settings.lootDragonBall && IsDragonBallMapItem(item))
         return true;
-    if (item.m_idType >= 2000031 && item.m_idType <= 2000038)  // 1-7 Star + Epic DragonBall
+    if (settings.lootMeteor
+        && (item.m_idType == ItemTypeId::METEOR || item.m_idType == ItemTypeId::METEOR_TEAR))
         return true;
     return false;
 }

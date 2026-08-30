@@ -146,6 +146,11 @@ struct AutoHuntSettings
     bool lootElite = false;
     bool lootSuper = false;
     bool lootMoney = true;
+    // Session 13: Meteor/DragonBall pickup was unconditional before this —
+    // no way to turn it off. Default true so existing configs keep today's
+    // behavior unchanged. See HuntTownService::IsMeteorOrDragonBallItem.
+    bool lootMeteor = true;
+    bool lootDragonBall = true;
     // 0=Silver, 1=Sycee, 2=Gold, 3=GoldBullion, 4=GoldBar, 5=GoldBars — this
     // tier and better get picked up. 0 (default) = every tier, matching the
     // previous behavior of picking up any money drop.

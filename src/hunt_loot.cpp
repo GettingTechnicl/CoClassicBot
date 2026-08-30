@@ -174,7 +174,7 @@ CMapItem* HuntLootManager::FindBestLoot(
         if (bagFull && !isWantedMoney(*itemRef)) { ++skippedBagFull; continue; }
         // Computed early (moved up from the confirmed-drop gate below) so the
         // stale-age skip just below can exempt it too — see that comment.
-        const bool isPriorityItem = HuntTownService::IsMeteorOrDragonBallItem(*itemRef);
+        const bool isPriorityItem = HuntTownService::IsMeteorOrDragonBallItem(settings, *itemRef);
         const auto seenResult = m_lootSeenTicks.try_emplace(itemRef->m_id, now);
         const DWORD seenAge = now - seenResult.first->second;
         if (seenAge < spawnGraceMs) { ++skippedSpawnGrace; continue; }

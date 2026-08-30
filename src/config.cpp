@@ -463,6 +463,8 @@ static std::string BuildCurrentConfigSnapshot()
     AppendBoolSnapshot(snapshot, "lootElite", autoHunt.lootElite);
     AppendBoolSnapshot(snapshot, "lootSuper", autoHunt.lootSuper);
     AppendBoolSnapshot(snapshot, "lootMoney", autoHunt.lootMoney);
+    AppendBoolSnapshot(snapshot, "lootMeteor", autoHunt.lootMeteor);
+    AppendBoolSnapshot(snapshot, "lootDragonBall", autoHunt.lootDragonBall);
     AppendBoolSnapshot(snapshot, "storeRefined", autoHunt.storeRefined);
     AppendBoolSnapshot(snapshot, "storeUnique", autoHunt.storeUnique);
     AppendBoolSnapshot(snapshot, "storeElite", autoHunt.storeElite);
@@ -671,6 +673,8 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "lootElite", autoHunt.lootElite ? 1 : 0);
     WriteInt(file, section, "lootSuper", autoHunt.lootSuper ? 1 : 0);
     WriteInt(file, section, "lootMoney", autoHunt.lootMoney ? 1 : 0);
+    WriteInt(file, section, "lootMeteor", autoHunt.lootMeteor ? 1 : 0);
+    WriteInt(file, section, "lootDragonBall", autoHunt.lootDragonBall ? 1 : 0);
     WriteInt(file, section, "storeRefined", autoHunt.storeRefined ? 1 : 0);
     WriteInt(file, section, "storeUnique", autoHunt.storeUnique ? 1 : 0);
     WriteInt(file, section, "storeElite", autoHunt.storeElite ? 1 : 0);
@@ -836,6 +840,8 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     autoHunt.lootElite = ReadInt(file, section, "lootElite", 0) != 0;
     autoHunt.lootSuper = ReadInt(file, section, "lootSuper", 0) != 0;
     autoHunt.lootMoney = ReadInt(file, section, "lootMoney", 1) != 0;
+    autoHunt.lootMeteor = ReadInt(file, section, "lootMeteor", 1) != 0;
+    autoHunt.lootDragonBall = ReadInt(file, section, "lootDragonBall", 1) != 0;
     autoHunt.storeRefined = ReadInt(file, section, "storeRefined", 0) != 0;
     autoHunt.storeUnique = ReadInt(file, section, "storeUnique", 0) != 0;
     autoHunt.storeElite = ReadInt(file, section, "storeElite", 0) != 0;

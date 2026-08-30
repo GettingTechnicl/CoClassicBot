@@ -83,7 +83,7 @@ int GetLootRange(const AutoHuntSettings& settings)
 // extra Loot Range cap specifically.
 bool IsWithinLootPickupRange(const AutoHuntSettings& settings, int distance, const CMapItem& item)
 {
-    if (HuntTownService::IsMeteorOrDragonBallItem(item))
+    if (HuntTownService::IsMeteorOrDragonBallItem(settings, item))
         return true;
     const int lootRange = GetLootRange(settings);
     return lootRange > 0 ? distance <= lootRange : distance == 0;
@@ -1650,8 +1650,11 @@ void BaseHuntPlugin::Update()
     // should interrupt everything except for picking up a DragonBall").
     // Treating it as if nothing was found here makes the entire loot-phase
     // block below naturally no-op and fall through to the evasion check
-    // further down, without duplicating any of its logic.
-    if (loot && paranoiaEvading && !HuntTownService::IsDragonBallMapItem(*loot))
+    // further down, without duplicating any of its logic. Gated on
+    // settings.lootDragonBall too — with that toggle off, a DragonBall gets
+    // no special treatment anywhere, including here.
+    if (loot && paranoiaEvading
+        && !(settings.lootDragonBall && HuntTownService::IsDragonBallMapItem(*loot)))
         loot = nullptr;
 
     const bool midMovement = hero->IsJumping() || Pathfinder::Get().IsActive();
@@ -1702,7 +1705,7 @@ void BaseHuntPlugin::Update()
         // everything (see IsMeteorOrDragonBallItem's header comment for the
         // live-reported symptom). A +item is still real, selectable loot —
         // it just competes normally instead of forcing an override.
-        const bool isPriorityLoot = HuntTownService::IsMeteorOrDragonBallItem(*loot);
+        const bool isPriorityLoot = HuntTownService::IsMeteorOrDragonBallItem(settings, *loot);
 
         // Session 13 [LOOT COMMITMENT]: hasEngageableTarget below is a fresh
         // peek EVERY decision tick (~150ms) — once combat got frequent enough
@@ -1924,7 +1927,7 @@ void BaseHuntPlugin::Update()
             loot->m_pos.x, loot->m_pos.y);
         const int lootUnderfootTiles = ShouldUseAggressiveSpeeds(settings) ? 3 : 0;
         if (noTargetLootDist > lootUnderfootTiles
-            && !HuntTownService::IsMeteorOrDragonBallItem(*loot)
+            && !HuntTownService::IsMeteorOrDragonBallItem(settings, *loot)
             && TrySteerTowardZoneClump(hero, map, settings))
             return;
         spdlog::trace("[hunt-loot] No combat target, pathing to loot id={} type={} at ({},{})",
@@ -2632,8 +2635,34 @@ void BaseHuntPlugin::RenderLootSection()
     ImGui::Combo("Minimum Gold Tier", &settings.minimumGoldTier, kGoldTierNames, IM_ARRAYSIZE(kGoldTierNames));
     HelpMarkerOnSameLine("Money drops below this tier are ignored entirely.");
     ImGui::SliderInt("Loot Range", &settings.lootRange, 0, CGameMap::MAX_JUMP_DIST);
-    HelpMarkerOnSameLine("Only limits how far to detour for money drops. Plus items and Meteors/DragonBalls are always fetched regardless of range.");
-    ImGui::SliderInt("Minimum Loot Plus", &settings.minimumLootPlus, 0, 12);
+    HelpMarkerOnSameLine("Only limits how far to detour for money drops. Meteors/DragonBalls are always fetched regardless of range and interrupt everything else to go get it. Plussed gear is not — it's ordinary selectable loot, same as Loot Range and other priorities.");
+    // Session 13 [UI GROUPING]: these three each carry different priority
+    // rules from ordinary quality-checkbox loot (see IsMeteorOrDragonBallItem
+    // and ShouldLootMapItem's plus-check), so they're grouped together rather
+    // than mixed in with the quality row below. Meteor/DragonBall pickup was
+    // previously unconditional — no way to turn it off at all — now
+    // independently toggleable, each defaulting to on so existing configs
+    // keep today's behavior.
+    //
+    // Minimum Loot Plus [UI SIMPLIFICATION]: was a 0-12 slider, but per the
+    // user (who knows the game's actual drop tables): only +1 ever drops
+    // from monsters — anything higher only comes from player crafting/
+    // enhancement, never a ground find. A slider implying otherwise was
+    // misleading. The backing field stays an int (>= threshold, unchanged
+    // config-file compatibility) — only the widget changes to on/off.
+    ImGui::Text("Priority items (different rules from ordinary quality loot below):");
+    {
+        bool lootPlusItems = settings.minimumLootPlus > 0;
+        if (ImGui::Checkbox("Loot +1 Items##priorityplus", &lootPlusItems))
+            settings.minimumLootPlus = lootPlusItems ? 1 : 0;
+        HelpMarkerOnSameLine("Only +1 ever drops from monsters in this game — higher plus levels come from player crafting, never a ground find, so this is on/off rather than a range. Ordinary selectable loot: subject to Loot Range, doesn't interrupt combat.");
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Loot Meteors##prioritymeteor", &settings.lootMeteor);
+    HelpMarkerOnSameLine("When seen, stops everything and goes to get it regardless of Loot Range or an engageable target.");
+    ImGui::SameLine();
+    ImGui::Checkbox("Loot DragonBalls##prioritydragonball", &settings.lootDragonBall);
+    HelpMarkerOnSameLine("Same override as Meteors, plus survives Paranoia Mode's active-evasion interrupt (Meteors and ordinary loot do not).");
     ImGui::InputInt("Minimum Sell Value to Loot", &settings.minimumLootGoldValue, 100, 1000);
     if (settings.minimumLootGoldValue < 0)
         settings.minimumLootGoldValue = 0;

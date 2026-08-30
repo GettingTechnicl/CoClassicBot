@@ -125,7 +125,15 @@ public:
     // via ShouldLootMapItem's own (equipment-sort-scoped) plus-check, not
     // granted an override an unverified byte read can trigger by accident.
     // See IsWithinLootPickupRange in base_hunt_plugin.cpp.
-    static bool IsMeteorOrDragonBallItem(const CMapItem& item);
+    //
+    // Session 13: takes settings now — Meteor pickup was unconditional
+    // before (no way to turn it off), per user request each half is now
+    // independently gated by settings.lootMeteor / settings.lootDragonBall.
+    // When a half is off, that item type gets NO special treatment at all —
+    // it falls through to ordinary ShouldLootMapItem rules (money/list/
+    // quality/plus), which for a non-equipment, non-money item effectively
+    // means "only if explicitly added to the Loot Item List."
+    static bool IsMeteorOrDragonBallItem(const AutoHuntSettings& settings, const CMapItem& item);
 
     // Session 13: DragonBall specifically (base + all star tiers/Epic), NOT
     // the broader Meteor/MeteorTear/+items priority-loot bucket above. Used
