@@ -20,16 +20,21 @@ honest about what's verified vs assumed.
 
 ---
 
-## Character classes / professions ❓
-Known so far: the user runs a **Trojan** (melee) and an **Archer**.
-- **Trojan** — melee. Uses Cyclone + Superman skills (see Skills). ✅
-- **Archer** — ranged. Uses Scatter (AoE cone) + Fly. ✅
-- ❓ What is the **full list of classes/professions** in this game, and what
-  fundamentally defines each (weapon types, role, playstyle)?
-- ❓ Is "profession" a fixed choice at creation, or can it change (rebirth/
-  reincarnation)? The code has a `requiredProfession` field on items and an
-  `AutoHuntGoal::Level` "danger tier" system — how does class tie into what
-  a character can equip/hunt?
+## Character classes / professions ✅
+Five classes:
+- **Trojan** — 2-hand melee. Can equip **2× one-hand weapons** (dual-wield)
+  OR a 2-hand weapon. Uses Cyclone + Superman XP skills.
+- **Warrior** — melee. Can equip **only a 2-hand weapon**, OR **1 one-hand
+  weapon + a shield**.
+- **Archer** — ranged, shoots with a bow, **Scatter** hits multiple
+  monsters. **Best class for hunting/farming.**
+- **Water Tao** — healer (has revives).
+- **Fire Tao** — like Water Tao but **weaker heals, no revives, stronger
+  attacks**.
+- **Rebirth**: at **level 110** a character can **reborn into another
+  class**. **Max level is 130.**
+- (Ties to the code: `requiredProfession` on items gates equipment by
+  class; a Trojan/Warrior can't use a bow, etc.)
 
 ---
 
@@ -46,16 +51,24 @@ Confirmed skills the bot already reacts to:
 - **Fly** (Archer) — makes the archer immune to melee (bot ignores archer
   safety distance while active). ✅
 
-❓ Questions:
-- What is the **complete skill list** per class that matters for botting
-  (attack skills, buffs, movement)? What does each do, and how is it
-  triggered (auto, hotkey, passive)?
-- **Cyclone** specifics: exactly how is it gained and lost — X kills within
-  Y seconds? Does it have a level/duration? What breaks it besides stopping
-  kills (death, zoning, disconnect)?
-- **Superman/Snow**: how are they gained/maintained? Duration?
-- Are there **healing / buff / summon** skills the bot should cast or watch?
-- **Mana**: do skills cost mana? Does the bot need to watch/manage it?
+### Cyclone / Superman — XP-skill mechanics ✅
+- Both are **XP skills**: granted when an **XP bar fills to 100**.
+- The bar fills **1 point per second (time)** OR **1 point per monster
+  kill** — whichever, they stack.
+- **The active duration extends with each monster killed.** So while
+  speed-hacking (very fast kills), **the skill never runs out** as long as
+  the bot keeps killing good mobs. This is exactly why the trojan's
+  cyclone-speed persists indefinitely while farming — and why a stall (no
+  kills) is what actually risks losing it. (Directly relevant: the melee
+  freeze-near-players and deadlock bugs mattered because a long enough stall
+  could drop Cyclone.)
+
+❓ Still open:
+- Full skill list per class (healing/buff/summon skills the bot should cast
+  or watch)?
+- Do skills cost **mana**, and does the bot need to manage it?
+- What breaks an active XP skill besides running out — death, zoning,
+  disconnect?
 
 ---
 
@@ -113,70 +126,110 @@ vs MeteorScroll vs DragonBall (quality vs plus vs something else)?
 
 ---
 
-## Economy / valuables ❓
-Money tiers (ascending), confirmed from code: **Silver, Sycee, Gold,
-GoldBullion, GoldBar, GoldBars.** ✅
+## Economy / valuables ✅
+Money tiers (ascending), from code: **Silver, Sycee, Gold, GoldBullion,
+GoldBar, GoldBars.**
 - **Meteor** (type 1088001), **MeteorTear** (1088002), **DragonBall**
-  (1088000) — the "rare/valuable" items the bot prioritizes. ✅
+  (1088000) — the rare valuables the bot prioritizes.
 - **MeteorScroll** (720027), **DBScroll** (720028), **MegaMeteorScroll**
-  (720029) — meteors/DBs can be packed into scrolls (compact storage). ✅
-❓ Questions:
-- Roughly what is the **relative value** of these? (1 DragonBall = how many
-  Meteors? What's a Meteor worth in gold?)
-- What's the **most valuable** thing that realistically drops while hunting?
-- Are +1 items / high-quality gear actually worth much on the market, or is
-  the real money in meteors/DBs/gold?
-- How does **packing** work (N meteors → 1 scroll)? Why do it — storage
-  limits, trade convenience, safety?
+  (720029) — meteors/DBs pack into scrolls (compact storage).
+
+**Approximate values (user, 2026-08-30):**
+| Item | Value |
+|---|---|
+| **DragonBall** | **~3,000,000 gold** — the single most valuable drop |
+| **MeteorScroll** (= 10 Meteors) | ~700,000 gold |
+| **Meteor** (1/10 of a scroll) | ~70,000 gold |
+| **+1 item** | ~500,000 gold each |
+
+**Bot-relevant takeaways:**
+- Value ranking: **DragonBall (3M) ≫ +1 item (500k) > Meteor (70k)**.
+- A **+1 item is worth ~7 Meteors** — which economically justifies giving
+  wanted +1/quality gear the same stop-and-grab urgency as meteors (this is
+  what item 49 in project-status implemented). A +1 is NOT a minor pickup.
+- **Packing**: 10 Meteors → 1 MeteorScroll (compact storage for the
+  warehouse/bank; the bot's "Packing Meteors into MeteorScrolls" step).
 
 ---
 
-## Combat ❓
-Known: attack has an **accuracy element — melee misses sometimes** (not
-100% hit). ✅ Item stats include attackMin/Max, defense, dexterity, dodge.
-❓ Questions:
-- What governs **hit vs miss** (dexterity vs dodge)? How often does a melee
-  hit land against a same-level monster?
-- How do **attack/defense/dodge** actually resolve damage?
-- **PK/PVP**: can other players attack the bot while hunting? What are the
-  PK rules (flagging, penalties, safe zones)? This matters a lot for the
-  Paranoia/Safety evasion logic.
-- Is there a **"blue name / red name" PK status** system? (The Entities
-  panel shows a "PK?" column.)
+## Combat & PK ✅ (PK) / ❓ (damage formula)
+
+### PK / PVP system ✅ — **critical for Safety & Paranoia logic**
+- **Where:** PK can happen in **any city, by any player — EXCEPT Market**,
+  which is a **safe (no-PK) zone**. (This is why the bot's Safety Rest
+  retreats to Market — it's the one place a player can't be attacked.)
+- **Guards:** major cities have **strong guard NPCs**. If someone PKs, the
+  guard attacks and kills them — unless the PKer is very, very strong.
+- **How to PK:** a player must (1) toggle a PK-mode setting ("I want to kill
+  others"), then (2) use an attack skill on the target. So a random nearby
+  player is not an immediate threat unless they've flagged and attack.
+- **On death:** the victim **drops everything in their bag** (gold + items).
+  **Equipped gear is only at risk if the victim is red/black name** — see
+  below.
+- **PK points (PKP) and name color** (the Entities-panel "PK?" column):
+  - Kill a (non-red/black) player → **+5 PKP**, and your **name flashes blue
+    for a couple minutes**. While blue-flashing you can be attacked by anyone
+    **without them needing PK mode on**.
+  - **30 PKP → red name.** A red-name player who dies **has a chance to drop
+    equipped gear**.
+  - **100 PKP → black name.** A black-name player has a **much higher chance
+    to drop equipped gear** on death.
+  - **Killing a red or black name player grants NO PK points** (they're fair
+    game / "justified" kills).
+- **Bot implications:**
+  - The bot NEVER PKs — so it never gains PKP, never turns blue/red/black,
+    and its equipped gear is safe on death. It only risks its **bag
+    contents** (gold + un-stored loot) if killed.
+  - A **red or black name** player nearby is a genuine PKer — the highest-
+    priority threat to evade. (Potential future refinement: weight
+    Paranoia/Safety evasion harder against red/black-name players; a normal
+    blue/white-name player who hasn't flagged is less immediately dangerous.)
+  - Storing loot (warehouse/bank) between farm runs limits what's lost if
+    the bot is ever PK'd.
+
+### Damage / accuracy ❓
+- Attack has an **accuracy element — melee misses sometimes** (not 100%).
+  Item stats: attackMin/Max, defense, dexterity, dodge.
+- ❓ What governs hit vs miss (dexterity vs dodge)? How do attack/defense/
+  dodge resolve damage? How often does melee land on a same-level monster?
 
 ---
 
-## Monsters ❓
-Known: monster **name color reflects danger tier relative to the character's
-level** (the bot's `GetDangerTier` / `maxDangerTier` uses this). Monster
-entity IDs fall in 400,000–499,999. ✅
-❓ Questions:
-- What does each **name color** mean exactly (e.g., green = trivial, white =
-  even, red = dangerous)? The bot's Level-mode gates on this.
-- Do monsters have special abilities the bot should avoid (ranged, AoE,
-  debuffs)?
+## Monsters ✅ (name colors) / ❓ (abilities, drop tables)
+Monster **name color = danger relative to the character's level** (the bot's
+`GetDangerTier`/`maxDangerTier` Level-mode gate uses this). Monster entity
+IDs fall in 400,000–499,999.
+- **Green = easy** (below the character's level)
+- **White = my level** (even)
+- **Red = hard** (above)
+- **Black = very hard** (well above)
+
+❓ Still open:
+- Do monsters have special abilities to avoid (ranged, AoE, debuffs)?
 - Do certain monsters drop meteors/DBs/+1 gear more than others — is there a
-  "best farm target"?
+  "best farm target" for valuables specifically?
 
 ---
 
-## Leveling / progression ❓
+## Leveling / progression ✅ (partial)
+- **Max level: 130.** At **level 110**, a character can **reborn into
+  another class** (see Classes).
 - The bot has a Farm mode (ignore level) and a Level mode (respect danger
-  tier). ✅
-❓ Questions:
-- What's the **level cap**? How does XP scale — is there a best level range
-  to farm?
-- Is there **rebirth / reincarnation / class change** at a level threshold,
-  and does it reset anything?
-- Does dying **lose XP or drop items**? (Critical for how cautious the bot
-  should be.)
+  tier).
+- **Death does NOT cost XP** — the only death penalty is dropping bag
+  contents (and equipped gear if red/black name). See PK section.
+❓ Still open:
+- How does XP scale — is there a best level range to farm?
+- Does reborn reset level/stats, and what does it grant?
 
 ---
 
 ## Maps & locations ✅ (partial)
 - **Twin City** — has Artisan Wind + adjacent repair NPC. ✅
-- **Market** map — has a **Pharmacist** (the bot's general gear-repair NPC),
-  Warehouse, banks (Treasure Bank, Compose Bank). ✅
+- **Market** map — the **no-PK safe zone** (the only city a player can't be
+  attacked in). Has a **Pharmacist** (the bot's general gear-repair NPC),
+  Warehouse, banks (Treasure Bank, Compose Bank). This is why Safety Rest
+  retreats here. ✅
 - Hunt happens on open maps (e.g. map 1002 "newplain", 972×972). ✅
 - Travel via **city gate items** (TwinCity/Desert/Ape/Castle/BirdIsland/
   StoneCity gates — type 1060020+). ✅
@@ -187,14 +240,17 @@ entity IDs fall in 400,000–499,999. ✅
 
 ---
 
-## Death & recovery ❓
-❓ Questions:
-- What happens when the character **dies** — respawn where, lose what
-  (XP, items, durability)?
-- How does **revival** work (auto-revive, revive at a location, revive
-  item/skill)?
-- The bot has a "Revive Helper" and auto-revive logic — what's the actual
-  in-game revive flow it's automating?
+## Death & recovery ✅ (partial)
+- **On death, the character drops everything in its bag** (gold + un-stored
+  items). **No XP loss.** Equipped gear is safe unless the character is
+  red/black name (the bot never PKs, so its gear is always safe). See PK.
+- **Revive:** the character **revives in the city/town it's currently in**.
+❓ Still open:
+- Is revive automatic or does it need a click/confirm (what the "Revive
+  Helper" automates)? Any revive cost/cooldown?
+- If death drops the bag, does the bot need to rush back to recover drops,
+  or are they lost? (Argues for frequent warehouse/bank storage runs so
+  little is in the bag when killed.)
 
 ---
 
