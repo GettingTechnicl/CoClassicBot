@@ -459,6 +459,26 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
 
     switch (m_repairPhase) {
         case RepairPhase::MoveToNpc:
+            // One-time full snapshot of every worn item's durability when a
+            // repair cycle actually begins at the NPC, so a later "item X never
+            // repaired" can be traced back to its starting state and slot.
+            spdlog::info("[repair] At Pharmacist (dist={}), threshold={}%. Equipped gear:", npcDist, settings.repairPercent);
+            for (int slot = 0; slot < EquipSlot::COUNT; ++slot) {
+                CItem* item = hero->GetEquip(slot);
+                if (!item)
+                    continue;
+                const int durR = item->GetDurabilityRaw();
+                const int maxR = item->GetMaxDurabilityRaw();
+                // The Unequip loop below repairs EVERY non-full, non-arrow item
+                // once a run is triggered (the threshold only decides WHEN to
+                // make the trip, via NeedsRepair) — so the label reflects that
+                // actual condition, not the trigger threshold.
+                const bool willRepair = maxR > 0 && !item->IsArrow() && durR < maxR;
+                spdlog::info("[repair]   slot={} id={} type={} name='{}' dur={}/{} pct={} arrow={} -> {}",
+                    slot, item->GetID(), item->GetTypeID(), item->GetName(), durR, maxR,
+                    (maxR > 0 ? GetDurabilityPercent(*item) : -1), item->IsArrow(),
+                    willRepair ? "WILL REPAIR" : "skip (full/arrow)");
+            }
             m_repairPhase = RepairPhase::Unequip;
             return;
 
@@ -477,6 +497,9 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
 
                 m_repairSlot = slot;
                 m_repairItemId = item->GetID();
+                spdlog::info("[repair] Unequip: slot={} id={} type={} name='{}' dur={}/{}",
+                    m_repairSlot, m_repairItemId, item->GetTypeID(), item->GetName(),
+                    item->GetDurabilityRaw(), item->GetMaxDurabilityRaw());
                 hero->UnequipItem(m_repairItemId, m_repairSlot);
                 m_repairPhase = RepairPhase::WaitUnequip;
                 m_lastNpcActionTick = now;
@@ -497,10 +520,17 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
         case RepairPhase::WaitUnequip:
             if (!hero->GetEquip(m_repairSlot) && FindInventoryItemById(hero, m_repairItemId)) {
                 m_repairStepFailCount = 0;
+                spdlog::info("[repair] Unequip CONFIRMED: item {} now in bag, slot {} empty", m_repairItemId, m_repairSlot);
                 m_repairPhase = RepairPhase::Repair;
                 return;
             }
             if (now - m_lastNpcActionTick > 2500) {
+                // Diagnose WHY it didn't confirm: is the slot still occupied, and
+                // is the item findable in the bag?
+                const bool slotStillEquipped = hero->GetEquip(m_repairSlot) != nullptr;
+                const bool inBag = FindInventoryItemById(hero, m_repairItemId) != nullptr;
+                spdlog::warn("[repair] Unequip not confirmed for item {} (slot {}): slotStillEquipped={} inBag={} (attempt {})",
+                    m_repairItemId, m_repairSlot, slotStillEquipped, inBag, m_repairStepFailCount + 1);
                 if (++m_repairStepFailCount >= kMaxRepairStepFailures) {
                     spdlog::warn("[hunt] Repair: unequip of item {} (slot {}) never confirmed after {} attempts, abandoning this repair cycle",
                         m_repairItemId, m_repairSlot, m_repairStepFailCount);
@@ -512,23 +542,36 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
             }
             return;
 
-        case RepairPhase::Repair:
+        case RepairPhase::Repair: {
             if (now - m_lastNpcActionTick < npcActionInterval)
                 return;
+            CItem* bagItem = FindInventoryItemById(hero, m_repairItemId);
+            spdlog::info("[repair] Sending RepairItem for item {} (dur before = {}/{})",
+                m_repairItemId,
+                bagItem ? bagItem->GetDurabilityRaw() : -1,
+                bagItem ? bagItem->GetMaxDurabilityRaw() : -1);
             hero->RepairItem(m_repairItemId);
             m_repairPhase = RepairPhase::WaitRepair;
             m_lastNpcActionTick = now;
             cb.setStateFn(AutoHuntState::Repair, "Repairing item");
             return;
+        }
 
         case RepairPhase::WaitRepair: {
             CItem* bagItem = FindInventoryItemById(hero, m_repairItemId);
             if (bagItem && bagItem->GetDurabilityRaw() >= bagItem->GetMaxDurabilityRaw()) {
                 m_repairStepFailCount = 0;
+                spdlog::info("[repair] Repair CONFIRMED: item {} dur now {}/{}",
+                    m_repairItemId, bagItem->GetDurabilityRaw(), bagItem->GetMaxDurabilityRaw());
                 m_repairPhase = RepairPhase::Reequip;
                 return;
             }
             if (now - m_lastNpcActionTick > 2500) {
+                spdlog::warn("[repair] Repair not confirmed for item {}: bagItem={} dur={}/{} (attempt {})",
+                    m_repairItemId, bagItem != nullptr,
+                    bagItem ? bagItem->GetDurabilityRaw() : -1,
+                    bagItem ? bagItem->GetMaxDurabilityRaw() : -1,
+                    m_repairStepFailCount + 1);
                 // Session 12 [LOCKUP FIX]: give up on this repair attempt
                 // entirely rather than retry forever -- see
                 // kMaxRepairStepFailures. NOT abandoning just this item and
@@ -553,6 +596,7 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
         case RepairPhase::Reequip:
             if (now - m_lastNpcActionTick < npcActionInterval)
                 return;
+            spdlog::info("[repair] Re-equipping item {} into slot {}", m_repairItemId, m_repairSlot);
             hero->EquipItem(m_repairItemId, m_repairSlot);
             m_repairPhase = RepairPhase::WaitReequip;
             m_lastNpcActionTick = now;
@@ -562,12 +606,19 @@ void HuntTownService::HandleRepairState(CHero* hero, CGameMap* map,
         case RepairPhase::WaitReequip: {
             CItem* equipped = hero->GetEquip(m_repairSlot);
             if (equipped && equipped->GetID() == m_repairItemId) {
+                spdlog::info("[repair] Re-equip CONFIRMED: item {} back in slot {}. Looping to next worn item.",
+                    m_repairItemId, m_repairSlot);
                 m_repairItemId = 0;
                 m_repairStepFailCount = 0;
                 m_repairPhase = RepairPhase::Unequip;
                 return;
             }
             if (now - m_lastNpcActionTick > 2500) {
+                const bool slotOccupied = equipped != nullptr;
+                const OBJID slotHolds = equipped ? equipped->GetID() : 0;
+                const bool inBag = FindInventoryItemById(hero, m_repairItemId) != nullptr;
+                spdlog::warn("[repair] Re-equip not confirmed for item {} (slot {}): slotOccupiedBy={} inBag={} (attempt {})",
+                    m_repairItemId, m_repairSlot, slotHolds, inBag, m_repairStepFailCount + 1);
                 if (++m_repairStepFailCount >= kMaxRepairStepFailures) {
                     spdlog::warn("[hunt] Repair: re-equip of item {} (slot {}) never confirmed after {} attempts, abandoning this repair cycle",
                         m_repairItemId, m_repairSlot, m_repairStepFailCount);

@@ -194,6 +194,11 @@ public:
     OBJID       GetRepairItemId() const { return m_repairItemId; }
     int         GetRepairSlot()   const { return m_repairSlot; }
     OBJID       GetRepairNpcId()  const { return m_repairNpcId; }
+    // True while a piece of gear is mid-flight (unequipped into the bag and not
+    // yet repaired + re-equipped). Used so an HP-potion Recover tick can't
+    // abandon a repair with gear sitting off the character. m_repairItemId is
+    // set from Unequip through WaitReequip and cleared (0) only between items.
+    bool        IsRepairInProgress() const { return m_repairItemId != 0; }
     static const char* RepairPhaseName(RepairPhase p) {
         switch (p) {
             case RepairPhase::MoveToNpc:   return "MoveToNpc";

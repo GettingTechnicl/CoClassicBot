@@ -1428,11 +1428,16 @@ void BaseHuntPlugin::BeginTravelToMarket(TravelPlugin* travel, CHero* hero, cons
     }
 
     Pathfinder::Get().Stop();
-    m_townService.ResetRepairSequence();
-    m_townService.ResetBuyArrowsSequence();
-    m_townService.ResetStoreSequence();
 
     if (m_lastMapId == MAP_MARKET) {
+        // Already at Market — this is a RE-DISPATCH of an in-progress town
+        // visit (commonly an HP-potion Recover tick falling through to the
+        // town-run check below), NOT a fresh run. Do NOT reset the
+        // repair/store/arrow sequences here: resetting mid-repair used to wipe
+        // the phase every time a potion fired, so the bot stripped its gear one
+        // piece per potion-free gap but never advanced to actually repairing,
+        // then wandered off once NeedsRepair went false. The fresh reset for a
+        // new visit happens once on arrival in HandleTravelToMarket instead.
         if (settings.autoRepair && m_townService.NeedsRepair(hero, settings)) {
             SetState(AutoHuntState::Repair, "Moving to Pharmacist");
         } else if (settings.autoStore && (m_townService.NeedsStorage(hero, settings)
@@ -1443,6 +1448,11 @@ void BaseHuntPlugin::BeginTravelToMarket(TravelPlugin* travel, CHero* hero, cons
         }
         return;
     }
+
+    // Fresh town run starting from elsewhere — safe to reset the sequences.
+    m_townService.ResetRepairSequence();
+    m_townService.ResetBuyArrowsSequence();
+    m_townService.ResetStoreSequence();
 
     travel->StartTravel(MAP_MARKET, kMarketLandingPos);
     SetState(AutoHuntState::TravelToMarket, "Traveling to Market");
@@ -1831,6 +1841,16 @@ void BaseHuntPlugin::Update()
     if (m_state == AutoHuntState::TravelToMarket) {
         HandleTravelToMarket(travel, hero, settings);
         return;
+    }
+
+    // A Recover tick (HP potion, meteor-pack, trash-drop) must never abandon an
+    // in-progress repair while a piece of gear is sitting unequipped in the bag
+    // — resume repairing so it gets repaired and re-equipped. Without this the
+    // bot could wander off with gear off the character if the interrupting
+    // action fired while the last item was mid-flight (NeedsRepair looks at
+    // EQUIPPED gear, so it reads false while the last piece is unequipped).
+    if (m_state == AutoHuntState::Recover && m_townService.IsRepairInProgress()) {
+        SetState(AutoHuntState::Repair, "Resuming repair after recovery");
     }
 
     if (m_state == AutoHuntState::Repair) {
