@@ -1100,12 +1100,19 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
             destination.x, destination.y);
         return true;
     }
+    // Walk-only locations (Market now; cities later — ShouldWalkOnlyOnMap):
+    // never issue a direct jump. Route straight to the A* path below, which the
+    // Pathfinder now walks leg-by-leg. (Skips both the short-hop StartWalkTo —
+    // it would fight the walk-only pathfinder by Stop()ing it — and the
+    // direct-jump branch entirely.)
+    const bool walkOnly = ShouldWalkOnlyOnMap(Game::GetCurrentMapId());
+
     // Prefer a real animated Walk over an instant Jump for short hops when
     // not running aggressive speeds (no nearby player to hide from, or the
     // speedhack toggle is off) — falls through to the jump/pathfind logic
     // below if no reachable candidate tile was found (e.g. destination boxed
     // in on all sides).
-    if (dist <= kWalkInsteadOfJumpTiles && !ShouldUseAggressiveSpeeds(settings)) {
+    if (!walkOnly && dist <= kWalkInsteadOfJumpTiles && !ShouldUseAggressiveSpeeds(settings)) {
         if (StartWalkTo(hero, map, destination, stopRange))
             return true;
     }
@@ -1120,7 +1127,8 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
     Position jumpDest = destination;
     ApplyJumpDistanceCap(map, {hx, hy}, jumpDest, settings, CGameMap::GetHeroAltThreshold());
 
-    const bool canDirectJump = dist <= CGameMap::MAX_JUMP_DIST
+    const bool canDirectJump = !walkOnly
+        && dist <= CGameMap::MAX_JUMP_DIST
         && map->CanJump(hx, hy, jumpDest.x, jumpDest.y, CGameMap::GetHeroAltThreshold())
         && !IsTileOccupied(jumpDest.x, jumpDest.y);
     const DWORD movementIntervalMs = canDirectJump

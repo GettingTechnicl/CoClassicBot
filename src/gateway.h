@@ -18,6 +18,32 @@ constexpr OBJID MAP_GROTTO1             = 1926;
 constexpr OBJID MAP_GROTTO2             = 1927;
 constexpr OBJID MAP_OCEAN               = 3056;
 
+// =====================================================================
+// Movement policy — walk-only locations
+// =====================================================================
+// Reusable predicate for "the character must WALK here, never jump/teleport."
+// Consulted by every mover (the hunt loop's StartPathTo and the shared
+// Pathfinder), so returning true anywhere forces walking everywhere with no
+// per-caller changes.
+//
+// NOW: the entire Market map (MAP_MARKET) is walk-only. Market is the ONLY map
+// that is walk-only in its entirety — the whole map IS the city.
+//
+// FUTURE ("Walk only in cities" tickbox): every OTHER city is just a small
+// RADIUS around a point inside a larger map (or a sub-map), NOT a whole map. So
+// the city case is a proximity test — hero within R tiles of a city center —
+// keyed on the map + a per-city center/radius table, gated on the setting. That
+// is why this stays a map-only predicate today and the future signature will
+// grow to take the hero position and the setting, e.g.
+//   ShouldWalkOnly(mapId, heroPos, settings)  // Market: whole map;
+//                                              // else: near-a-city radius test
+// Every mover already routes through this predicate, so when that lands nothing
+// else has to change — only this function's body and signature.
+inline bool ShouldWalkOnlyOnMap(OBJID mapId)
+{
+    return mapId == MAP_MARKET;
+}
+
 enum class GatewayType { Portal, Npc, VipTeleport, Item };
 
 struct Gateway {

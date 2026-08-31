@@ -1,5 +1,6 @@
 #include "pathfinder.h"
 #include "game.h"
+#include "gateway.h"
 #include "log.h"
 #include <algorithm>
 #include <cmath>
@@ -207,6 +208,26 @@ bool Pathfinder::IssueMovementToWaypoint(CHero* hero, CGameMap* map, const Posit
     int dist = CGameMap::TileDist(hx, hy, effective.x, effective.y);
     if (dist <= 0)
         return false;
+
+    // Walk-only locations (the Market now; cities later — see
+    // ShouldWalkOnlyOnMap): the character must WALK this leg, never jump. Walk
+    // animates over long distances too (CHero::Walk), so a whole leg to a
+    // simplified waypoint is issued as one animated walk. Skips the jump-only
+    // machinery below (distance cap, the jump branch).
+    const bool walkOnly = ShouldWalkOnlyOnMap(Game::GetCurrentMapId());
+    if (walkOnly) {
+        if (!map->CanReach(hx, hy, effective.x, effective.y))
+            return false;
+        if (IsTileOccupied(effective.x, effective.y))
+            return false;
+        const Position beforeWalk = hero->m_posMap;
+        spdlog::debug("[path] Walk-only ({},{}) -> ({},{}) dist={}", hx, hy, effective.x, effective.y, dist);
+        hero->Walk(effective.x, effective.y);
+        m_lastIssuedTarget = effective;
+        m_lastIssuedMoveWasImmediate = hero->m_posMap.x != beforeWalk.x || hero->m_posMap.y != beforeWalk.y;
+        m_lastJumpTick = GetTickCount();
+        return true;
+    }
 
     // Session 13 [JUMP VARIANCE]: shrink an over-long waypoint jump toward a
     // walkable intermediate point when the caller supplied a cap (hunt
