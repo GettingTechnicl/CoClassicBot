@@ -338,6 +338,19 @@ struct AutoHuntSettings
     // GetParanoiaThreat() in hunt_intervals.h.
     bool paranoiaEnabled = false;
 
+    // Session 14 [Paranoia evasion redesign] — the flee/relocate state machine
+    // (see BaseHuntPlugin::UpdateEvadeState). Two Advanced-tab tunables:
+    // - paranoiaPassingThresholdMs: how long a player must have been detected
+    //   (continuously, from first sighting until the bot loses sight of them)
+    //   to count as LINGERING. Below this, they were "just passing" — after
+    //   relocating out of sight the bot returns to its original hunting spot.
+    //   At/above it, the bot treats the spot as watched and stays relocated.
+    // - paranoiaRenudgeTiles: if a player reappears mid-relocate (the new area
+    //   was still too close / in their path), the next relocate destination is
+    //   pushed this many extra tiles farther from the threat, per reappearance.
+    int paranoiaPassingThresholdMs = 7000;
+    int paranoiaRenudgeTiles = 10;
+
     // Debug map overlays
     bool debugShowActionRadius = false;
     bool debugShowClumpRadius = false;

@@ -137,8 +137,32 @@ protected:
     // monsters sat just outside its search radius.
     //
     // Lives on the base plugin so every class gets it, not just the archer.
+    // When fleeFrom is non-null, forces the Paranoia-evasion selection
+    // (farthest in-zone/walkable tile from *fleeFrom) regardless of the live
+    // GetParanoiaThreat scan — used by the evade state machine's Fleeing state,
+    // where a player may be visible but already beyond Detection Range.
     bool FindZoneExplorePosition(CHero* hero, CGameMap* map,
-                                 const AutoHuntSettings& settings, Position& out) const;
+                                 const AutoHuntSettings& settings, Position& out,
+                                 const Position* fleeFrom = nullptr) const;
+
+    // ── Paranoia evasion state machine (Session 14 redesign) ─────────────
+    // Detected → flee (human pace while any player can see us) → once out of
+    // sight, speed-hack to a different (heatmap-hot) area → if the player was
+    // only passing, return to the original spot; if they lingered, stay.
+    enum class EvadeState { None, Fleeing, Relocating, ReturningHome };
+    // Pure state transition (visibility/detection/arrival driven). Called early
+    // in the hunt loop so the loot-drop and leash-widen decisions see the
+    // current evade state this same tick. Returns true while evading.
+    bool UpdateEvadeState(CHero* hero, const AutoHuntSettings& settings);
+    // Issues the movement for the current evade state. Returns true if it took
+    // over the tick (caller should return from the hunt loop).
+    bool DriveEvadeMovement(CHero* hero, CGameMap* map, const AutoHuntSettings& settings);
+    // Hottest SpawnMemory bucket that is in-zone, walkable and at least
+    // minDistFromThreat tiles from threatPos. False if none qualifies (caller
+    // falls back to the farthest-flee tile).
+    bool FindParanoiaRelocateDest(CHero* hero, CGameMap* map, const AutoHuntSettings& settings,
+                                  const Position& threatPos, int minDistFromThreat, Position& out) const;
+    int  GetEvadeRelocateMinDist(const AutoHuntSettings& settings) const;
 
     bool StartPathTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange);
     bool StartWalkTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange);
@@ -277,4 +301,14 @@ protected:
     std::unordered_map<OBJID, DWORD> m_nearbyPlayerTicks;
     bool m_safetyResting = false;
     DWORD m_safetyRestStartTick = 0;
+
+    // Session 14 [Paranoia evasion redesign] runtime state — see UpdateEvadeState.
+    EvadeState m_evadeState = EvadeState::None;
+    Position   m_evadeHomeSpot = {};        // hunting spot when first detected
+    Position   m_evadeThreatLastPos = {};   // last-seen threat position (flee/relocate away from here)
+    Position   m_evadeRelocateDest = {};    // chosen relocate destination (computed once out of sight)
+    DWORD      m_evadeFleeStartTick = 0;     // when the current Fleeing began
+    DWORD      m_evadeFleeDurationMs = 0;    // detected-duration captured at the Fleeing→Relocating edge
+    bool       m_evadeReturnHome = false;    // passing (return) vs lingering (stay), decided at that edge
+    int        m_evadeRenudgeCount = 0;      // reappearances mid-relocate → push next relocate farther
 };
