@@ -11,6 +11,7 @@ constexpr OBJID MAP_TWIN_CITY           = 1002;
 constexpr OBJID MAP_PHOENIX_CASTLE      = 1011;
 constexpr OBJID MAP_BIRD_ISLAND         = 1015;
 constexpr OBJID MAP_APE_MOUNTAIN        = 1020;
+constexpr OBJID MAP_APE_CITY2           = 1075;  // "Ape City 2"/"Ape 2" — hunting map off Ape Mountain (user's name)
 constexpr OBJID MAP_MINE_CAVE           = 1028;
 constexpr OBJID MAP_MARKET              = 1036;
 constexpr OBJID MAP_GUILD               = 1038;

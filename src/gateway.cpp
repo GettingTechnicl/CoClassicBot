@@ -130,6 +130,15 @@ static const std::unordered_map<OBJID, std::vector<Gateway>> s_gateways = {
                            }, kConductressSilverCost),
             // Portals
             {GatewayType::Portal, MAP_APE_MOUNTAIN, {377, 9}, MAP_TWIN_CITY, {555, 957}},
+            // Ape City 2 (1075) — hunting map. Landing approximated as the
+            // return portal's own tile (bot re-reads real pos after teleport).
+            {GatewayType::Portal, MAP_APE_MOUNTAIN, {610, 874}, MAP_APE_CITY2, {361, 6}},
+        }
+    },
+    {
+        MAP_APE_CITY2, {
+            // Back to Ape Mountain.
+            {GatewayType::Portal, MAP_APE_CITY2, {361, 6}, MAP_APE_MOUNTAIN, {610, 874}},
         }
     },
     {
@@ -193,6 +202,7 @@ static const Destination s_destinations[] = {
     {"Mystic Castle", MAP_MYSTIC_CASTLE, {312, 646}},
     {"Phoenix Castle", MAP_PHOENIX_CASTLE, {193, 266}},
     {"Ape Mountain", MAP_APE_MOUNTAIN, {566, 565}},
+    {"Ape City 2", MAP_APE_CITY2, {361, 6}},
     {"Bird Island", MAP_BIRD_ISLAND, {717, 577}},
     {"Mine Cave", MAP_MINE_CAVE, {157, 91}},
     {"Market", MAP_MARKET, {211, 196}},
