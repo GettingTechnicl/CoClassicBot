@@ -63,10 +63,13 @@ Confirmed skills the bot already reacts to:
   freeze-near-players and deadlock bugs mattered because a long enough stall
   could drop Cyclone.)
 
+### Mana ✅ (partial)
+- **Tao classes (Water/Fire) have magic skills that consume mana**; mana
+  depletes as magic skills are cast. (Melee/archer basic attacks are not
+  magic — mana matters mainly for the Tao casters.)
 ❓ Still open:
-- Full skill list per class (healing/buff/summon skills the bot should cast
-  or watch)?
-- Do skills cost **mana**, and does the bot need to manage it?
+- Full skill list per class (heal/buff/summon skills the bot should cast or
+  watch)? Mana-management thresholds for a Tao bot?
 - What breaks an active XP skill besides running out — death, zoning,
   disconnect?
 
@@ -180,12 +183,33 @@ GoldBar, GoldBars.**
   - The bot NEVER PKs — so it never gains PKP, never turns blue/red/black,
     and its equipped gear is safe on death. It only risks its **bag
     contents** (gold + un-stored loot) if killed.
-  - A **red or black name** player nearby is a genuine PKer — the highest-
-    priority threat to evade. (Potential future refinement: weight
-    Paranoia/Safety evasion harder against red/black-name players; a normal
-    blue/white-name player who hasn't flagged is less immediately dangerous.)
   - Storing loot (warehouse/bank) between farm runs limits what's lost if
     the bot is ever PK'd.
+  - **IMPORTANT — Paranoia is NOT about avoiding PK death.** See the
+    Paranoia intent below: the goal is not being *seen* by ANY player
+    (recording/report risk), so evasion must react to **every** player, not
+    just red/black PKers. An earlier note here suggested weighting evasion
+    toward red/black names — that is WRONG for this bot's actual goal and was
+    removed.
+
+## Paranoia mode — intent (bot design, per user 2026-08-30) ⚠️ behavior gap
+The point of Paranoia is **stealth / anti-detection**, NOT survival: other
+players could **record or report** a bot, so the bot should stay **invisible
+to all of them**. Intended behavior when a player is detected:
+1. **Detected in range** → flee/evade away from the player.
+2. **Once out of the player's sight** → speed-hack away to a **different
+   area** of the map entirely.
+3. **If the player was just passing by** (they leave) → come back to the
+   original hunting spot.
+4. **MapWide** is the preferred zone mode precisely because it lets the bot
+   relocate to a fresh hunting location anywhere on the map when evading.
+**Current behavior does NOT fully match this** (user: "not quite where I
+want it yet"). Today evasion picks the whole-map-farthest-from-threat tile
+and paths there; there's no explicit "out of sight → speed-hack relocate"
+phase, no "return if they were just passing" logic, and the relocate target
+isn't necessarily a good (heatmap-hot) hunting spot. Likely lives in the
+explore-mode / heatmap-bucket path (FindZoneExplorePosition,
+base_hunt_plugin.cpp). **This is an open design item to revisit.**
 
 ### Damage / accuracy ❓
 - Attack has an **accuracy element — melee misses sometimes** (not 100%).
