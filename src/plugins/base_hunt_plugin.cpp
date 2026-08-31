@@ -337,7 +337,7 @@ bool BaseHuntPlugin::HandleDeath(CHero* hero, TravelPlugin* travel, const AutoHu
 }
 
 bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
-    const AutoHuntSettings& settings, Position& out, const Position* fleeFrom) const
+    const AutoHuntSettings& settings, Position& out, const std::vector<Position>* fleeFromSet) const
 {
     out = {};
     if (!hero || !map)
@@ -389,19 +389,35 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     // priority over normal exploration (heatmap-guided or first-valid) —
     // sample every candidate and keep the one farthest from the threat
     // instead of stopping at the first walkable tile.
-    // fleeFrom (evade state machine) forces the farthest-from-threat selection
-    // even when no player is within Detection Range this instant; otherwise the
-    // live nearest-threat scan drives it (idle-exploration bias).
+    // fleeFromSet (evade state machine) forces the away-from-ALL-players
+    // selection: keep the tile whose distance to the NEAREST point in the set
+    // is largest. The set is every tracked player's current + predicted
+    // position, so this heads away from the whole group and around where a
+    // moving player is going. When no set is passed, the live nearest-threat
+    // scan drives the ordinary idle-exploration bias (single point).
     Position threatPos{};
     bool paranoiaEvading;
-    if (fleeFrom) {
-        threatPos = *fleeFrom;
+    const bool fleeAll = (fleeFromSet && !fleeFromSet->empty());
+    if (fleeAll) {
         paranoiaEvading = true;
     } else {
-        paranoiaEvading = GetParanoiaThreat(settings, &threatPos);
+        paranoiaEvading = (fleeFromSet == nullptr) && GetParanoiaThreat(settings, &threatPos);
     }
     Position bestAwayFromThreat{};
     float    bestThreatDist = -1.0f;
+
+    // Distance from a candidate to the nearest threat point — the evade
+    // objective is to MAXIMIZE this (get as far as possible from whoever is
+    // closest to seeing us).
+    auto distToNearestThreat = [&](const Position& c) -> float {
+        if (fleeAll) {
+            float minD = (std::numeric_limits<float>::max)();
+            for (const Position& tp : *fleeFromSet)
+                minD = (std::min)(minD, c.DistanceTo(tp));
+            return minD;
+        }
+        return c.DistanceTo(threatPos);
+    };
 
     // Session 13 [KNOWN HOT SPOTS]: uniform sampling alone almost never
     // rediscovers a small hot area on a large map — live MapWide run: the
@@ -500,7 +516,7 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
             continue;
 
         if (paranoiaEvading) {
-            const float threatDist = candidate.DistanceTo(threatPos);
+            const float threatDist = distToNearestThreat(candidate);
             if (threatDist > bestThreatDist) {
                 bestThreatDist = threatDist;
                 bestAwayFromThreat = candidate;
@@ -564,27 +580,95 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     return false;
 }
 
-// ── Paranoia evasion state machine (Session 14 redesign) ────────────────────
-// The desired flow (user-confirmed): a player is DETECTED within Detection
-// Range → the bot FLEES away at a human pace while any player can still SEE it
-// (Phase 1's disableSpeedhackOnPlayer keeps the speed human here) → once truly
-// out of sight (no player anywhere in the entity scan) it RELOCATES, this time
-// speed-hacking, to a different heatmap-hot area far from where the player was
-// → if the player was only briefly present ("just passing"), it RETURNS to the
-// original hunting spot; if they lingered, it stays at the new area. A player
-// reappearing mid-relocate throws it back to Fleeing and pushes the next
-// relocate farther out (re-nudge). Two ranges drive it: Detection Range
-// (safetyPlayerRange) starts the flee; "any visible player" (no range,
-// IsAnyPlayerVisibleDebounced) is the out-of-sight test — the wider one, so the
-// bot never speed-hacks or resumes hunting while a player who can see it is
-// still on screen. All arrival/visibility transitions live here; the movement
-// itself is issued by DriveEvadeMovement.
+// ── Paranoia evasion state machine (Session 14 redesign, option A) ──────────
+// The desired flow (user-confirmed): detection is BINARY — any non-whitelisted
+// player anywhere in the ~30-tile view window counts, distance is irrelevant.
+// So the moment ANY player is visible the bot FLEES, heading in the direction
+// that maximizes distance from EVERY player at once (their current AND
+// predicted positions, so it routes around where a moving player is going),
+// at a human pace (Phase 1's disableSpeedhackOnPlayer keeps speed human while
+// anyone can see it). Once truly out of sight it RELOCATES — speed-hacking to
+// a different heatmap-hot area away from where all the players were → if they
+// were only briefly present ("just passing") it RETURNS to the original spot,
+// otherwise it stays. A player reappearing mid-relocate throws it back to
+// Fleeing and pushes the next relocate farther out (re-nudge). Visibility uses
+// IsAnyPlayerVisibleDebounced (no range); per-player positions/movement come
+// from m_playerTracks (UpdatePlayerTracks). All arrival/visibility transitions
+// live here; the movement itself is issued by DriveEvadeMovement.
 int BaseHuntPlugin::GetEvadeRelocateMinDist(const AutoHuntSettings& settings) const
 {
-    // "A different area, beyond visibility from the threat," plus the re-nudge
-    // push each time a player re-appeared at the last chosen spot.
-    const int base = (std::max)(settings.safetyPlayerRange, 15) + 20;
-    return base + m_evadeRenudgeCount * (std::max)(1, settings.paranoiaRenudgeTiles);
+    // "A different area" = clearly beyond the ~30-tile view window from where
+    // the players were, plus the re-nudge push each time one re-appeared.
+    constexpr int kBeyondViewTiles = 35;
+    return kBeyondViewTiles + m_evadeRenudgeCount * (std::max)(1, settings.paranoiaRenudgeTiles);
+}
+
+void BaseHuntPlugin::UpdatePlayerTracks(const AutoHuntSettings& settings)
+{
+    CHero* hero = Game::GetHero();
+    if (!hero)
+        return;
+
+    const DWORD now = GetTickCount();
+    const OBJID heroId = hero->GetID();
+    const std::vector<std::string> whitelist = ParseTokens(settings.playerWhitelist);
+
+    for (CRole* role : Entities::Get()) {
+        if (!role || !Entities::IsAlive(role) || !role->IsPlayer() || role->GetID() == heroId)
+            continue;
+        if (!whitelist.empty() && NameMatchesFilters(role->GetName(), whitelist))
+            continue;
+
+        const Position p = role->m_posMap;
+        PlayerTrack& t = m_playerTracks[role->GetID()];
+        if (t.lastSeenTick == 0) {
+            t.posNow = p;
+            t.posPrev = p;
+            t.hasPrev = false;
+        } else if (p.x != t.posNow.x || p.y != t.posNow.y) {
+            // Only shift into posPrev on a DISTINCT position, so the movement
+            // vector reflects real travel rather than a same-tile re-scan.
+            t.posPrev = t.posNow;
+            t.posNow = p;
+            t.hasPrev = true;
+        }
+        t.lastSeenTick = now;
+    }
+
+    // Drop players who have been gone from the scan long enough to count as
+    // out of view (matches the visibility debounce order of magnitude).
+    constexpr DWORD kTrackExpiryMs = 3000;
+    for (auto it = m_playerTracks.begin(); it != m_playerTracks.end(); ) {
+        if (now - it->second.lastSeenTick > kTrackExpiryMs)
+            it = m_playerTracks.erase(it);
+        else
+            ++it;
+    }
+}
+
+std::vector<Position> BaseHuntPlugin::GetPlayerThreatPredictions() const
+{
+    // Flee away from BOTH where each player is now AND a short lookahead in
+    // their direction of travel — the candidate destination is then scored on
+    // its distance to the nearest of these, so it avoids a moving player's path
+    // as well as their current spot.
+    constexpr int kLookaheadTiles = 8;
+    std::vector<Position> out;
+    out.reserve(m_playerTracks.size() * 2);
+    for (const auto& [id, t] : m_playerTracks) {
+        out.push_back(t.posNow);
+        if (t.hasPrev) {
+            const float dx = (float)(t.posNow.x - t.posPrev.x);
+            const float dy = (float)(t.posNow.y - t.posPrev.y);
+            const float len = sqrtf(dx * dx + dy * dy);
+            if (len > 0.5f) {
+                out.push_back(Position{
+                    t.posNow.x + (int)std::lround(dx / len * kLookaheadTiles),
+                    t.posNow.y + (int)std::lround(dy / len * kLookaheadTiles) });
+            }
+        }
+    }
+    return out;
 }
 
 bool BaseHuntPlugin::UpdateEvadeState(CHero* hero, const AutoHuntSettings& settings)
@@ -592,49 +676,52 @@ bool BaseHuntPlugin::UpdateEvadeState(CHero* hero, const AutoHuntSettings& setti
     if (!settings.paranoiaEnabled || !hero) {
         m_evadeState = EvadeState::None;
         m_evadeRenudgeCount = 0;
+        m_playerTracks.clear();
         return false;
     }
 
     constexpr int kEvadeArriveTiles = 5;
     const DWORD now = GetTickCount();
 
-    Position threatPos{};
-    const bool threatDetected = GetParanoiaThreat(settings, &threatPos);   // within Detection Range
-    const bool anyVisible = IsAnyPlayerVisibleDebounced(settings);          // anywhere in scan
+    // Refresh per-player positions/movement every tick, then the binary
+    // "anyone in view" test drives every transition (no range — detected vs
+    // not detected is all that matters).
+    UpdatePlayerTracks(settings);
+    const bool anyVisible = IsAnyPlayerVisibleDebounced(settings);
 
     switch (m_evadeState) {
     case EvadeState::None:
-        if (threatDetected) {
+        if (anyVisible) {
             m_evadeState = EvadeState::Fleeing;
             m_evadeHomeSpot = hero->m_posMap;
-            m_evadeThreatLastPos = threatPos;
             m_evadeFleeStartTick = now;
             m_evadeRenudgeCount = 0;
             m_evadeRelocateDest = {};
-            spdlog::info("[paranoia] Player detected within range -> FLEEING (home=({},{}))",
-                m_evadeHomeSpot.x, m_evadeHomeSpot.y);
+            spdlog::info("[paranoia] Player(s) in view -> FLEEING (home=({},{}), tracked={})",
+                m_evadeHomeSpot.x, m_evadeHomeSpot.y, (int)m_playerTracks.size());
         }
         break;
 
     case EvadeState::Fleeing:
-        if (threatDetected)
-            m_evadeThreatLastPos = threatPos;
         if (!anyVisible) {
-            // Out of everyone's sight — decide passing vs lingering from how
-            // long a player was continuously present, then relocate.
+            // Out of everyone's sight — snapshot where the players were (their
+            // tracks are still fresh this instant) so relocate can head away
+            // from all of them, then decide passing vs lingering from how long
+            // a player was continuously present.
+            m_evadeThreatPositions.clear();
+            for (const auto& [id, t] : m_playerTracks)
+                m_evadeThreatPositions.push_back(t.posNow);
             m_evadeFleeDurationMs = now - m_evadeFleeStartTick;
             m_evadeReturnHome = (int)m_evadeFleeDurationMs < settings.paranoiaPassingThresholdMs;
             m_evadeState = EvadeState::Relocating;
             m_evadeRelocateDest = {};   // computed on first Relocating movement tick
-            spdlog::info("[paranoia] Out of sight after {}ms -> RELOCATING (returnHome={})",
-                m_evadeFleeDurationMs, m_evadeReturnHome);
+            spdlog::info("[paranoia] Out of sight after {}ms -> RELOCATING (returnHome={}, threats={})",
+                m_evadeFleeDurationMs, m_evadeReturnHome, (int)m_evadeThreatPositions.size());
         }
         break;
 
     case EvadeState::Relocating:
         if (anyVisible) {
-            if (threatDetected)
-                m_evadeThreatLastPos = threatPos;
             ++m_evadeRenudgeCount;
             m_evadeFleeStartTick = now;
             m_evadeState = EvadeState::Fleeing;
@@ -646,10 +733,10 @@ bool BaseHuntPlugin::UpdateEvadeState(CHero* hero, const AutoHuntSettings& setti
                                   m_evadeRelocateDest.x, m_evadeRelocateDest.y) <= kEvadeArriveTiles) {
             if (m_evadeReturnHome && !IsZeroPos(m_evadeHomeSpot)) {
                 m_evadeState = EvadeState::ReturningHome;
-                spdlog::info("[paranoia] Reached new area (player was passing) -> RETURNING HOME ({},{})",
+                spdlog::info("[paranoia] Reached new area (players were passing) -> RETURNING HOME ({},{})",
                     m_evadeHomeSpot.x, m_evadeHomeSpot.y);
             } else {
-                spdlog::info("[paranoia] Reached new area (player lingered) -> resume hunting here");
+                spdlog::info("[paranoia] Reached new area (players lingered) -> resume hunting here");
                 m_evadeState = EvadeState::None;
                 m_evadeRenudgeCount = 0;
             }
@@ -658,8 +745,6 @@ bool BaseHuntPlugin::UpdateEvadeState(CHero* hero, const AutoHuntSettings& setti
 
     case EvadeState::ReturningHome:
         if (anyVisible) {
-            if (threatDetected)
-                m_evadeThreatLastPos = threatPos;
             ++m_evadeRenudgeCount;
             m_evadeFleeStartTick = now;
             m_evadeState = EvadeState::Fleeing;
@@ -680,8 +765,8 @@ bool BaseHuntPlugin::UpdateEvadeState(CHero* hero, const AutoHuntSettings& setti
 }
 
 bool BaseHuntPlugin::FindParanoiaRelocateDest(CHero* hero, CGameMap* map,
-    const AutoHuntSettings& settings, const Position& threatPos, int minDistFromThreat,
-    Position& out) const
+    const AutoHuntSettings& settings, const std::vector<Position>& threatPositions,
+    int minDistFromThreat, Position& out) const
 {
     out = {};
     if (!hero || !map)
@@ -691,10 +776,21 @@ bool BaseHuntPlugin::FindParanoiaRelocateDest(CHero* hero, CGameMap* map,
     if (!SpawnMemory::HasUsefulData(mapId))
         return false;
 
-    // Hottest known bucket that is in-zone, walkable, and clearly away from the
-    // threat's last-seen position — a spot the bot can actually hunt, not a
-    // dead corner (fixes G3). Ask for a generous pool so distance filtering
-    // still leaves candidates on smaller maps.
+    // Distance from a bucket to the NEAREST threat point — a qualifying bucket
+    // must be at least minDistFromThreat from EVERY player's last-known spot.
+    auto minThreatDist = [&](const Position& b) -> int {
+        if (threatPositions.empty())
+            return (std::numeric_limits<int>::max)();
+        int m = (std::numeric_limits<int>::max)();
+        for (const Position& tp : threatPositions)
+            m = (std::min)(m, CGameMap::TileDist(tp.x, tp.y, b.x, b.y));
+        return m;
+    };
+
+    // Hottest known bucket that is in-zone, walkable, and clearly away from
+    // where all the players were — a spot the bot can actually hunt, not a dead
+    // corner (fixes G3). Ask for a generous pool so distance filtering still
+    // leaves candidates on smaller maps.
     const std::vector<Position> hot = SpawnMemory::GetHotBuckets(mapId, 32);
     Position best{};
     float    bestScore = -1.0f;
@@ -705,7 +801,7 @@ bool BaseHuntPlugin::FindParanoiaRelocateDest(CHero* hero, CGameMap* map,
             continue;
         if (!map->IsWalkable(b.x, b.y))
             continue;
-        if (CGameMap::TileDist(threatPos.x, threatPos.y, b.x, b.y) < minDistFromThreat)
+        if (minThreatDist(b) < minDistFromThreat)
             continue;
         if (settings.paranoiaEnabled && HuntContest::IsBucketContested(mapId, b, settings))
             continue;
@@ -730,8 +826,10 @@ bool BaseHuntPlugin::DriveEvadeMovement(CHero* hero, CGameMap* map, const AutoHu
 
     switch (m_evadeState) {
     case EvadeState::Fleeing: {
+        // Head away from every visible player's current + predicted position.
+        const std::vector<Position> preds = GetPlayerThreatPredictions();
         Position dest{};
-        if (FindZoneExplorePosition(hero, map, settings, dest, &m_evadeThreatLastPos)
+        if (FindZoneExplorePosition(hero, map, settings, dest, &preds)
             && StartPathTo(hero, map, dest, 0)) {
             m_targetId = 0;
             SetState(AutoHuntState::AcquireTarget, "Evading: fleeing from player");
@@ -742,11 +840,11 @@ bool BaseHuntPlugin::DriveEvadeMovement(CHero* hero, CGameMap* map, const AutoHu
     case EvadeState::Relocating: {
         if (IsZeroPos(m_evadeRelocateDest)) {
             const int minDist = GetEvadeRelocateMinDist(settings);
-            if (!FindParanoiaRelocateDest(hero, map, settings, m_evadeThreatLastPos, minDist, m_evadeRelocateDest)) {
+            if (!FindParanoiaRelocateDest(hero, map, settings, m_evadeThreatPositions, minDist, m_evadeRelocateDest)) {
                 // No hot bucket qualified (no heatmap yet, tiny zone, etc.) —
-                // fall back to the farthest-from-threat flee tile so the bot
-                // still clears the area instead of stalling.
-                FindZoneExplorePosition(hero, map, settings, m_evadeRelocateDest, &m_evadeThreatLastPos);
+                // fall back to the farthest-from-all-threats flee tile so the
+                // bot still clears the area instead of stalling.
+                FindZoneExplorePosition(hero, map, settings, m_evadeRelocateDest, &m_evadeThreatPositions);
             }
         }
         if (!IsZeroPos(m_evadeRelocateDest) && StartPathTo(hero, map, m_evadeRelocateDest, 0)) {
@@ -2979,7 +3077,7 @@ void BaseHuntPlugin::RenderSafetySection()
                                                         "idle (no player detected)";
         const bool evading = m_evadeState != EvadeState::None;
         ImGui::TextColored(evading ? ImVec4(1, 0.7f, 0.3f, 1) : ImVec4(0.4f, 1, 0.4f, 1),
-            "Evasion: %s", evadeName);
+            "Evasion: %s  (players tracked: %d)", evadeName, (int)m_playerTracks.size());
     }
 
     if (settings.paranoiaEnabled) {

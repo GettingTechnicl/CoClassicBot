@@ -137,13 +137,14 @@ protected:
     // monsters sat just outside its search radius.
     //
     // Lives on the base plugin so every class gets it, not just the archer.
-    // When fleeFrom is non-null, forces the Paranoia-evasion selection
-    // (farthest in-zone/walkable tile from *fleeFrom) regardless of the live
-    // GetParanoiaThreat scan — used by the evade state machine's Fleeing state,
-    // where a player may be visible but already beyond Detection Range.
+    // When fleeFromSet is non-null and non-empty, forces the Paranoia-evasion
+    // selection: keep the in-zone/walkable tile that MAXIMIZES the distance to
+    // the NEAREST point in the set (get away from every player at once, not
+    // just one). Used by the evade state machine's Fleeing state, which passes
+    // all tracked players' current + predicted positions.
     bool FindZoneExplorePosition(CHero* hero, CGameMap* map,
                                  const AutoHuntSettings& settings, Position& out,
-                                 const Position* fleeFrom = nullptr) const;
+                                 const std::vector<Position>* fleeFromSet = nullptr) const;
 
     // ── Paranoia evasion state machine (Session 14 redesign) ─────────────
     // Detected → flee (human pace while any player can see us) → once out of
@@ -158,11 +159,29 @@ protected:
     // over the tick (caller should return from the hunt loop).
     bool DriveEvadeMovement(CHero* hero, CGameMap* map, const AutoHuntSettings& settings);
     // Hottest SpawnMemory bucket that is in-zone, walkable and at least
-    // minDistFromThreat tiles from threatPos. False if none qualifies (caller
-    // falls back to the farthest-flee tile).
+    // minDistFromThreat tiles from EVERY position in threatPositions. False if
+    // none qualifies (caller falls back to the farthest-flee tile).
     bool FindParanoiaRelocateDest(CHero* hero, CGameMap* map, const AutoHuntSettings& settings,
-                                  const Position& threatPos, int minDistFromThreat, Position& out) const;
+                                  const std::vector<Position>& threatPositions,
+                                  int minDistFromThreat, Position& out) const;
     int  GetEvadeRelocateMinDist(const AutoHuntSettings& settings) const;
+
+    // ── Player tracking for evasion (option A) ───────────────────────────
+    // Every non-whitelisted player currently in the entity scan (NO range
+    // limit — detection is binary: seen vs not seen), with enough position
+    // history to derive a movement vector. UpdatePlayerTracks refreshes this
+    // each evade tick; GetPlayerThreatPredictions returns the set of points to
+    // flee away from — each player's current position AND a short lookahead in
+    // their direction of travel, so the bot routes around where a moving player
+    // is HEADING, not just where they are right now.
+    struct PlayerTrack {
+        Position posNow = {};
+        Position posPrev = {};
+        DWORD    lastSeenTick = 0;
+        bool     hasPrev = false;   // a distinct earlier position was recorded
+    };
+    void UpdatePlayerTracks(const AutoHuntSettings& settings);
+    std::vector<Position> GetPlayerThreatPredictions() const;
 
     bool StartPathTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange);
     bool StartWalkTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange);
@@ -305,10 +324,13 @@ protected:
     // Session 14 [Paranoia evasion redesign] runtime state — see UpdateEvadeState.
     EvadeState m_evadeState = EvadeState::None;
     Position   m_evadeHomeSpot = {};        // hunting spot when first detected
-    Position   m_evadeThreatLastPos = {};   // last-seen threat position (flee/relocate away from here)
+    std::vector<Position> m_evadeThreatPositions;  // players' last-known positions, snapshotted at the
+                                                   // Fleeing→Relocating edge (they've left view) — relocate away from all of them
     Position   m_evadeRelocateDest = {};    // chosen relocate destination (computed once out of sight)
     DWORD      m_evadeFleeStartTick = 0;     // when the current Fleeing began
     DWORD      m_evadeFleeDurationMs = 0;    // detected-duration captured at the Fleeing→Relocating edge
     bool       m_evadeReturnHome = false;    // passing (return) vs lingering (stay), decided at that edge
     int        m_evadeRenudgeCount = 0;      // reappearances mid-relocate → push next relocate farther
+
+    std::unordered_map<OBJID, PlayerTrack> m_playerTracks;  // see PlayerTrack / UpdatePlayerTracks
 };
