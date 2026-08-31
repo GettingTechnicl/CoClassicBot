@@ -307,19 +307,21 @@ struct AutoHuntSettings
     // its own speed semantics — kept as-is per user request (2026-08-26),
     // just renamed for clarity since it does more than adjust speed.
     bool usePacketJump = false;
-    // Session 14 [MELEE INSTANT-ATTACK PLAYER SUPPRESSION]: when a
-    // non-whitelisted player is detected within this range, melee treats
-    // Instant Attack as OFF (walk up to mobs, attack when adjacent, no
-    // cyclone-randomize), so a character being watched moves like a normal
-    // player — walking + randomized jump sizes — instead of freezing/
-    // stuttering at crawl speed the way instant-attack combat logic does
-    // once its own speed reverts near a player. Melee's OWN detection,
-    // independent of the Speedhack toggle and Safety/Paranoia's shared
-    // range: 0 (default) = any client-visible player triggers it (max
-    // detection range), matching safetyPlayerRange's own "0 = unlimited"
-    // semantics. Respects playerWhitelist. Only affects melee, and only
-    // when a player is actually nearby — solo hunting is untouched.
-    int meleePlayerDetectRange = 0;
+    // Session 14 [STEALTH TICKBOXES]: independent "act human while any player
+    // can SEE me" toggles on the two aggressive features. Detection is
+    // any-visible-player (no range — AreOtherPlayersNearby, whitelist-aware),
+    // debounced, NOT tied to Paranoia. Both default ON (preserve the
+    // player-nearby reversion the bot already did, extended from the old
+    // 15-tile range to the full visible range — a player anywhere in the
+    // entity scan can see the bot).
+    //   - disableSpeedhackOnPlayer: while any player is visible, speedhack
+    //     reverts to slider speeds (ShouldUseAggressiveSpeeds).
+    //   - disableInstantAttackOnPlayer: while any player is visible, melee
+    //     treats Instant Attack as OFF (walk up + attack adjacent, no
+    //     cyclone-randomize). Replaces the old meleePlayerDetectRange int
+    //     slider — same behavior as that slider at 0, now a plain on/off.
+    bool disableSpeedhackOnPlayer = true;
+    bool disableInstantAttackOnPlayer = true;
     bool safetyEnabled = false;
     bool safetyNotifyDiscord = false;
     int safetyPlayerRange = 15;

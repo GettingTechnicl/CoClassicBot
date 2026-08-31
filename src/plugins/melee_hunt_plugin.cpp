@@ -382,20 +382,15 @@ bool MeleeHuntPlugin::IsInstantAttackActive(const AutoHuntSettings& settings) co
     if (!settings.usePacketJump)
         return false;  // Instant Attack off entirely — nothing to suppress.
 
-    // Melee's OWN player detection (independent of the Speedhack toggle),
-    // using meleePlayerDetectRange (0 = any client-visible player). Debounced
-    // with a 1.5s hold so a player flickering in/out of the per-region entity
-    // scan doesn't rapidly toggle the combat style — same value/reasoning as
-    // IsPlayerNearbyDebounced (hunt_intervals.h).
-    constexpr DWORD kInstantAttackPlayerHoldMs = 1500;
-    const DWORD now = GetTickCount();
-    if (IsAnyPlayerWithinRange(settings, settings.meleePlayerDetectRange))
-        m_instantAttackPlayerSeenTick = now;
-    const bool playerNearby = m_instantAttackPlayerSeenTick != 0
-        && (now - m_instantAttackPlayerSeenTick) < kInstantAttackPlayerHoldMs;
+    // Stealth: when the tickbox is on and ANY player can see us (no range —
+    // shared IsAnyPlayerVisibleDebounced, whitelist-aware, 1.5s hold), suppress
+    // Instant Attack so melee reverts to walk-up-and-attack with randomized
+    // jumps (looks like a normal player) instead of the fast jump-combat. When
+    // the tickbox is off, Instant Attack stays on regardless of who's watching.
+    if (settings.disableInstantAttackOnPlayer && IsAnyPlayerVisibleDebounced(settings))
+        return false;
 
-    // Instant Attack is active only when NO player is (debounced) nearby.
-    return !playerNearby;
+    return true;
 }
 
 
@@ -578,8 +573,8 @@ void MeleeHuntPlugin::RenderCombatUI(AutoHuntSettings& settings)
     ImGui::TextDisabled("Attacks fire immediately instead of waiting to be adjacent, and approach uses jump-only movement (no walk animation).");
     if (settings.usePacketJump) {
         ImGui::Indent();
-        ImGui::SliderInt("Disable when player within (tiles)", &settings.meleePlayerDetectRange, 0, CGameMap::MAX_JUMP_DIST);
-        ImGui::TextDisabled("While a non-whitelisted player is this close, Instant Attack turns off automatically so the character walks up and attacks with randomized jumps (looks like a normal player) instead of the fast jump-combat. 0 = any player the client can see. Only affects behavior while a player is nearby; solo hunting is unchanged.");
+        ImGui::Checkbox("Disable Instant Attack when a player is detected", &settings.disableInstantAttackOnPlayer);
+        ImGui::TextDisabled("While ANY non-whitelisted player is visible (no range), Instant Attack turns off automatically so the character walks up and attacks with randomized jumps (looks like a normal player) instead of the fast jump-combat. Solo hunting is unchanged.");
         ImGui::Unindent();
     }
     ImGui::SliderInt("Stay Within Zone Radius", &settings.actionRadius, 1, CGameMap::MAX_JUMP_DIST);

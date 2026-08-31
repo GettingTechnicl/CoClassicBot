@@ -527,7 +527,8 @@ static std::string BuildCurrentConfigSnapshot()
     AppendBoolSnapshot(snapshot, "paranoiaEnabled", autoHunt.paranoiaEnabled);
     AppendBoolSnapshot(snapshot, "safetyNotifyDiscord", autoHunt.safetyNotifyDiscord);
     AppendIntSnapshot(snapshot, "safetyPlayerRange", autoHunt.safetyPlayerRange);
-    AppendIntSnapshot(snapshot, "meleePlayerDetectRange", autoHunt.meleePlayerDetectRange);
+    AppendBoolSnapshot(snapshot, "disableSpeedhackOnPlayer", autoHunt.disableSpeedhackOnPlayer);
+    AppendBoolSnapshot(snapshot, "disableInstantAttackOnPlayer", autoHunt.disableInstantAttackOnPlayer);
     AppendIntSnapshot(snapshot, "safetyDetectionSec", autoHunt.safetyDetectionSec);
     AppendIntSnapshot(snapshot, "safetyRestSec", autoHunt.safetyRestSec);
     AppendStringSnapshot(snapshot, "zonePolygon", SerializePositions(autoHunt.zonePolygon).c_str());
@@ -739,7 +740,8 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "paranoiaEnabled", autoHunt.paranoiaEnabled ? 1 : 0);
     WriteInt(file, section, "safetyNotifyDiscord", autoHunt.safetyNotifyDiscord ? 1 : 0);
     WriteInt(file, section, "safetyPlayerRange", autoHunt.safetyPlayerRange);
-    WriteInt(file, section, "meleePlayerDetectRange", autoHunt.meleePlayerDetectRange);
+    WriteInt(file, section, "disableSpeedhackOnPlayer", autoHunt.disableSpeedhackOnPlayer ? 1 : 0);
+    WriteInt(file, section, "disableInstantAttackOnPlayer", autoHunt.disableInstantAttackOnPlayer ? 1 : 0);
     WriteInt(file, section, "safetyDetectionSec", autoHunt.safetyDetectionSec);
     WriteInt(file, section, "safetyRestSec", autoHunt.safetyRestSec);
     const std::string polygon = SerializePositions(autoHunt.zonePolygon);
@@ -1031,9 +1033,8 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     autoHunt.paranoiaEnabled = ReadInt(file, section, "paranoiaEnabled", 0) != 0;
     autoHunt.safetyNotifyDiscord = ReadInt(file, section, "safetyNotifyDiscord", 0) != 0;
     autoHunt.safetyPlayerRange = ReadInt(file, section, "safetyPlayerRange", 15);
-    autoHunt.meleePlayerDetectRange = ReadInt(file, section, "meleePlayerDetectRange", 0);
-    if (autoHunt.meleePlayerDetectRange < 0)
-        autoHunt.meleePlayerDetectRange = 0;
+    autoHunt.disableSpeedhackOnPlayer = ReadInt(file, section, "disableSpeedhackOnPlayer", 1) != 0;
+    autoHunt.disableInstantAttackOnPlayer = ReadInt(file, section, "disableInstantAttackOnPlayer", 1) != 0;
     autoHunt.safetyDetectionSec = ReadInt(file, section, "safetyDetectionSec", 30);
     autoHunt.safetyRestSec = ReadInt(file, section, "safetyRestSec", 120);
     char polygonBuf[2048] = {};

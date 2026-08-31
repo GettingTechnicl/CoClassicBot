@@ -2876,13 +2876,13 @@ void BaseHuntPlugin::RenderDebugSection()
     // working signature — not a bug.
     {
         const bool toggleOn = GetTravelSettings().usePacketJump;
-        const bool rawPlayerNearby = IsAnyPlayerNearby(settings);
+        const bool playerVisible = IsAnyPlayerVisibleDebounced(settings);
         const bool aggressive = ShouldUseAggressiveSpeeds(settings);
         const DWORD effInterval = GetMovementIntervalMs(settings);
         ImGui::TextColored(aggressive ? ImVec4(1, 0.7f, 0.3f, 1) : ImVec4(0.4f, 1, 0.4f, 1),
-            "Speedhack: toggle=%s rawPlayerNearby=%s -> aggressive=%s  interval=%ums",
-            toggleOn ? "on" : "off", rawPlayerNearby ? "yes" : "no",
-            aggressive ? "yes" : "no", effInterval);
+            "Speedhack: toggle=%s disableOnPlayer=%s playerVisible=%s -> aggressive=%s  interval=%ums",
+            toggleOn ? "on" : "off", settings.disableSpeedhackOnPlayer ? "yes" : "no",
+            playerVisible ? "yes" : "no", aggressive ? "yes" : "no", effInterval);
 
         // Session 13 [JUMP VARIANCE]: companion readout for the jump-distance
         // cap — re-rolled every call, so watching this line while a player is

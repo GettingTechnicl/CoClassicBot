@@ -53,9 +53,10 @@ inline DWORD ClampMs(int value, int minValue, int maxValue)
 // whether or not the safety-rest feature is separately turned on.
 // range: 0 = unlimited (any client-visible non-whitelisted player), matching
 // safetyPlayerRange's own semantics. Session 14: factored out of
-// IsAnyPlayerNearby so melee's Instant-Attack suppression can reuse the exact
-// same scan/whitelist logic with its OWN range (meleePlayerDetectRange)
-// rather than the shared safetyPlayerRange.
+// IsAnyPlayerNearby so the no-range "any player can see me" stealth signal
+// (IsAnyPlayerVisibleDebounced, used by both the speedhack-revert and melee's
+// Instant-Attack suppression) can reuse the exact same scan/whitelist logic
+// with range 0 rather than the shared 15-tile safetyPlayerRange.
 inline bool IsAnyPlayerWithinRange(const AutoHuntSettings& settings, int range)
 {
     CHero* hero = Game::GetHero();
@@ -195,17 +196,42 @@ inline bool IsPlayerNearbyDebounced(const AutoHuntSettings& settings)
         && (now - s_lastPlayerSeenTick) < kPlayerNearbyHoldMs;
 }
 
+// Session 14 [STEALTH TICKBOX — no-range]: "any player can currently SEE the
+// bot" signal, independent of the 15-tile safetyPlayerRange. The entity scan
+// is already server-visibility-bounded, so range 0 (= any visible,
+// non-whitelisted player) IS "in sight." Debounced with the same 1.5s hold as
+// IsPlayerNearbyDebounced to absorb the heap-scan flicker documented above.
+// NOT gated on any enable toggle — each caller applies its own tickbox gate
+// (disableSpeedhackOnPlayer / disableInstantAttackOnPlayer). Shared by the
+// speed-revert here and melee's Instant-Attack suppression so both react to
+// the exact same debounced sighting. Fixes G1: the bot used to keep
+// speed-hacking once a player was merely >15 tiles away but still watching.
+inline bool IsAnyPlayerVisibleDebounced(const AutoHuntSettings& settings)
+{
+    const DWORD now = GetTickCount();
+    static DWORD s_lastPlayerSeenTick = 0;
+    if (IsAnyPlayerWithinRange(settings, 0))
+        s_lastPlayerSeenTick = now;
+
+    constexpr DWORD kPlayerVisibleHoldMs = 1500;
+    return s_lastPlayerSeenTick != 0 && (now - s_lastPlayerSeenTick) < kPlayerVisibleHoldMs;
+}
+
 inline bool ShouldUseAggressiveSpeeds(const AutoHuntSettings& settings)
 {
     const bool toggleOn = GetTravelSettings().usePacketJump;
-    const bool playerNearby = IsPlayerNearbyDebounced(settings);
-    const bool result = toggleOn && !playerNearby;
+    // Stealth: while the tickbox is on and ANY player can see us (no range),
+    // revert to human/slider speeds. When the tickbox is off, speedhack keeps
+    // running regardless of who's watching (user's explicit choice).
+    const bool playerVisible = settings.disableSpeedhackOnPlayer && IsAnyPlayerVisibleDebounced(settings);
+    const bool result = toggleOn && !playerVisible;
 
     static DWORD s_lastLogTick = 0;
     const DWORD now = GetTickCount();
     if (now - s_lastLogTick >= 2000) {
         s_lastLogTick = now;
-        spdlog::trace("[speedhack] toggleOn={} playerNearby={} -> aggressive={}", toggleOn, playerNearby, result);
+        spdlog::trace("[speedhack] toggleOn={} disableOnPlayer={} playerVisible={} -> aggressive={}",
+            toggleOn, settings.disableSpeedhackOnPlayer, playerVisible, result);
     }
 
     return result;

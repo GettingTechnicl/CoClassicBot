@@ -65,17 +65,15 @@ private:
     // monsters does; jitter stays for the approach/reposition side only.
     DWORD ComputeMeleeAttackDelayMs(CHero* hero, CRole* target, const AutoHuntSettings& settings) const;
 
-    // Session 14 [MELEE INSTANT-ATTACK PLAYER SUPPRESSION]: the effective
-    // Instant Attack state for combat decisions — settings.usePacketJump,
-    // but forced OFF while a non-whitelisted player is detected within
-    // settings.meleePlayerDetectRange (0 = any visible player). Debounced
-    // (see m_instantAttackPlayerSeenTick) so the combat style doesn't
-    // flicker on/off as a player drops in and out of the entity scan — same
-    // anti-flicker reasoning as IsPlayerNearbyDebounced. Used everywhere the
-    // combat logic reads usePacketJump (approach walk-vs-jump, adjacent-
-    // attack gate, cyclone target-randomize); the UI checkbox itself still
-    // reads/writes the raw setting. Returns true = behave as Instant Attack
-    // on; false = behave as off (walk up, attack adjacent).
+    // Session 14 [STEALTH TICKBOX]: the effective Instant Attack state for
+    // combat decisions — settings.usePacketJump, but forced OFF while
+    // settings.disableInstantAttackOnPlayer is set AND any non-whitelisted
+    // player is visible (no range). Detection/debounce live in the shared
+    // IsAnyPlayerVisibleDebounced (hunt_intervals.h), so melee and speedhack
+    // react to the exact same 1.5s-held sighting. Used everywhere the combat
+    // logic reads usePacketJump (approach walk-vs-jump, adjacent-attack gate,
+    // cyclone target-randomize); the UI checkbox itself still reads/writes the
+    // raw setting. Returns true = behave as Instant Attack on; false = behave
+    // as off (walk up, attack adjacent).
     bool IsInstantAttackActive(const AutoHuntSettings& settings) const;
-    mutable DWORD m_instantAttackPlayerSeenTick = 0;
 };
