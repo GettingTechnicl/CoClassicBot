@@ -1536,6 +1536,34 @@ static void RenderMinimapSection(CHero* hero, CGameMap* map,
                             }
                         }
 
+                        // Phase 2b: draw the Map-Wide dynamic zone's active cells
+                        // (cyan) so the growing/shrinking shape is visible live —
+                        // one diamond per SpawnMemory bucket currently in the zone,
+                        // same per-tile projection the map grid itself uses (see
+                        // AddQuadFilled above), just scaled up to bucket size.
+                        {
+                            BaseHuntPlugin* dh = nullptr;
+                            if (auto* m = PluginManager::Get().GetPlugin<MeleeHuntPlugin>(); m && m->m_enabled)
+                                dh = m;
+                            else if (auto* a = PluginManager::Get().GetPlugin<ArcherHuntPlugin>(); a && a->m_enabled)
+                                dh = a;
+                            if (dh && dh->IsDynZoneInit() && dh->GetDynZoneMapId() == Game::GetCurrentMapId()) {
+                                const float cs = fs * (float)dh->GetDynZoneCellTiles();
+                                for (const Position& c : dh->GetDynZoneCellCenters()) {
+                                    const float ddx = (float)c.x - camTileX, ddy = (float)c.y - camTileY;
+                                    const float cx = centerX + (ddx - ddy) * fs, cy = centerY + (ddx + ddy) * fs;
+                                    dl->AddQuadFilled(
+                                        ImVec2(cx, cy - cs), ImVec2(cx + cs, cy),
+                                        ImVec2(cx, cy + cs), ImVec2(cx - cs, cy),
+                                        IM_COL32(0, 230, 230, 70));
+                                    dl->AddQuad(
+                                        ImVec2(cx, cy - cs), ImVec2(cx + cs, cy),
+                                        ImVec2(cx, cy + cs), ImVec2(cx - cs, cy),
+                                        IM_COL32(0, 230, 230, 180), 1.5f);
+                                }
+                            }
+                        }
+
                         {
                             AutoHuntSettings& autoHunt = GetAutoHuntSettings();
                             if (autoHunt.zoneMapId == Game::GetCurrentMapId()) {

@@ -123,28 +123,69 @@ namespace
             ++len;
         if (len < 3)
             return false;
-        // Session 14 [APPEARANCE-OBJECT FALSE POSITIVE]: this used to accept
-        // any printable ASCII (0x20-0x7E), which let non-character game
-        // objects whose descriptor string happened to sit at +0x94 pass as
-        // real entities. Live-caught: equipped-weapon "appearance" objects
-        // showing up named "~appearance~of~a~blade." — and one of them, with
-        // an id >= 1,000,000, was classified a Player (IsPlayer() is a pure
-        // id-range test) and tripped every player-detection consumer (Safety,
-        // Paranoia, and melee's Instant-Attack suppression) as if a real
-        // player were nearby. Real Conquer character/NPC/monster names are
-        // letters, digits, and — for multi-word NPCs like "Artisan Wind" —
-        // spaces. The '~' and '.' in those descriptor strings never appear in
-        // a real name, so restricting to that alphabet filters the garbage at
-        // the source without rejecting any genuine entity (players are
-        // alphanumeric; NPC/monster names are letters/spaces).
+        // Session 14/15 [APPEARANCE-OBJECT FALSE POSITIVE, revised 3x]: rejects
+        // non-character objects whose descriptor string sits at +0x94 (the
+        // "~appearance~of~a~blade." weapon objects that got mis-classified as
+        // players). Iterations 1-2 (alphanumeric-only, then printable-except-~)
+        // BOTH dropped real players — this server allows '~'/'$' AND accented,
+        // non-ASCII names (live-caught: "ĐoúßLeWhammY", plus ~SandMan~/~ZEUS~/
+        // ~$oulweaver). So the alphabet can't be restricted to ASCII at all.
+        //   The real discriminators, tuned from live rejects:
+        //   (a) C0/DEL CONTROL bytes never appear in a name but almost always do
+        //       in garbage/stale memory (pointer bytes, nulls) — reject them,
+        //       while ALLOWING high bytes >=0x80 so accented names pass.
+        //   (b) a real name always has at least one ASCII letter; letterless
+        //       high-byte runs are garbage — require >=1 A-Za-z.
+        //   (c) the weapon descriptors contain the literal "appearance" — reject.
+        int asciiLetters = 0;
         for (int i = 0; i < len; ++i) {
             const unsigned char c = (unsigned char)name[i];
-            const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-                         || (c >= '0' && c <= '9') || c == ' ';
-            if (!ok)
+            if (c < 0x20 || c == 0x7F)        // C0 / DEL control byte -> garbage
                 return false;
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+                ++asciiLetters;
+        }
+        if (asciiLetters < 1)
+            return false;
+        // Case-insensitive search for "appearance" within the (short) name.
+        {
+            static const char kAppear[] = "appearance";
+            const int alen = 10;
+            for (int i = 0; i + alen <= len; ++i) {
+                int j = 0;
+                for (; j < alen; ++j) {
+                    char c = name[i + j];
+                    if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+                    if (c != kAppear[j])
+                        break;
+                }
+                if (j == alen)
+                    return false;
+            }
         }
         return true;
+    }
+
+    // DEBUG: a role-like object in the PLAYER id range that the name filter
+    // rejected — logs its raw name (printable + hex) so a silently-dropped real
+    // player can be identified vs. an expected "~appearance~" junk object.
+    // Throttled so it can't flood the log.
+    void DebugLogPlayerNameReject(uintptr_t p, uint32_t id)
+    {
+        static DWORD s_lastLog = 0;
+        const DWORD now = GetTickCount();
+        if (now - s_lastLog < 1000)
+            return;
+        s_lastLog = now;
+        char printable[16] = {};
+        char hex[64] = {};
+        for (int i = 0; i < 15; ++i) {
+            char c = 0;
+            TryRead(p + 0x94 + i, &c);
+            printable[i] = (c >= 0x20 && (unsigned char)c < 0x7F) ? c : '.';
+            snprintf(hex + i * 3, (size_t)(64 - i * 3), "%02X ", (unsigned char)c);
+        }
+        spdlog::info("[entities] PLAYER-RANGE name REJECTED id={} name='{}' bytes=[{}]", id, printable, hex);
     }
 
     void Rescan()
@@ -182,8 +223,11 @@ namespace
                     uint32_t id = 0;
                     if (!LooksLikeRole(a, &id, &funnel))
                         continue;
-                    if (!HasRealName(a))
+                    if (!HasRealName(a)) {
+                        if (id >= 1000000)
+                            DebugLogPlayerNameReject(a, id);
                         continue;
+                    }
                     ++npassName;
 
                     bool dup = false;

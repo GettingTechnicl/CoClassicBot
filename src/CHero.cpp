@@ -1188,6 +1188,15 @@ int CHero::GetCurrentHp() const
     return m_pStatTable ? m_pStatTable->GetValue(1) : 0;
 }
 
+int CHero::GetGameKillCount() const
+{
+    __try {
+        return *reinterpret_cast<const int*>(reinterpret_cast<uintptr_t>(this) + 0xA30);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
 int CHero::GetMaxHp() const
 {
     if (m_nMaxHp > 0)

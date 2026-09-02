@@ -183,6 +183,12 @@ public:
     int GetMaxHp() const;
     int GetCurrentMana() const;
     int GetMaxMana() const;
+    // Session 15 [KILL-SIGNAL RE]: the game's OWN client-side kill counter — a
+    // direct int field at +0xA30 (found via the stat-byte dump: reads 0 at
+    // login, ticks up 1 per kill, exactly matched the in-game count across 13
+    // samples). Reliable, unlike the entity-disappear heuristic in hunt_stats.
+    // SEH-guarded; 0 on a bad read.
+    int GetGameKillCount() const;
     void RefreshSilverCache(bool trusted = false) const;
     void SetTrustedSilver(uint32_t value) const;
     bool HasTrustedSilverCache() const;

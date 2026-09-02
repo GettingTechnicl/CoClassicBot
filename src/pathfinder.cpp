@@ -15,13 +15,23 @@ constexpr DWORD kPathStaleMovementCommandMs = 1800;
 constexpr DWORD kMinPathMovementIntervalMs = 100;
 constexpr DWORD kMaxPathMovementIntervalMs = 5000;
 
+// CHero::Walk issues a real animated walk with CCommand.iType == 15 (verified
+// live — NOT the enum table's _COMMAND_WALK==3; see CHero::Walk's comment). If
+// this isn't recognized as a movement-in-progress, IsMovementCommandStillAdvancing
+// returns false during a walk and the pathfinder re-issues Walk every movement
+// interval, restarting the animation — the choppy short-step / stuck-at-NPC jank
+// seen in walk-only areas (the Market). A genuinely stalled walk still recovers
+// via the staleMovementCommand path in Update().
+constexpr int kAnimatedWalkCmdType = 15;
+
 bool IsMovementCommand(const CCommand& cmd)
 {
     return cmd.iType == _COMMAND_WALK
         || cmd.iType == _COMMAND_RUN
         || cmd.iType == _COMMAND_WALKFORWARD
         || cmd.iType == _COMMAND_RUNFORWARD
-        || cmd.iType == _COMMAND_JUMP;
+        || cmd.iType == _COMMAND_JUMP
+        || cmd.iType == kAnimatedWalkCmdType;
 }
 
 bool IsMovementCommandStillAdvancing(const CHero* hero)
@@ -413,6 +423,12 @@ void Pathfinder::Update()
     }
     const int dist = CGameMap::TileDist(hx, hy, wp.x, wp.y);
     const bool canIssueMovementNow = CanIssueMovementCommand(now);
+    // Whether a move (jump or animated walk) toward the target is still in
+    // flight. When it is, we must NOT re-issue — an animated walk restarts from
+    // scratch each time it's re-commanded, which is exactly the stutter seen in
+    // walk-only areas. A genuinely stalled command is still caught below by the
+    // stalledFor / staleMovementCommand logic.
+    const bool movementStillAdvancing = hero->IsJumping() || IsMovementCommandStillAdvancing(hero);
 
     if (dist == 0) {
         ++m_index;
@@ -434,6 +450,11 @@ void Pathfinder::Update()
     }
 
     if (dist == 1) {
+        // One tile out: if a walk/jump toward this waypoint is still animating,
+        // let it finish instead of re-commanding it (prevents the final-approach
+        // stutter right next to a gateway NPC).
+        if (movementStillAdvancing)
+            return;
         if (m_index + 1 >= m_waypoints.size()) {
             spdlog::debug("[path] Near final waypoint at ({},{}) -> ({},{}), issuing final adjustment",
                 hx, hy, wp.x, wp.y);
@@ -472,7 +493,6 @@ void Pathfinder::Update()
 
     const DWORD stalledFor = now - m_lastProgressTick;
     const DWORD commandAge = m_lastJumpTick != 0 ? now - m_lastJumpTick : 0;
-    const bool movementStillAdvancing = hero->IsJumping() || IsMovementCommandStillAdvancing(hero);
     if (!movementStillAdvancing && canIssueMovementNow && IssueMovementToWaypoint(hero, map, wp))
         return;
 

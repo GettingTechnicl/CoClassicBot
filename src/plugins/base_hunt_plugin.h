@@ -7,6 +7,7 @@
 #include "revive_utils.h"
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 
 class CHero;
 class CRole;
@@ -44,6 +45,15 @@ public:
     Position GetLastTargetPos() const { return m_lastTargetPos; }
     Position GetDebugBestClumpCenter() const { return m_debugBestClumpCenter; }
     int GetDebugBestClumpSize() const { return m_debugBestClumpSize; }
+    // Phase 2b: dynamic-zone cell-set state, exposed so the map overlay can
+    // draw it and so hunt_settings.cpp's zone-membership functions (which
+    // only see AutoHuntSettings, not a plugin instance) can bound Map-Wide
+    // to it — see IsInDynamicZone/IsNearDynamicZone in hunt_settings.cpp.
+    bool     IsDynZoneInit()      const { return m_dynInit; }
+    OBJID    GetDynZoneMapId()    const { return m_dynMapId; }
+    int      GetDynZoneCellTiles() const { return m_dynCellTiles; }
+    std::vector<Position> GetDynZoneCellCenters() const;
+    bool InDynamicZone(const Position& p) const;         // p inside any active cell
     int GetEditDragVertex() const { return m_editDragVertex; }
     void SetEditDragVertex(int idx) { m_editDragVertex = idx; }
 
@@ -147,10 +157,13 @@ protected:
                                  const std::vector<Position>* fleeFromSet = nullptr) const;
 
     // ── Paranoia evasion state machine (Session 14 redesign) ─────────────
-    // Detected → flee (human pace while any player can see us) → once out of
-    // sight, speed-hack to a different (heatmap-hot) area → if the player was
-    // only passing, return to the original spot; if they lingered, stay.
-    enum class EvadeState { None, Fleeing, Relocating, ReturningHome };
+    // Phase 1 "gentle flee": on detection, hop paranoiaFleeDistance tiles away
+    // (out of the ~30-tile view) at human pace, then RESUME hunting where we
+    // landed — no sprint across the map, no compulsive return. Only when the
+    // same spot keeps drawing players (paranoiaAbandonAfter re-encounters, or a
+    // player lingers in view too long) does it RELOCATE for good to a new
+    // heatmap-hot area.
+    enum class EvadeState { None, Fleeing, Relocating };
     // Pure state transition (visibility/detection/arrival driven). Called early
     // in the hunt loop so the loot-drop and leash-widen decisions see the
     // current evade state this same tick. Returns true while evading.
@@ -158,6 +171,12 @@ protected:
     // Issues the movement for the current evade state. Returns true if it took
     // over the tick (caller should return from the hunt loop).
     bool DriveEvadeMovement(CHero* hero, CGameMap* map, const AutoHuntSettings& settings);
+    // A bounded flee target ~fleeDistance tiles from the nearest threat, in the
+    // away direction, walkable and reachable (backs off / spreads angularly if
+    // the ideal point is blocked). False if nothing suitable found.
+    bool FindGentleFleeTarget(CHero* hero, CGameMap* map, const AutoHuntSettings& settings,
+                              const std::vector<Position>& threatPositions, int fleeDistance,
+                              Position& out) const;
     // Hottest SpawnMemory bucket that is in-zone, walkable and at least
     // minDistFromThreat tiles from EVERY position in threatPositions. False if
     // none qualifies (caller falls back to the farthest-flee tile).
@@ -182,6 +201,31 @@ protected:
     };
     void UpdatePlayerTracks(const AutoHuntSettings& settings);
     std::vector<Position> GetPlayerThreatPredictions() const;
+
+    // ── Phase 2b: Dynamic Zone Engine (the core logic for Map-Wide) ──────
+    // Map-Wide no longer means "wander the whole map." It maintains a set of
+    // active cells (m_dynCells, aligned to SpawnMemory's 8-tile bucket grid)
+    // that exploration and clump-steering are focused inside: seeded as one
+    // cell at the hero's position, then GROWN toward adjacent cells that keep
+    // showing LIVE monsters (not heatmap history) and SHRUNK off cells that
+    // sit empty — the shape continuously follows where mobs actually are,
+    // instead of a fixed-radius circle that only ever moved on a timer. The
+    // heatmap is still used, but only as the target list for a full
+    // relocate (FindDynamicRecenterTarget) when the whole zone goes
+    // unproductive — see UpdateDynamicZone for the size/kill-rate signal.
+    // Targeting stays "engage whatever's near" (mobSearchRange) — the zone
+    // only steers where the bot GOES.
+    void UpdateDynamicZone(CHero* hero, const AutoHuntSettings& settings);
+    bool IsDynamicZoneActive(const AutoHuntSettings& settings) const;
+    int  CountMonstersInDynamicZone(const AutoHuntSettings& settings) const;
+    bool FindDynamicRecenterTarget(const AutoHuntSettings& settings, OBJID mapId,
+                                   const Position& from, Position& out) const;
+    // Phase 3: wipes the current cell set and seeds a single fresh cell at
+    // `pos` — the same reseed UpdateDynamicZone's own idle-relocate does,
+    // exposed so Paranoia's evade relocate can move the zone itself instead
+    // of leaving it anchored to the spot being fled. No-op when Map-Wide
+    // isn't the active zone mode.
+    void ReseedDynamicZoneAt(const Position& pos, const AutoHuntSettings& settings);
 
     bool StartPathTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange);
     bool StartWalkTo(CHero* hero, CGameMap* map, const Position& destination, int stopRange);
@@ -306,6 +350,13 @@ protected:
     // whatever the underlying map-data problem turns out to be.
     int m_zoneTravelFailCount = 0;
 
+    // Session 15 [ZONE-UNREACHABLE FALLBACK]: when we're already ON the zone map
+    // but the hunt-zone anchor is genuinely unreachable (e.g. a portal landed us
+    // across an impassable center — the Ape City 2 / map-1075 self-disable), we
+    // hunt from the current position instead of disabling, and back off retrying
+    // the anchor until this tick so it doesn't thrash travel-to-zone every frame.
+    DWORD m_zoneUnreachableUntilTick = 0;
+
     ReviveState m_reviveState;
     HuntBuffManager m_buffMgr;
     HuntLootManager m_lootMgr;
@@ -321,16 +372,28 @@ protected:
     bool m_safetyResting = false;
     DWORD m_safetyRestStartTick = 0;
 
-    // Session 14 [Paranoia evasion redesign] runtime state — see UpdateEvadeState.
+    // Session 14 [Paranoia evasion — Phase 1] runtime state — see UpdateEvadeState.
     EvadeState m_evadeState = EvadeState::None;
-    Position   m_evadeHomeSpot = {};        // hunting spot when first detected
-    std::vector<Position> m_evadeThreatPositions;  // players' last-known positions, snapshotted at the
-                                                   // Fleeing→Relocating edge (they've left view) — relocate away from all of them
-    Position   m_evadeRelocateDest = {};    // chosen relocate destination (computed once out of sight)
-    DWORD      m_evadeFleeStartTick = 0;     // when the current Fleeing began
-    DWORD      m_evadeFleeDurationMs = 0;    // detected-duration captured at the Fleeing→Relocating edge
-    bool       m_evadeReturnHome = false;    // passing (return) vs lingering (stay), decided at that edge
+    Position   m_evadeFleeTarget = {};      // current gentle-flee destination (~fleeDistance away)
+    std::vector<Position> m_evadeThreatPositions;  // players' last-known positions, snapshotted when a
+                                                   // relocate is triggered — relocate away from all of them
+    Position   m_evadeRelocateDest = {};    // chosen relocate destination (computed on entering Relocating)
+    DWORD      m_evadeFleeStartTick = 0;     // when the current Fleeing began (for the linger-escalation timer)
     int        m_evadeRenudgeCount = 0;      // reappearances mid-relocate → push next relocate farther
+    int        m_evadeEncounterCount = 0;    // re-encounters at the current spot; >= paranoiaAbandonAfter → relocate
+    DWORD      m_evadeLastEncounterTick = 0; // for decaying the encounter count after undisturbed hunting
 
     std::unordered_map<OBJID, PlayerTrack> m_playerTracks;  // see PlayerTrack / UpdatePlayerTracks
+
+    // Phase 2b dynamic-zone runtime state (Map-Wide only) — see UpdateDynamicZone.
+    bool     m_dynInit = false;
+    OBJID    m_dynMapId = 0;
+    int      m_dynCellTiles = 8;        // cell size in effect for the CURRENT m_dynCells (see settings.dynZoneCellTiles)
+    std::unordered_set<uint32_t> m_dynCells;               // active zone membership (SpawnMemory bucket keys)
+    std::unordered_map<uint32_t, int> m_dynCellHotStreak;  // frontier candidates: consecutive live-mob ticks (grow)
+    std::unordered_map<uint32_t, int> m_dynCellColdStreak; // member cells: consecutive empty ticks (shrink)
+    DWORD    m_dynProductiveTick = 0;   // last time we were productive (a real kill) — drives full relocate
+    int      m_dynLastKills = 0;        // CHero::GetGameKillCount() snapshot (accurate, +0xA30)
+    DWORD    m_dynLastSizeTick = 0;     // throttle for the grow/shrink + productivity step
+    DWORD    m_dynLastRecenterTick = 0; // throttle between full relocates
 };

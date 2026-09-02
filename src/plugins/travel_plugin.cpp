@@ -24,7 +24,14 @@ constexpr int kGatewayApproachArrivalDist = 2;
 
 bool CanUseVipTeleportNow(const CHero* hero)
 {
-    return hero && hero->IsVip() && !IsVipTeleportOnCooldown(kVipTeleportCooldownMs);
+    // Disabled per user (2026-08-31): travel should use ONLY walk-in portals
+    // and talk-to NPC gateways — no VIP teleporting — because it was being
+    // preferred over the intended portal routes (e.g. Ape City 2 -> Desert City
+    // instead of via the Ape Mountain portal). To re-enable later, restore the
+    // real check below.
+    (void)hero;
+    return false;
+    // return hero && hero->IsVip() && !IsVipTeleportOnCooldown(kVipTeleportCooldownMs);
 }
 
 bool FindOpenTileNear(CGameMap* map, const Position& center, Position& outPos)
@@ -269,8 +276,12 @@ bool TravelPlugin::TryProcessGatewayNpc(CHero* hero, const Gateway& gw)
 static std::vector<Gateway> BuildGatewayPathForHero(const CHero* hero, OBJID from, OBJID to, Position heroPos,
     uint32_t availableSilver, bool allowVipTeleport, Position finalPos)
 {
-    return FindGatewayPath(from, to, heroPos, availableSilver, allowVipTeleport, finalPos,
-        CollectAvailableItemGatewayTypes(hero));
+    // Item-scroll gateways (Desert City Gate, etc.) disabled per user
+    // (2026-08-31): travel should use ONLY portals and NPCs — no consumable
+    // teleport items. Pass no item types so the router never routes through
+    // one. To re-enable, restore CollectAvailableItemGatewayTypes(hero).
+    (void)hero;
+    return FindGatewayPath(from, to, heroPos, availableSilver, allowVipTeleport, finalPos, {});
 }
 
 void TravelPlugin::StartTravel(OBJID destMapId, Position destPos)

@@ -33,6 +33,7 @@ std::mutex g_mtx;  // guards everything below
 
 DWORD     g_sessionStartTick   = 0;
 uint64_t  g_kills              = 0;
+int       g_gameKillBaseline   = -1;   // CHero::GetGameKillCount() at session start (Session 15)
 int       g_deaths             = 0;
 int64_t   g_goldDelta          = 0;
 
@@ -93,6 +94,7 @@ void ClearSessionCounters()
 {
     g_sessionStartTick = GetTickCount();
     g_kills            = 0;
+    g_gameKillBaseline = -1;   // re-baseline the game kill counter for the new session
     g_deaths           = 0;
     g_goldDelta        = 0;
     g_drops.clear();
@@ -349,23 +351,21 @@ void Update()
     }
     g_lastInventory = std::move(currentInv);
 
-    // ── Kill detection (entity-disappear in zone) ────────────────────────
-    std::unordered_set<OBJID> currentMonsters;
-    CollectMonstersInZone(mgr, mapId, settings, currentMonsters);
-
-    // IDs that were previously seen but are gone now = vanished
-    if (!g_seenMonsters.empty()) {
-        for (OBJID prevId : g_seenMonsters) {
-            if (currentMonsters.find(prevId) != currentMonsters.end())
-                continue;
-            // Vanished
-            if (accumulating) {
-                ++g_kills;
-                NotifyKillMilestone(g_kills);
-            }
-        }
+    // ── Kill count (game's OWN accurate counter, CHero+0xA30) ────────────
+    // Session 15: replaces the old entity-disappear heuristic, which massively
+    // over-counted on entity-scan flicker (read ~1000 vs ~155 real). Read the
+    // game's client-side kill counter directly and report it session-relative
+    // (baselined at the first sample after a stats reset), firing milestones on
+    // real increases.
+    const int gameKills = hero->GetGameKillCount();
+    if (g_gameKillBaseline < 0)
+        g_gameKillBaseline = gameKills;
+    const uint64_t sessionKills = (gameKills > g_gameKillBaseline)
+        ? (uint64_t)(gameKills - g_gameKillBaseline) : 0;
+    if (sessionKills > g_kills) {
+        g_kills = sessionKills;
+        NotifyKillMilestone(g_kills);
     }
-    g_seenMonsters = std::move(currentMonsters);
 }
 
 // =====================================================================

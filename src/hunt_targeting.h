@@ -45,8 +45,16 @@ void AppendFilterToken(char* buffer, size_t bufferSize, const char* token);
 // mobs around where it was landing (it chain-jumped through dense packs
 // without firing, because "in attack range" and "worth shooting" never agreed
 // on where the hero actually was).
+//
+// ignoreZone skips the IsPointNearHuntZone gate entirely (in addition to
+// ignoreSearchRange's mobSearchRange skip). Phase 2b's dynamic-zone GROW step
+// is the one caller that needs this: it decides whether to absorb a
+// frontier cell by checking for live mobs just outside the zone's current
+// cells — with the normal zone gate applied, those candidates would already
+// be filtered out before growth ever saw them, and the zone could never
+// expand past its own engage margin.
 std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool preferredOnly = false,
-    bool ignoreSearchRange = false, const Position* rangeOrigin = nullptr);
+    bool ignoreSearchRange = false, const Position* rangeOrigin = nullptr, bool ignoreZone = false);
 
 // ── Archer mode helpers ───────────────────────────────────────────────────
 // Session 12: independently copy-pasted (byte-for-byte identical) across

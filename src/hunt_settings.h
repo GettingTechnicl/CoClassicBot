@@ -262,6 +262,26 @@ struct AutoHuntSettings
     AutoHuntCombatMode combatMode = AutoHuntCombatMode::Melee;
     AutoHuntZoneMode zoneMode = AutoHuntZoneMode::Circle;
 
+    // Map-Wide's dynamic zone (BaseHuntPlugin::UpdateDynamicZone) grows one
+    // cell at a time onto adjacent ground that shows live monsters. Each
+    // cell is this many tiles square — 8 was SpawnMemory's own heatmap
+    // bucket size, reused for convenience, not a tuned value. Live testing
+    // (a fast Cyclone build) showed growth's one-cell-per-hop pace can't
+    // keep up with how much ground a high kill rate covers, and a freshly
+    // relocated single cell is too small to immediately cover a visible
+    // clump. User-tunable so this can be sized empirically per class/build
+    // rather than guessed at. A change takes effect on the zone's next
+    // reseed (map change or relocate), not mid-zone, so already-grown cells
+    // never get silently re-keyed to a different grid.
+    int dynZoneCellTiles = 8;
+
+    // Cap on how many cells the dynamic zone can grow to at once. 12 was a
+    // hidden constant sized for the default 8-tile cell — at a much smaller
+    // cell size (more, smaller cells needed to cover the same real ground)
+    // or a much larger one (few huge cells already cover a lot) the right
+    // cap is a different number, so it's a slider instead of a guess.
+    int dynZoneMaxCells = 12;
+
     // Session 13: see AutoHuntGoal's comment. maxDangerTier is the slider —
     // deliberately per-character rather than a hardcoded avoid-Red/Black
     // rule, since a tanky, well-geared class (e.g. Warrior) can reasonably
@@ -338,16 +358,22 @@ struct AutoHuntSettings
     // GetParanoiaThreat() in hunt_intervals.h.
     bool paranoiaEnabled = false;
 
-    // Session 14 [Paranoia evasion redesign] — the flee/relocate state machine
-    // (see BaseHuntPlugin::UpdateEvadeState). Two Advanced-tab tunables:
-    // - paranoiaPassingThresholdMs: how long a player must have been detected
-    //   (continuously, from first sighting until the bot loses sight of them)
-    //   to count as LINGERING. Below this, they were "just passing" — after
-    //   relocating out of sight the bot returns to its original hunting spot.
-    //   At/above it, the bot treats the spot as watched and stays relocated.
-    // - paranoiaRenudgeTiles: if a player reappears mid-relocate (the new area
-    //   was still too close / in their path), the next relocate destination is
-    //   pushed this many extra tiles farther from the threat, per reappearance.
+    // Session 14 [Paranoia evasion — Phase 1 "gentle flee"] tunables
+    // (see BaseHuntPlugin::UpdateEvadeState):
+    // - paranoiaFleeDistance: on detecting a player, hop just this many tiles
+    //   away (out of their ~30-tile view) then RESUME hunting — not a sprint to
+    //   the far side of the map. 0-100, default 36.
+    // - paranoiaAbandonAfter: how many times a player may be re-encountered at
+    //   the current spot before the bot gives up on it and RELOCATES for good
+    //   to a new heatmap-hot area (instead of shuffling in place forever). The
+    //   count decays after a stretch of undisturbed hunting.
+    // - paranoiaPassingThresholdMs: if a player keeps the bot in sight this long
+    //   during a single flee (they're following/camping, not passing), escalate
+    //   straight to a relocate.
+    // - paranoiaRenudgeTiles: if a player reappears mid-relocate, push the next
+    //   relocate destination this many extra tiles farther from the threat.
+    int paranoiaFleeDistance = 36;
+    int paranoiaAbandonAfter = 3;
     int paranoiaPassingThresholdMs = 7000;
     int paranoiaRenudgeTiles = 10;
 
@@ -377,6 +403,15 @@ bool PointInPolygon(const Position& point, const std::vector<Position>& polygon)
 // Zone helper free functions
 bool HasValidHuntZone(const AutoHuntSettings& settings);
 bool IsPointInHuntZone(const AutoHuntSettings& settings, OBJID mapId, const Position& pos);
+
+// Map-Wide's zone is whichever cell set the currently-enabled hunt plugin's
+// dynamic-zone engine has built for itself (BaseHuntPlugin::UpdateDynamicZone)
+// — looked up here rather than passed in so IsPointInHuntZone/IsPointNearHuntZone
+// can bound MapWide the exact same way Circle/Polygon bound themselves, without
+// this header depending on the plugin headers. False (nothing in/near zone) if
+// no hunt plugin is enabled or its dynamic zone hasn't seeded yet.
+bool IsInDynamicZone(const Position& pos);
+bool IsNearDynamicZone(const Position& pos, int margin);
 
 // Is a tile inside the hunt zone, or within `margin` tiles of it?
 //

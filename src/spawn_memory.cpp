@@ -171,6 +171,16 @@ float GetMaxScore(OBJID mapId)
     return (it == g_maps.end()) ? 0.0f : it->second.maxScore;
 }
 
+uint32_t BucketKeyFor(const Position& tile)
+{
+    return PackBucket(tile.x / kBucketTiles, tile.y / kBucketTiles);
+}
+
+Position BucketCenterOf(uint32_t key)
+{
+    return { BucketX(key) * kBucketTiles + kBucketTiles / 2, BucketY(key) * kBucketTiles + kBucketTiles / 2 };
+}
+
 std::vector<Position> GetHotBuckets(OBJID mapId, int maxCount)
 {
     std::lock_guard<std::mutex> lk(g_mutex);

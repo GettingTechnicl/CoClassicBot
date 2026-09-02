@@ -1448,38 +1448,27 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
             // for this PID" as an in-place reconnect trigger, reusing the
             // exact same mechanism the initial launch used.
             constexpr DWORD kReconnectCheckIntervalMs = 5000;
-            // Bounded, matching this project's existing "don't retry
-            // forever" philosophy (see kMaxFastCrashes below) — a
-            // reconnect attempt that keeps failing (live-reported: the
-            // disconnect banner interfering, or a genuinely bad
-            // credential/network state) shouldn't hammer the same
-            // possibly-stuck login screen indefinitely.
-            constexpr int kMaxConsecutiveFailedReconnects = 5;
-            int consecutiveFailedReconnects = 0;
             for (;;) {
                 wait = WaitForMultipleObjects(handleCount, waitHandles, FALSE, kReconnectCheckIntervalMs);
                 if (wait != WAIT_TIMEOUT)
                     break;  // process exited, stop requested, or kill-switch fired
 
                 if (AutoLogin::IsAtLoginScreen(pid)) {
-                    printf("[*] Detected a disconnect (login screen reappeared) — reconnecting (attempt %d/%d)...\n",
-                        consecutiveFailedReconnects + 1, kMaxConsecutiveFailedReconnects);
-                    session->state = SessionState::LoggingIn;
-                    session->SetStatus("Reconnecting...");
-                    const bool reconnected = PerformLoginAndWaitForConfirmation(session, params, pid, /*isReconnect=*/true);
-                    session->SetStatus("");
-                    session->state = SessionState::Running;
-
-                    if (reconnected) {
-                        consecutiveFailedReconnects = 0;
-                    } else if (++consecutiveFailedReconnects >= kMaxConsecutiveFailedReconnects) {
-                        printf("[!] Reconnect failed %d times in a row — giving up and forcing a full relaunch "
-                            "instead of retrying keystrokes against a possibly-stuck login screen.\n",
-                            consecutiveFailedReconnects);
-                        session->SetStatus("Reconnect failed repeatedly — relaunching");
-                        TerminateProcess(pi.hProcess, 0);
-                        break;  // falls through to the crash-relaunch path below, same as a real crash
-                    }
+                    // Re-login policy (user's choice, 2026-08-31): on a detected
+                    // disconnect do NOT attempt an in-place keystroke reconnect
+                    // against the login screen — that path proved unreliable
+                    // (see project history). Instead close this game process and
+                    // let the supervision loop below relaunch a FRESH one, which
+                    // runs a clean first-launch login and, being a crash-style
+                    // relaunch, auto-resumes the previously-enabled plugins
+                    // (autohunt, etc.). PerformLoginAndWaitForConfirmation's
+                    // isReconnect=true path is intentionally no longer invoked.
+                    printf("[*] Detected a disconnect (login screen reappeared) — closing the game and relaunching a fresh one...\n");
+                    session->state = SessionState::Crashed;
+                    session->SetStatus("Disconnected — relaunching");
+                    TerminateProcess(pi.hProcess, 0);
+                    WaitForSingleObject(pi.hProcess, 10000);
+                    break;  // falls through to the relaunch path below
                 }
             }
         } else {

@@ -529,6 +529,10 @@ static std::string BuildCurrentConfigSnapshot()
     AppendIntSnapshot(snapshot, "safetyPlayerRange", autoHunt.safetyPlayerRange);
     AppendBoolSnapshot(snapshot, "disableSpeedhackOnPlayer", autoHunt.disableSpeedhackOnPlayer);
     AppendBoolSnapshot(snapshot, "disableInstantAttackOnPlayer", autoHunt.disableInstantAttackOnPlayer);
+    AppendIntSnapshot(snapshot, "dynZoneCellTiles", autoHunt.dynZoneCellTiles);
+    AppendIntSnapshot(snapshot, "dynZoneMaxCells", autoHunt.dynZoneMaxCells);
+    AppendIntSnapshot(snapshot, "paranoiaFleeDistance", autoHunt.paranoiaFleeDistance);
+    AppendIntSnapshot(snapshot, "paranoiaAbandonAfter", autoHunt.paranoiaAbandonAfter);
     AppendIntSnapshot(snapshot, "paranoiaPassingThresholdMs", autoHunt.paranoiaPassingThresholdMs);
     AppendIntSnapshot(snapshot, "paranoiaRenudgeTiles", autoHunt.paranoiaRenudgeTiles);
     AppendIntSnapshot(snapshot, "safetyDetectionSec", autoHunt.safetyDetectionSec);
@@ -744,6 +748,10 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "safetyPlayerRange", autoHunt.safetyPlayerRange);
     WriteInt(file, section, "disableSpeedhackOnPlayer", autoHunt.disableSpeedhackOnPlayer ? 1 : 0);
     WriteInt(file, section, "disableInstantAttackOnPlayer", autoHunt.disableInstantAttackOnPlayer ? 1 : 0);
+    WriteInt(file, section, "dynZoneCellTiles", autoHunt.dynZoneCellTiles);
+    WriteInt(file, section, "dynZoneMaxCells", autoHunt.dynZoneMaxCells);
+    WriteInt(file, section, "paranoiaFleeDistance", autoHunt.paranoiaFleeDistance);
+    WriteInt(file, section, "paranoiaAbandonAfter", autoHunt.paranoiaAbandonAfter);
     WriteInt(file, section, "paranoiaPassingThresholdMs", autoHunt.paranoiaPassingThresholdMs);
     WriteInt(file, section, "paranoiaRenudgeTiles", autoHunt.paranoiaRenudgeTiles);
     WriteInt(file, section, "safetyDetectionSec", autoHunt.safetyDetectionSec);
@@ -1039,6 +1047,10 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     autoHunt.safetyPlayerRange = ReadInt(file, section, "safetyPlayerRange", 15);
     autoHunt.disableSpeedhackOnPlayer = ReadInt(file, section, "disableSpeedhackOnPlayer", 1) != 0;
     autoHunt.disableInstantAttackOnPlayer = ReadInt(file, section, "disableInstantAttackOnPlayer", 1) != 0;
+    autoHunt.dynZoneCellTiles = ReadInt(file, section, "dynZoneCellTiles", 8);
+    autoHunt.dynZoneMaxCells = ReadInt(file, section, "dynZoneMaxCells", 12);
+    autoHunt.paranoiaFleeDistance = ReadInt(file, section, "paranoiaFleeDistance", 36);
+    autoHunt.paranoiaAbandonAfter = ReadInt(file, section, "paranoiaAbandonAfter", 3);
     autoHunt.paranoiaPassingThresholdMs = ReadInt(file, section, "paranoiaPassingThresholdMs", 7000);
     autoHunt.paranoiaRenudgeTiles = ReadInt(file, section, "paranoiaRenudgeTiles", 10);
     autoHunt.safetyDetectionSec = ReadInt(file, section, "safetyDetectionSec", 30);

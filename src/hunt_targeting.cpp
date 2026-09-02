@@ -167,7 +167,7 @@ Position JitterDestination(const CGameMap* map, const Position& target, int radi
 }
 
 std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool preferredOnly, bool ignoreSearchRange,
-    const Position* rangeOrigin)
+    const Position* rangeOrigin, bool ignoreZone)
 {
     // Session 9: CRoleMgr::m_deqRole is not a deque on v1074 — see entities.h.
     const std::vector<CRole*>& roles = Entities::Get();
@@ -201,13 +201,35 @@ std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool pr
 
         if (!role->IsMonster() || role->IsDead() || role->TestState(USERSTATUS_GHOST))
             continue;
+
+        // Session 16 [SPAWN-GRACE PRUNE BUG]: g_monsterSeenTicks is a single
+        // GLOBAL map shared by every caller of this function — combat
+        // targeting (narrow: zone+searchRange), steering (ignoreSearchRange),
+        // and the dynamic zone's growth scan (ignoreSearchRange+ignoreZone,
+        // the widest net of all). currentCandidateIds used to get built from
+        // the list AFTER zone/range/name/tier filtering, so the prune step
+        // below erased a monster's "first seen" timestamp the instant ANY
+        // ONE caller's narrower view didn't include it — even though a wider
+        // caller (like growth) still considered it a live candidate. Each
+        // caller's differently-scoped view kept wiping the others' progress,
+        // so a monster's spawn-grace clock could restart forever without
+        // ever accumulating monsterSpawnGraceMs of uninterrupted tracking —
+        // live-caught: growth's "total live mobs seen" sat at 0 for
+        // consecutive 1.5s ticks next to an obviously dense, actively-being-
+        // killed swarm. Fix: track candidacy from the RAW monster scan (every
+        // real, alive monster entity) regardless of which caller's zone/
+        // range/name/tier filters it happens to fail — only a monster that's
+        // truly gone (dead/despawned, absent from Entities::Get() entirely)
+        // should lose its timestamp.
+        currentCandidateIds.insert(role->GetID());
+
         // Session 10: engage anything within the leash band, not strictly
         // inside the zone. The zone marks where we HUNT; a monster just past
         // the edge is still worth killing, and skipping it both wastes the
         // kill and lets spawns stagnate. The margin is bounded (2x attack
         // range) so this never becomes chasing across the map — the bot's own
         // movement is separately capped at one leash outside the zone.
-        if (!IsPointNearHuntZone(settings, settings.zoneMapId, role->m_posMap,
+        if (!ignoreZone && !IsPointNearHuntZone(settings, settings.zoneMapId, role->m_posMap,
                                  GetHuntEngageMargin(settings)))
             continue;
         // "Only Target Mobs Within" gates ATTACK targeting (don't scatter/shoot
@@ -238,7 +260,6 @@ std::vector<CRole*> CollectHuntTargets(const AutoHuntSettings& settings, bool pr
             continue;
 
         const OBJID roleId = role->GetID();
-        currentCandidateIds.insert(roleId);
         if (settings.monsterSpawnGraceMs > 0) {
             const auto seenResult = g_monsterSeenTicks.try_emplace(roleId, now);
             const DWORD seenAge = now - seenResult.first->second;

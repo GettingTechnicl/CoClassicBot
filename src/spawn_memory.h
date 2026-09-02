@@ -49,6 +49,13 @@ namespace SpawnMemory
     // Best-known score anywhere on the map, for normalising weights.
     float GetMaxScore(OBJID mapId);
 
+    // Packed bucket key for a tile, and the tile at a bucket's center — the
+    // same kBucketTiles grid GetHotBuckets/GetScore use internally. Exposed
+    // so callers that track their own per-bucket state (Phase 2b's dynamic
+    // zone cell set) align to the identical grid instead of re-deriving it.
+    uint32_t BucketKeyFor(const Position& tile);
+    Position BucketCenterOf(uint32_t key);
+
     // Centers of the top-scored buckets (novelty boosts included), hottest
     // first. Exploration feeds these into its candidate pool directly:
     // uniform sampling alone almost never rediscovers a small hot area on a

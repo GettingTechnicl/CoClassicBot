@@ -40,6 +40,31 @@ namespace {
 
 const Position kMarketLandingPos = {211, 196};
 
+// Roughly the game's real monster/entity visibility range — the distance
+// within which the client actually gets told about what's there at all, so
+// "the hero was near enough to check" means near enough in ACTUAL tiles, not
+// scaled by whatever the dynamic zone's own cell size happens to be (a 37+
+// tile cell made "checked" mean "anywhere in a 100+ tile area" before this
+// was pulled out as its own constant — see the dyn-zone shrink logic).
+// Shared with GetEvadeRelocateMinDist's "beyond view" distance below.
+constexpr int kViewTiles = 35;
+
+// Session 16 [USER-TUNABLE CELL SIZE]: the Phase 2b dynamic zone's own grid,
+// independent of SpawnMemory's fixed 8-tile heatmap bucket grid — see
+// settings.dynZoneCellTiles. Declared up here (not down with the rest of the
+// dynamic-zone engine) because FindZoneExplorePosition, earlier in this file,
+// needs it too.
+uint32_t DynCellKeyFor(const Position& tile, int cellTiles)
+{
+    return ((uint32_t)(tile.x / cellTiles) << 16) | (uint32_t)((tile.y / cellTiles) & 0xFFFF);
+}
+
+Position DynCellCenterOf(uint32_t key, int cellTiles)
+{
+    return { (int)(key >> 16) * cellTiles + cellTiles / 2,
+             (int)(key & 0xFFFF) * cellTiles + cellTiles / 2 };
+}
+
 constexpr int kReliableAttackRange = 1;
 constexpr int kMinMobClumpSize = 2;
 constexpr int kMinLootRange = 0;
@@ -291,6 +316,7 @@ void BaseHuntPlugin::StopAutomation(bool cancelTravel)
 
     m_targetId = 0;
     m_lastClumpSize = 0;
+    m_dynInit = false;   // Phase 2: re-seed the dynamic zone on next start
     ClearPendingJumpState();
     m_lootMgr.ResetLootPickupAttempts();
     m_townService.ResetRepairSequence();
@@ -405,6 +431,14 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     }
     Position bestAwayFromThreat{};
     float    bestThreatDist = -1.0f;
+    // Session 14 [SPLIT-MAP FLEE]: collect ALL flee candidates so the farthest
+    // tile the hero can ACTUALLY reach is chosen post-loop. On maps with an
+    // impassable center (two halves joined by a single bridge) the
+    // geometrically-farthest tile can be across the barrier; committing to it
+    // with only an IsWalkable() check left the bot with no path and it froze.
+    // A bounded FindPath picks a reachable spot (routing around via the bridge),
+    // and a guaranteed adjacent-step fallback ensures it never just stands still.
+    std::vector<std::pair<Position, float>> fleeCandidates;
 
     // Distance from a candidate to the nearest threat point — the evade
     // objective is to MAXIMIZE this (get as far as possible from whoever is
@@ -430,6 +464,10 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     const std::vector<Position> hotSpots = useHeatmap
         ? SpawnMemory::GetHotBuckets(mapId, 12)
         : std::vector<Position>{};
+    // Phase 2b: active dynamic-zone cells, snapshotted once so the sampling
+    // loop below can index into them without walking the unordered_set
+    // per-attempt.
+    const std::vector<uint32_t> dynCellKeys(m_dynCells.begin(), m_dynCells.end());
     const int totalAttempts = 40 + (int)hotSpots.size();
 
     for (int attempt = 0; attempt < totalAttempts; ++attempt) {
@@ -438,13 +476,23 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
         if (attempt >= 40) {
             candidate = hotSpots[attempt - 40];
         } else if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
-            // Uniform over the map's full tile extent. Same sampling shape as
-            // Polygon's bounding-box sample below, just sized to the whole
-            // map instead of a drawn shape's bounds.
-            if (map->m_sizeMap.iWidth <= 0 || map->m_sizeMap.iHeight <= 0)
-                return false;
-            candidate.x = (int)(NextRandom32() % (uint32_t)map->m_sizeMap.iWidth);
-            candidate.y = (int)(NextRandom32() % (uint32_t)map->m_sizeMap.iHeight);
+            // Phase 2b: when the dynamic-zone engine is active (and we're not
+            // fleeing), sample inside one of its active CELLS instead of the
+            // whole map — this is what focuses Map-Wide on the current hot
+            // area instead of beelining corner to corner. Fleeing keeps
+            // full-map freedom to escape.
+            if (IsDynamicZoneActive(settings) && !fleeAll && !dynCellKeys.empty()) {
+                const Position c = DynCellCenterOf(
+                    dynCellKeys[NextRandom32() % dynCellKeys.size()], m_dynCellTiles);
+                const int bt = m_dynCellTiles;
+                candidate.x = c.x - bt / 2 + (int)(NextRandom32() % (uint32_t)bt);
+                candidate.y = c.y - bt / 2 + (int)(NextRandom32() % (uint32_t)bt);
+            } else {
+                if (map->m_sizeMap.iWidth <= 0 || map->m_sizeMap.iHeight <= 0)
+                    return false;
+                candidate.x = (int)(NextRandom32() % (uint32_t)map->m_sizeMap.iWidth);
+                candidate.y = (int)(NextRandom32() % (uint32_t)map->m_sizeMap.iHeight);
+            }
         } else if (settings.zoneMode == AutoHuntZoneMode::Route) {
             const HuntRoute* r = GetActiveRoute(settings, settings.zoneMapId);
             if (!r || r->waypoints.empty())
@@ -482,6 +530,11 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
             continue;
         if (!IsPointInZone(settings, settings.zoneMapId, candidate))
             continue;
+        // Phase 2b: keep exploration inside the dynamic zone's active cells
+        // (also rejects injected hot-spot buckets that fall outside it).
+        // Not while fleeing.
+        if (!paranoiaEvading && IsDynamicZoneActive(settings) && !InDynamicZone(candidate))
+            continue;
         if (!map->IsWalkable(candidate.x, candidate.y))
             continue;
         if (CGameMap::TileDist(heroPos.x, heroPos.y, candidate.x, candidate.y) < minTravel)
@@ -517,6 +570,7 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
 
         if (paranoiaEvading) {
             const float threatDist = distToNearestThreat(candidate);
+            fleeCandidates.emplace_back(candidate, threatDist);
             if (threatDist > bestThreatDist) {
                 bestThreatDist = threatDist;
                 bestAwayFromThreat = candidate;
@@ -556,10 +610,55 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
         }
     }
 
-    if (paranoiaEvading && bestThreatDist >= 0.0f && !IsZeroPos(bestAwayFromThreat)) {
-        out = JitterDestination(map, bestAwayFromThreat, GetJitterRadius(settings));
-        spdlog::trace("[hunt] Explore (paranoia) -> ({},{}) threatDist={:.1f}", out.x, out.y, bestThreatDist);
-        return true;
+    if (paranoiaEvading && !fleeCandidates.empty()) {
+        // Prefer the farthest-from-threat tile the hero can ACTUALLY path to.
+        // Sort by distance desc, then take the first REACHABLE one (bounded
+        // FindPath, so rejecting an unreachable pick across a barrier is cheap).
+        // On a connected map the farthest tile is reachable → one FindPath and
+        // done; on a split map this routes around the impassable center instead
+        // of committing to a pathless spot and freezing.
+        std::sort(fleeCandidates.begin(), fleeCandidates.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+        constexpr int kFleeReachChecks = 12;
+        constexpr int kFleeReachBudget = 120000;
+        const int checks = (std::min)((int)fleeCandidates.size(), kFleeReachChecks);
+        for (int i = 0; i < checks; ++i) {
+            const Position cand = fleeCandidates[(size_t)i].first;
+            if (!map->FindPath(heroPos.x, heroPos.y, cand.x, cand.y, kFleeReachBudget).empty()) {
+                out = cand;  // reachable — no jitter, so StartPathTo can definitely path it
+                spdlog::trace("[hunt] Explore (paranoia) reachable -> ({},{}) threatDist={:.1f}",
+                    out.x, out.y, fleeCandidates[(size_t)i].second);
+                return true;
+            }
+        }
+        // None of the farthest candidates were reachable within budget (a
+        // disconnected pocket, or a very long path on a large map). Guarantee a
+        // MOVE so the bot never freezes: step to the adjacent walkable tile that
+        // best increases distance from the threat, and keep stepping each tick.
+        Position stepBest{};
+        float stepBestDist = -1.0f;
+        for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                if (dx == 0 && dy == 0)
+                    continue;
+                const Position n{ heroPos.x + dx, heroPos.y + dy };
+                if (n.x <= 0 || n.y <= 0 || !map->IsWalkable(n.x, n.y))
+                    continue;
+                if (!map->CanReach(heroPos.x, heroPos.y, n.x, n.y))
+                    continue;
+                const float d = distToNearestThreat(n);
+                if (d > stepBestDist) {
+                    stepBestDist = d;
+                    stepBest = n;
+                }
+            }
+        }
+        if (stepBestDist >= 0.0f && !IsZeroPos(stepBest)) {
+            out = stepBest;
+            spdlog::trace("[hunt] Explore (paranoia) fallback step -> ({},{})", out.x, out.y);
+            return true;
+        }
+        // Truly boxed in on every side — fall through (nothing valid to do).
     }
 
     if (exploring && worstScore < (std::numeric_limits<float>::max)() && !IsZeroPos(worstScored)) {
@@ -580,27 +679,24 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     return false;
 }
 
-// ── Paranoia evasion state machine (Session 14 redesign, option A) ──────────
-// The desired flow (user-confirmed): detection is BINARY — any non-whitelisted
-// player anywhere in the ~30-tile view window counts, distance is irrelevant.
-// So the moment ANY player is visible the bot FLEES, heading in the direction
-// that maximizes distance from EVERY player at once (their current AND
-// predicted positions, so it routes around where a moving player is going),
-// at a human pace (Phase 1's disableSpeedhackOnPlayer keeps speed human while
-// anyone can see it). Once truly out of sight it RELOCATES — speed-hacking to
-// a different heatmap-hot area away from where all the players were → if they
-// were only briefly present ("just passing") it RETURNS to the original spot,
-// otherwise it stays. A player reappearing mid-relocate throws it back to
-// Fleeing and pushes the next relocate farther out (re-nudge). Visibility uses
-// IsAnyPlayerVisibleDebounced (no range); per-player positions/movement come
-// from m_playerTracks (UpdatePlayerTracks). All arrival/visibility transitions
-// live here; the movement itself is issued by DriveEvadeMovement.
+// ── Paranoia evasion state machine (Session 14 — Phase 1 "gentle flee") ─────
+// Detection is BINARY — any non-whitelisted player in the ~30-tile view counts,
+// distance is irrelevant (IsAnyPlayerVisibleDebounced, no range). The reaction
+// is deliberately GENTLE: hop ~paranoiaFleeDistance tiles away from the nearest
+// threat (just out of their view), at human pace, then RESUME hunting where we
+// landed — no sprint to the far side of the map, no compulsive return trip.
+// The bot only gives up on a spot and RELOCATES (to a fresh heatmap-hot area)
+// when the spot is genuinely compromised: the same place drew a player
+// paranoiaAbandonAfter times in a decaying window, or a player kept the bot in
+// sight for longer than paranoiaPassingThresholdMs during one flee (following/
+// camping, not passing). Per-player positions/movement come from m_playerTracks
+// (UpdatePlayerTracks). All transitions live here; movement is issued by
+// DriveEvadeMovement.
 int BaseHuntPlugin::GetEvadeRelocateMinDist(const AutoHuntSettings& settings) const
 {
-    // "A different area" = clearly beyond the ~30-tile view window from where
-    // the players were, plus the re-nudge push each time one re-appeared.
-    constexpr int kBeyondViewTiles = 35;
-    return kBeyondViewTiles + m_evadeRenudgeCount * (std::max)(1, settings.paranoiaRenudgeTiles);
+    // "A different area" = clearly beyond the view window from where the
+    // players were, plus the re-nudge push each time one re-appeared.
+    return kViewTiles + m_evadeRenudgeCount * (std::max)(1, settings.paranoiaRenudgeTiles);
 }
 
 void BaseHuntPlugin::UpdatePlayerTracks(const AutoHuntSettings& settings)
@@ -676,87 +772,89 @@ bool BaseHuntPlugin::UpdateEvadeState(CHero* hero, const AutoHuntSettings& setti
     if (!settings.paranoiaEnabled || !hero) {
         m_evadeState = EvadeState::None;
         m_evadeRenudgeCount = 0;
+        m_evadeEncounterCount = 0;
+        m_evadeFleeTarget = {};
         m_playerTracks.clear();
         return false;
     }
 
     constexpr int kEvadeArriveTiles = 5;
+    constexpr DWORD kEncounterDecayMs = 120000;  // undisturbed this long -> forget past encounters
+    const int abandonAfter = (std::max)(1, settings.paranoiaAbandonAfter);
     const DWORD now = GetTickCount();
 
-    // Refresh per-player positions/movement every tick, then the binary
-    // "anyone in view" test drives every transition (no range — detected vs
-    // not detected is all that matters).
+    // Refresh per-player positions/movement every tick; the binary "anyone in
+    // view" test then drives every transition.
     UpdatePlayerTracks(settings);
     const bool anyVisible = IsAnyPlayerVisibleDebounced(settings);
+
+    auto snapshotThreats = [&]() {
+        m_evadeThreatPositions.clear();
+        for (const auto& [id, t] : m_playerTracks)
+            m_evadeThreatPositions.push_back(t.posNow);
+    };
 
     switch (m_evadeState) {
     case EvadeState::None:
         if (anyVisible) {
-            m_evadeState = EvadeState::Fleeing;
-            m_evadeHomeSpot = hero->m_posMap;
+            // Decay stale encounters so only a RUN of visits to this spot
+            // (within kEncounterDecayMs of one another) counts toward giving up.
+            if (m_evadeLastEncounterTick != 0 && now - m_evadeLastEncounterTick > kEncounterDecayMs)
+                m_evadeEncounterCount = 0;
+            ++m_evadeEncounterCount;
+            m_evadeLastEncounterTick = now;
             m_evadeFleeStartTick = now;
+            m_evadeFleeTarget = {};
+            m_evadeRelocateDest = {};
+            m_evadeState = EvadeState::Fleeing;
+            spdlog::info("[paranoia] Player in view -> FLEEING (encounter {}/{}, tracked={})",
+                m_evadeEncounterCount, abandonAfter, (int)m_playerTracks.size());
+        }
+        break;
+
+    case EvadeState::Fleeing: {
+        const bool lingering = anyVisible
+            && (int)(now - m_evadeFleeStartTick) >= settings.paranoiaPassingThresholdMs;
+        const bool spotContested = m_evadeEncounterCount >= abandonAfter;
+        if (spotContested || lingering) {
+            // Give up on this spot — relocate to a fresh heatmap-hot area away
+            // from wherever the players are right now.
+            snapshotThreats();
             m_evadeRenudgeCount = 0;
             m_evadeRelocateDest = {};
-            spdlog::info("[paranoia] Player(s) in view -> FLEEING (home=({},{}), tracked={})",
-                m_evadeHomeSpot.x, m_evadeHomeSpot.y, (int)m_playerTracks.size());
-        }
-        break;
-
-    case EvadeState::Fleeing:
-        if (!anyVisible) {
-            // Out of everyone's sight — snapshot where the players were (their
-            // tracks are still fresh this instant) so relocate can head away
-            // from all of them, then decide passing vs lingering from how long
-            // a player was continuously present.
-            m_evadeThreatPositions.clear();
-            for (const auto& [id, t] : m_playerTracks)
-                m_evadeThreatPositions.push_back(t.posNow);
-            m_evadeFleeDurationMs = now - m_evadeFleeStartTick;
-            m_evadeReturnHome = (int)m_evadeFleeDurationMs < settings.paranoiaPassingThresholdMs;
+            m_evadeFleeTarget = {};
             m_evadeState = EvadeState::Relocating;
-            m_evadeRelocateDest = {};   // computed on first Relocating movement tick
-            spdlog::info("[paranoia] Out of sight after {}ms -> RELOCATING (returnHome={}, threats={})",
-                m_evadeFleeDurationMs, m_evadeReturnHome, (int)m_evadeThreatPositions.size());
+            spdlog::info("[paranoia] {} -> RELOCATING (threats={})",
+                spotContested ? "spot contested" : "player lingering",
+                (int)m_evadeThreatPositions.size());
+        } else if (!anyVisible) {
+            // Gentle flee worked — out of their view. Resume hunting right here,
+            // no sprint and no return trip.
+            m_evadeFleeTarget = {};
+            m_evadeState = EvadeState::None;
+            spdlog::info("[paranoia] Out of view -> resume hunting here");
         }
         break;
+    }
 
     case EvadeState::Relocating:
-        if (anyVisible) {
-            ++m_evadeRenudgeCount;
-            m_evadeFleeStartTick = now;
-            m_evadeState = EvadeState::Fleeing;
-            spdlog::info("[paranoia] Player reappeared mid-relocate -> FLEEING (renudge={})", m_evadeRenudgeCount);
-            break;
-        }
         if (!IsZeroPos(m_evadeRelocateDest)
             && CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
                                   m_evadeRelocateDest.x, m_evadeRelocateDest.y) <= kEvadeArriveTiles) {
-            if (m_evadeReturnHome && !IsZeroPos(m_evadeHomeSpot)) {
-                m_evadeState = EvadeState::ReturningHome;
-                spdlog::info("[paranoia] Reached new area (players were passing) -> RETURNING HOME ({},{})",
-                    m_evadeHomeSpot.x, m_evadeHomeSpot.y);
+            if (anyVisible) {
+                // Players here too — push the relocate farther and keep going
+                // (speed stays human via disableSpeedhackOnPlayer while seen).
+                ++m_evadeRenudgeCount;
+                snapshotThreats();
+                m_evadeRelocateDest = {};
+                spdlog::info("[paranoia] Player at relocate area -> pushing farther (renudge={})", m_evadeRenudgeCount);
             } else {
-                spdlog::info("[paranoia] Reached new area (players lingered) -> resume hunting here");
+                spdlog::info("[paranoia] Relocated to a fresh area -> resume hunting");
                 m_evadeState = EvadeState::None;
                 m_evadeRenudgeCount = 0;
+                m_evadeEncounterCount = 0;    // new area, fresh start
+                m_evadeLastEncounterTick = 0;
             }
-        }
-        break;
-
-    case EvadeState::ReturningHome:
-        if (anyVisible) {
-            ++m_evadeRenudgeCount;
-            m_evadeFleeStartTick = now;
-            m_evadeState = EvadeState::Fleeing;
-            spdlog::info("[paranoia] Player seen on the way home -> FLEEING again (renudge={})", m_evadeRenudgeCount);
-            break;
-        }
-        if (!IsZeroPos(m_evadeHomeSpot)
-            && CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
-                                  m_evadeHomeSpot.x, m_evadeHomeSpot.y) <= kEvadeArriveTiles) {
-            spdlog::info("[paranoia] Back at original spot -> resume hunting");
-            m_evadeState = EvadeState::None;
-            m_evadeRenudgeCount = 0;
         }
         break;
     }
@@ -797,7 +895,14 @@ bool BaseHuntPlugin::FindParanoiaRelocateDest(CHero* hero, CGameMap* map,
     for (const Position& b : hot) {
         if (b.x <= 0 || b.y <= 0)
             continue;
-        if (!IsPointInZone(settings, settings.zoneMapId, b))
+        // Session 16 [PHASE 3]: MapWide's "zone" IS the dynamic zone this
+        // relocate is trying to move — checking membership in the OLD one
+        // here rejects every candidate outside the tiny spot being fled,
+        // defeating "relocate with the full map" (the whole point of
+        // MapWide). Circle/Polygon/Route are deliberately user-drawn
+        // boundaries, so those still apply; only MapWide is exempt.
+        if (settings.zoneMode != AutoHuntZoneMode::MapWide
+            && !IsPointInZone(settings, settings.zoneMapId, b))
             continue;
         if (!map->IsWalkable(b.x, b.y))
             continue;
@@ -819,6 +924,60 @@ bool BaseHuntPlugin::FindParanoiaRelocateDest(CHero* hero, CGameMap* map,
     return false;
 }
 
+bool BaseHuntPlugin::FindGentleFleeTarget(CHero* hero, CGameMap* map, const AutoHuntSettings& settings,
+    const std::vector<Position>& threatPositions, int fleeDistance, Position& out) const
+{
+    out = {};
+    if (!hero || !map || threatPositions.empty() || fleeDistance <= 0)
+        return false;
+
+    const Position heroPos = hero->m_posMap;
+
+    // Nearest threat point — flee directly away from it.
+    Position nearest = threatPositions[0];
+    float nearestDist = heroPos.DistanceTo(nearest);
+    for (const Position& tp : threatPositions) {
+        const float d = heroPos.DistanceTo(tp);
+        if (d < nearestDist) { nearestDist = d; nearest = tp; }
+    }
+
+    float ax = (float)(heroPos.x - nearest.x);
+    float ay = (float)(heroPos.y - nearest.y);
+    float len = sqrtf(ax * ax + ay * ay);
+    if (len < 0.5f) { ax = 1.0f; ay = 0.0f; len = 1.0f; }  // threat on top of us — pick a direction
+    ax /= len; ay /= len;
+
+    // Try the ideal away-point first, then progressively back off and fan out
+    // to the sides, taking the first walkable + reachable tile. Backing off /
+    // fanning lets it route around an impassable center instead of committing
+    // to a blocked straight line. NOT zone-clamped — escaping view beats the
+    // zone leash (which is already widened while evading).
+    const float dists[] = { 1.0f, 0.8f, 0.6f, 0.4f, 0.25f };
+    const float angs[]  = { 0.0f, 0.45f, -0.45f, 0.9f, -0.9f, 1.35f, -1.35f };
+    constexpr int kReachBudget = 60000;
+    for (float df : dists) {
+        for (float da : angs) {
+            const float ca = cosf(da), sa = sinf(da);
+            const float rx = ax * ca - ay * sa;
+            const float ry = ax * sa + ay * ca;
+            const Position cand{
+                heroPos.x + (int)std::lround(rx * (float)fleeDistance * df),
+                heroPos.y + (int)std::lround(ry * (float)fleeDistance * df) };
+            if (cand.x <= 0 || cand.y <= 0)
+                continue;
+            if (CGameMap::TileDist(heroPos.x, heroPos.y, cand.x, cand.y) < 2)
+                continue;
+            if (!map->IsWalkable(cand.x, cand.y))
+                continue;
+            if (map->FindPath(heroPos.x, heroPos.y, cand.x, cand.y, kReachBudget).empty())
+                continue;
+            out = cand;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool BaseHuntPlugin::DriveEvadeMovement(CHero* hero, CGameMap* map, const AutoHuntSettings& settings)
 {
     if (!hero || !map)
@@ -826,13 +985,20 @@ bool BaseHuntPlugin::DriveEvadeMovement(CHero* hero, CGameMap* map, const AutoHu
 
     switch (m_evadeState) {
     case EvadeState::Fleeing: {
-        // Head away from every visible player's current + predicted position.
-        const std::vector<Position> preds = GetPlayerThreatPredictions();
-        Position dest{};
-        if (FindZoneExplorePosition(hero, map, settings, dest, &preds)
-            && StartPathTo(hero, map, dest, 0)) {
+        // A short bounded hop away from the nearest player's current/predicted
+        // position — recomputed only when we have no target or have basically
+        // reached the last one (player following: keep edging away).
+        const bool reached = !IsZeroPos(m_evadeFleeTarget)
+            && CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
+                                  m_evadeFleeTarget.x, m_evadeFleeTarget.y) <= 4;
+        if (IsZeroPos(m_evadeFleeTarget) || reached) {
+            const std::vector<Position> preds = GetPlayerThreatPredictions();
+            if (!FindGentleFleeTarget(hero, map, settings, preds, settings.paranoiaFleeDistance, m_evadeFleeTarget))
+                m_evadeFleeTarget = {};
+        }
+        if (!IsZeroPos(m_evadeFleeTarget) && StartPathTo(hero, map, m_evadeFleeTarget, 0)) {
             m_targetId = 0;
-            SetState(AutoHuntState::AcquireTarget, "Evading: fleeing from player");
+            SetState(AutoHuntState::AcquireTarget, "Evading: stepping out of view");
             return true;
         }
         break;
@@ -842,10 +1008,19 @@ bool BaseHuntPlugin::DriveEvadeMovement(CHero* hero, CGameMap* map, const AutoHu
             const int minDist = GetEvadeRelocateMinDist(settings);
             if (!FindParanoiaRelocateDest(hero, map, settings, m_evadeThreatPositions, minDist, m_evadeRelocateDest)) {
                 // No hot bucket qualified (no heatmap yet, tiny zone, etc.) —
-                // fall back to the farthest-from-all-threats flee tile so the
-                // bot still clears the area instead of stalling.
+                // fall back to the farthest-from-all-threats reachable tile so
+                // the bot still clears the area instead of stalling.
                 FindZoneExplorePosition(hero, map, settings, m_evadeRelocateDest, &m_evadeThreatPositions);
             }
+            // Phase 3: move the dynamic zone itself to the chosen destination
+            // the instant it's picked, not just on arrival — otherwise the OLD
+            // zone is still what leash/targeting are bounded to for the whole
+            // walk over there, fighting the very relocate this is supposed to
+            // be. Re-seeding here also means the escalating re-nudge case
+            // (below, a player found AGAIN at the new spot) naturally moves
+            // the zone again each time, exactly like a fresh destination does.
+            if (!IsZeroPos(m_evadeRelocateDest))
+                ReseedDynamicZoneAt(m_evadeRelocateDest, settings);
         }
         if (!IsZeroPos(m_evadeRelocateDest) && StartPathTo(hero, map, m_evadeRelocateDest, 0)) {
             m_targetId = 0;
@@ -854,18 +1029,354 @@ bool BaseHuntPlugin::DriveEvadeMovement(CHero* hero, CGameMap* map, const AutoHu
         }
         break;
     }
-    case EvadeState::ReturningHome: {
-        if (!IsZeroPos(m_evadeHomeSpot) && StartPathTo(hero, map, m_evadeHomeSpot, 0)) {
-            m_targetId = 0;
-            SetState(AutoHuntState::AcquireTarget, "Evading: returning to hunting spot");
-            return true;
-        }
-        break;
-    }
     default:
         break;
     }
     return false;
+}
+
+// ── Phase 2b: Dynamic Zone Engine (the core logic for Map-Wide) ─────────────
+namespace {
+constexpr int   kDynGrowTicks       = 3;      // consecutive live ticks before a frontier cell is absorbed
+constexpr int   kDynShrinkTicks     = 6;      // consecutive empty ticks before a member cell is dropped
+constexpr DWORD kDynSizeReviewMs    = 1500;
+constexpr DWORD kDynIdleRecenterMs  = 12000;  // no new kill this long -> full relocate
+constexpr DWORD kDynRecenterGapMs   = 6000;   // min gap between full relocates
+constexpr int   kDynRecenterMinMove = 40;     // new relocate target must be at least this far
+constexpr int   kDynReachBudget     = 80000;  // bounded FindPath iteration cap (grow + relocate checks)
+
+// Session 15 [KILL-SIGNAL RE]: SEH-guarded raw reads for the stat-table byte
+// dump (the native CStatTable::GetValue returns 0 on v1074 — likely a stale
+// pointer offset or RVA — so we dump raw bytes to find the real HP / kill-count
+// offsets directly). Keep these free of C++ unwind objects (MSVC __try rule).
+bool SafeReadBlock(uintptr_t addr, void* out, size_t n)
+{
+    __try {
+        memcpy(out, reinterpret_cast<const void*>(addr), n);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Dump `count` consecutive int32s at addr as "label +0xOFF (idx N) = value" so
+// the user can eyeball their HP / kill count and read off the offset/index.
+void DumpInts(const char* label, uintptr_t addr, int count)
+{
+    for (int i = 0; i < count; ++i) {
+        int32_t v = 0;
+        if (SafeReadBlock(addr + (size_t)i * 4, &v, 4))
+            spdlog::info("[statbytes] {} +0x{:X} (idx {}) = {}", label, i * 4, i, v);
+        else
+            spdlog::info("[statbytes] {} +0x{:X} (idx {}) = <unreadable>", label, i * 4, i);
+    }
+}
+}
+
+bool BaseHuntPlugin::IsDynamicZoneActive(const AutoHuntSettings& settings) const
+{
+    return settings.zoneMode == AutoHuntZoneMode::MapWide && m_dynInit
+        && m_dynMapId == Game::GetCurrentMapId() && !m_dynCells.empty();
+}
+
+bool BaseHuntPlugin::InDynamicZone(const Position& p) const
+{
+    return m_dynCells.count(DynCellKeyFor(p, m_dynCellTiles)) > 0;
+}
+
+int BaseHuntPlugin::CountMonstersInDynamicZone(const AutoHuntSettings& settings) const
+{
+    int n = 0;
+    const std::vector<CRole*> mobs = CollectHuntTargets(settings, false, /*ignoreSearchRange=*/true);
+    for (CRole* m : mobs)
+        if (m && InDynamicZone(m->m_posMap))
+            ++n;
+    return n;
+}
+
+std::vector<Position> BaseHuntPlugin::GetDynZoneCellCenters() const
+{
+    std::vector<Position> out;
+    out.reserve(m_dynCells.size());
+    for (uint32_t key : m_dynCells)
+        out.push_back(DynCellCenterOf(key, m_dynCellTiles));
+    return out;
+}
+
+bool BaseHuntPlugin::FindDynamicRecenterTarget(const AutoHuntSettings& settings, OBJID mapId,
+    const Position& from, Position& out) const
+{
+    out = {};
+    if (!SpawnMemory::HasUsefulData(mapId))
+        return false;
+    CGameMap* map = Game::GetMap();
+    CHero* hero = Game::GetHero();
+    if (!map || !hero)
+        return false;
+    const Position heroPos = hero->m_posMap;
+
+    // Collect valid hot-bucket candidates (a genuinely different area, walkable,
+    // not player-camped), then take the hottest one the hero can ACTUALLY reach.
+    std::vector<std::pair<float, Position>> cands;
+    for (const Position& b : SpawnMemory::GetHotBuckets(mapId, 24)) {
+        if (b.x <= 0 || b.y <= 0)
+            continue;
+        if (CGameMap::TileDist(from.x, from.y, b.x, b.y) < kDynRecenterMinMove)
+            continue;
+        if (!map->IsWalkable(b.x, b.y))
+            continue;
+        if (HuntContest::IsBucketContested(mapId, b, settings))
+            continue;
+        cands.emplace_back(SpawnMemory::GetScore(mapId, b), b);
+    }
+    std::sort(cands.begin(), cands.end(),
+        [](const auto& a, const auto& b) { return a.first > b.first; });
+
+    // Phase 2a: reachability gate — a bounded FindPath so an unreachable target
+    // (e.g. a hot spot on another Bird Island island behind a one-way portal)
+    // is cheaply rejected instead of stranding the zone there. Take the
+    // hottest REACHABLE candidate; if none are reachable, don't relocate (the
+    // caller keeps hunting where it is).
+    int checks = 0;
+    for (const auto& [score, b] : cands) {
+        if (++checks > 12)
+            break;
+        if (map->FindPath(heroPos.x, heroPos.y, b.x, b.y, kDynReachBudget).empty())
+            continue;
+        out = b;
+        return true;
+    }
+    return false;
+}
+
+void BaseHuntPlugin::UpdateDynamicZone(CHero* hero, const AutoHuntSettings& settings)
+{
+    if (settings.zoneMode != AutoHuntZoneMode::MapWide || !hero) {
+        m_dynInit = false;
+        return;
+    }
+    const OBJID mapId = Game::GetCurrentMapId();
+    const DWORD now = GetTickCount();
+    const int cellTiles = (std::max)(1, settings.dynZoneCellTiles);
+    const int maxCells = (std::max)(1, settings.dynZoneMaxCells);
+
+    // (Re)seed on first use, map change, or a cell-size slider change: a
+    // single cell at the hero's CURRENT position. Phase 2a: do NOT seed at
+    // the global hottest heatmap bucket — on a map split into unreachable
+    // chunks (Bird Island's one-way-portal islands) that bucket can be
+    // somewhere the bot can't path to, stranding the zone far from where
+    // it's actually hunting. Anchor to where it IS; growth (below) absorbs
+    // adjacent cells that show live mobs, and a full relocate only fires
+    // when the whole zone dies. A cell-size change reseeds rather than
+    // re-keying live cells in place — mixing two different grids in
+    // m_dynCells would corrupt neighbor/membership math.
+    if (!m_dynInit || m_dynMapId != mapId || m_dynCellTiles != cellTiles) {
+        m_dynCells.clear();
+        m_dynCellHotStreak.clear();
+        m_dynCellColdStreak.clear();
+        m_dynCellTiles = cellTiles;
+        m_dynCells.insert(DynCellKeyFor(hero->m_posMap, cellTiles));
+        m_dynMapId = mapId;
+        m_dynInit = true;
+        m_dynLastSizeTick = now;
+        m_dynLastRecenterTick = now;
+        m_dynProductiveTick = now;
+        m_dynLastKills = hero->GetGameKillCount();
+        spdlog::info("[dynzone] Seeded 1 cell ({} tiles) at ({},{}) on map {}",
+            cellTiles, hero->m_posMap.x, hero->m_posMap.y, mapId);
+        return;
+    }
+
+    // Efficiency = KILL RATE (the user's point): a spot is "productive" only
+    // while kills keep landing — a dense clump of tough mobs that aren't dying
+    // is NOT worth staying for. Uses the game's own accurate kill counter
+    // (CHero+0xA30), not the flaky entity-disappear heuristic. This drives
+    // the full-relocate fallback below; shape (grow/shrink) is driven purely
+    // by where LIVE monsters currently are, not by this productivity signal.
+    if (now - m_dynLastSizeTick >= kDynSizeReviewMs) {
+        m_dynLastSizeTick = now;
+        const int kills = hero->GetGameKillCount();
+        if (kills > m_dynLastKills) {
+            m_dynLastKills = kills;
+            m_dynProductiveTick = now;   // still killing here -> productive
+        }
+
+        // Phase 2b: bucket the CURRENTLY VISIBLE monsters into cells (live
+        // density, not heatmap history) so the shape follows what's actually
+        // there right now instead of only jumping on a timer. ignoreZone=true
+        // — now that IsPointNearHuntZone actually bounds MapWide to the
+        // CURRENT cells (see hunt_settings.cpp), the normal zone-gated scan
+        // would filter out every candidate frontier cell before growth ever
+        // got to see it, and the zone could never expand.
+        std::unordered_set<uint32_t> liveCells;
+        for (CRole* m : CollectHuntTargets(settings, false, /*ignoreSearchRange=*/true,
+                                            /*rangeOrigin=*/nullptr, /*ignoreZone=*/true))
+            if (m)
+                liveCells.insert(DynCellKeyFor(m->m_posMap, cellTiles));
+
+        // Shrink: a member cell CHECKED and found empty kDynShrinkTicks times
+        // in a row drops out of the zone. "Checked" means the hero was
+        // actually within kViewTiles of it — real tiles, NOT scaled by the
+        // zone's own cell size. Entities::Get() only contains what the
+        // game's server visibility has actually sent the client, so a cell
+        // the hero hasn't been near isn't "confirmed empty," it's just
+        // unobserved. Session 16 [SHRINK ON UNOBSERVED CELLS]: this used to
+        // decay EVERY member cell every tick regardless of hero position, so
+        // a multi-cell zone lost cells it wasn't actively standing in — a
+        // live fan-out to 5 cells shed one 9s after the hero simply moved to
+        // fight elsewhere, not because that cell's spawns were gone. The
+        // first fix used cell-grid adjacency ("own cell or a neighbor"),
+        // which quietly broke again at a large cellTiles (a 37-tile cell's
+        // "neighbor" spans 100+ actual tiles, well past real visibility) —
+        // a fixed tile-distance to the cell's center is correct at any cell
+        // size. A cell outside the check radius has its streak left
+        // untouched (not reset either — "no data" isn't "still alive") until
+        // the hero comes back near it for a real look. Never empty the zone
+        // entirely — the last cell always stays so there's somewhere to
+        // sample/steer toward.
+        auto isCellChecked = [&](uint32_t key) {
+            const Position c = DynCellCenterOf(key, cellTiles);
+            return CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, c.x, c.y) <= kViewTiles;
+        };
+        for (auto it = m_dynCells.begin(); it != m_dynCells.end(); ) {
+            const uint32_t key = *it;
+            if (liveCells.count(key)) {
+                m_dynCellColdStreak.erase(key);
+                ++it;
+                continue;
+            }
+            if (!isCellChecked(key)) {
+                ++it;   // hero wasn't close enough to know either way — leave its streak alone
+                continue;
+            }
+            const int cold = ++m_dynCellColdStreak[key];
+            if (cold >= kDynShrinkTicks && m_dynCells.size() > 1) {
+                m_dynCellColdStreak.erase(key);
+                it = m_dynCells.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        // Grow: any live cell within a "still worth the walk" GAP of the
+        // NEAREST existing member gets absorbed after kDynGrowTicks
+        // consecutive sightings — so one wandering stray doesn't yank the
+        // shape around — provided it's walkable, uncontested and the hero
+        // can actually reach it (same bounded-FindPath gate as a full
+        // relocate). Session 16 [NON-CONTIGUOUS GROWTH]: this used to require
+        // DIRECT 4-neighbor adjacency to an existing cell — but real spawn
+        // clusters leave dead ground between them at any cell size small
+        // enough to be useful, so a clump 2-4 cells away with nothing
+        // touching it never grew in even though it was plainly visible and
+        // worth the short walk. The gap is a multiple of the cell size
+        // itself (kDynGrowGapCells), not a fixed tile count, so it scales
+        // the same way the zone's own cells do. Candidates still have to
+        // pass the same walkable/uncontested/reachable gates as before, so
+        // this doesn't reopen the old "grow toward somewhere unreachable"
+        // problem — it just stops requiring the candidate to be glued to
+        // the current shape. m_dynCellHotStreak is rebuilt from this tick's
+        // candidates every pass, so one that falls out of range (a member
+        // near it was shrunk away) or stops showing mobs is dropped
+        // automatically.
+        constexpr int kDynGrowGapCells = 4;   // max gap, in CELLS, from the nearest member
+        if ((int)m_dynCells.size() < maxCells) {
+            CGameMap* map = Game::GetMap();
+            const Position heroPos = hero->m_posMap;
+            const int gapTiles = kDynGrowGapCells * cellTiles;
+            std::unordered_set<uint32_t> frontier;
+            for (uint32_t liveKey : liveCells) {
+                if (m_dynCells.count(liveKey))
+                    continue;   // already a member
+                const Position lc = DynCellCenterOf(liveKey, cellTiles);
+                int nearestDist = (std::numeric_limits<int>::max)();
+                for (uint32_t memberKey : m_dynCells) {
+                    const Position mc = DynCellCenterOf(memberKey, cellTiles);
+                    nearestDist = (std::min)(nearestDist, CGameMap::TileDist(lc.x, lc.y, mc.x, mc.y));
+                }
+                if (nearestDist <= gapTiles)
+                    frontier.insert(liveKey);
+            }
+            int frontierLive = 0;
+            std::unordered_map<uint32_t, int> freshHot;
+            for (uint32_t key : frontier) {
+                ++frontierLive;   // everything in `frontier` is already live this tick (built from liveCells)
+                auto pit = m_dynCellHotStreak.find(key);
+                const int hot = (pit != m_dynCellHotStreak.end() ? pit->second : 0) + 1;
+                if (hot >= kDynGrowTicks && (int)m_dynCells.size() < maxCells && map) {
+                    const Position c = DynCellCenterOf(key, cellTiles);
+                    const bool walkable = map->IsWalkable(c.x, c.y);
+                    const bool contested = walkable && HuntContest::IsBucketContested(mapId, c, settings);
+                    const bool reachable = walkable && !contested
+                        && !map->FindPath(heroPos.x, heroPos.y, c.x, c.y, kDynReachBudget).empty();
+                    if (walkable && !contested && reachable) {
+                        m_dynCells.insert(key);
+                        spdlog::info("[dynzone] Grew: cell ({},{}) added, now {} cells",
+                            c.x, c.y, (int)m_dynCells.size());
+                        continue;   // promoted to member — no frontier streak to keep
+                    }
+                    // Session 16 [GROWTH DIAGNOSIS]: hot enough to grow but blocked —
+                    // log exactly which gate failed instead of silently resetting,
+                    // so a live "zone never grows despite a dense swarm right next
+                    // to it" report can be pinned to a specific cause.
+                    spdlog::info("[dynzone] Grow blocked: cell ({},{}) walkable={} contested={} reachable={}",
+                        c.x, c.y, walkable, contested, reachable);
+                }
+                freshHot[key] = hot;
+            }
+            m_dynCellHotStreak.swap(freshHot);
+            spdlog::info("[dynzone] size-review: {} cells, {} frontier ({} live), {} total live mobs seen",
+                (int)m_dynCells.size(), (int)frontier.size(), frontierLive, (int)liveCells.size());
+        }
+    }
+
+    // Full relocate when kills have stalled (low kill rate) for a sustained
+    // window — the whole zone's played out or too slow, abandon it and reseed
+    // a single cell at the next reachable hot bucket.
+    if (now - m_dynProductiveTick >= kDynIdleRecenterMs
+        && now - m_dynLastRecenterTick >= kDynRecenterGapMs) {
+        m_dynLastRecenterTick = now;
+        Position centroid{};
+        for (uint32_t key : m_dynCells) {
+            const Position c = DynCellCenterOf(key, cellTiles);
+            centroid.x += c.x;
+            centroid.y += c.y;
+        }
+        centroid.x /= (int)m_dynCells.size();
+        centroid.y /= (int)m_dynCells.size();
+
+        Position newCenter{};
+        if (FindDynamicRecenterTarget(settings, mapId, centroid, newCenter)) {
+            spdlog::info("[dynzone] Relocate: {} cells around ({},{}) -> ({},{}) after {}ms unproductive",
+                (int)m_dynCells.size(), centroid.x, centroid.y, newCenter.x, newCenter.y, now - m_dynProductiveTick);
+            m_dynCells.clear();
+            m_dynCellHotStreak.clear();
+            m_dynCellColdStreak.clear();
+            m_dynCells.insert(DynCellKeyFor(newCenter, cellTiles));
+            m_dynProductiveTick = now;   // fresh window at the new area
+        }
+    }
+}
+
+void BaseHuntPlugin::ReseedDynamicZoneAt(const Position& pos, const AutoHuntSettings& settings)
+{
+    if (settings.zoneMode != AutoHuntZoneMode::MapWide || IsZeroPos(pos))
+        return;
+    const int cellTiles = (std::max)(1, settings.dynZoneCellTiles);
+    m_dynCells.clear();
+    m_dynCellHotStreak.clear();
+    m_dynCellColdStreak.clear();
+    m_dynCellTiles = cellTiles;
+    m_dynCells.insert(DynCellKeyFor(pos, cellTiles));
+    m_dynMapId = Game::GetCurrentMapId();
+    m_dynInit = true;
+    const DWORD now = GetTickCount();
+    m_dynLastSizeTick = now;
+    m_dynLastRecenterTick = now;
+    m_dynProductiveTick = now;
+    if (CHero* hero = Game::GetHero())
+        m_dynLastKills = hero->GetGameKillCount();
+    spdlog::info("[dynzone] Paranoia moved the zone: 1 cell ({} tiles) at ({},{})",
+        cellTiles, pos.x, pos.y);
 }
 
 bool BaseHuntPlugin::HasValidZone(const AutoHuntSettings& settings) const
@@ -1333,7 +1844,17 @@ bool BaseHuntPlugin::TrySteerTowardZoneClump(CHero* hero, CGameMap* map, const A
     // mobSearchRange — exactly the clumps the user reports the bot ignoring.
     // Zone geometry + name/tier filters still apply, so this stays bounded to
     // the hunt zone and never chases across the map.
-    const std::vector<CRole*> zoneTargets = CollectHuntTargets(settings, false, /*ignoreSearchRange=*/true);
+    std::vector<CRole*> zoneTargets = CollectHuntTargets(settings, false, /*ignoreSearchRange=*/true);
+    // Phase 2b: keep clump-steering inside the dynamic zone's active cells so
+    // Map-Wide works the current hot area instead of chasing a clump on the
+    // far side of the map (the zone grows toward live clumps and relocates
+    // wholesale when it dries up).
+    if (IsDynamicZoneActive(settings)) {
+        zoneTargets.erase(
+            std::remove_if(zoneTargets.begin(), zoneTargets.end(),
+                [this](CRole* m) { return !m || !InDynamicZone(m->m_posMap); }),
+            zoneTargets.end());
+    }
     if (zoneTargets.empty())
         return false;
 
@@ -1593,6 +2114,23 @@ bool BaseHuntPlugin::FindClosestZoneTile(CGameMap* map, const AutoHuntSettings& 
         maxX = settings.zoneCenter.x + settings.zoneRadius;
         minY = settings.zoneCenter.y - settings.zoneRadius;
         maxY = settings.zoneCenter.y + settings.zoneRadius;
+    } else if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
+        // Bounding box of the dynamic zone's active cells — now that
+        // IsPointNearHuntZone actually bounds MapWide (see hunt_settings.cpp),
+        // this path gets exercised for real: a hero who's drifted past the
+        // leash needs a real walkable tile inside the zone to path back to.
+        const std::vector<Position> cells = GetDynZoneCellCenters();
+        if (cells.empty())
+            return false;
+        const int half = m_dynCellTiles / 2;
+        minX = maxX = cells.front().x;
+        minY = maxY = cells.front().y;
+        for (const Position& c : cells) {
+            minX = (std::min)(minX, c.x - half);
+            maxX = (std::max)(maxX, c.x + half);
+            minY = (std::min)(minY, c.y - half);
+            maxY = (std::max)(maxY, c.y + half);
+        }
     } else {
         if (settings.zonePolygon.empty())
             return false;
@@ -1838,7 +2376,16 @@ void BaseHuntPlugin::Update()
             }
         }
 
-        if (m_buffMgr.TryUsePotions(hero, settings, m_lastHp, m_lastMaxHp, m_lastMana, m_lastMaxMana, buffCb))
+        // Don't drink combat HP/mana potions in the Market — it's a safe zone
+        // (nothing damages you there), so healing is pointless AND actively
+        // harmful here: this runs BEFORE the town-task dispatch below, so a
+        // character that arrives low on HP would flip to Recover every tick and
+        // never reach the repair/store/leave logic. Live-repro: an archer
+        // arrived in Market with a meteor to deposit, sat drinking potions in a
+        // Recover loop, and never stored it until it was disabled. Potions
+        // resume normally the moment it's back in a hunting zone.
+        if (Game::GetCurrentMapId() != MAP_MARKET
+            && m_buffMgr.TryUsePotions(hero, settings, m_lastHp, m_lastMaxHp, m_lastMana, m_lastMaxMana, buffCb))
             return;
     }
 
@@ -1937,22 +2484,41 @@ void BaseHuntPlugin::Update()
     // Session 14 [Paranoia evasion redesign]: advance the flee/relocate state
     // machine now, so this tick's loot-drop and leash-widen decisions already
     // reflect whether we're evading (see UpdateEvadeState). evadeActive covers
-    // Fleeing, Relocating AND ReturningHome — the leash stays loose through the
-    // whole sequence so zone-return never yanks the hero mid-evasion.
+    // both Fleeing and Relocating — the leash stays loose through the whole
+    // sequence so zone-return never yanks the hero mid-evasion (and a gentle
+    // flee is allowed to briefly step out of the zone to break line of sight).
+    // Phase 2: advance the Map-Wide dynamic-zone engine (moving/resizing hot
+    // circle) before the evade + zone decisions below read from it.
+    UpdateDynamicZone(hero, settings);
     const bool evadeActive = UpdateEvadeState(hero, settings);
     const int leashMargin = evadeActive ? GetHuntLeash(settings) * 3 : GetHuntLeash(settings);
-    if (Game::GetCurrentMapId() != settings.zoneMapId
-        || !IsPointNearHuntZone(settings, Game::GetCurrentMapId(), hero->m_posMap,
-                                leashMargin)) {
+    if ((Game::GetCurrentMapId() != settings.zoneMapId
+         || !IsPointNearHuntZone(settings, Game::GetCurrentMapId(), hero->m_posMap, leashMargin))
+        && !TickIsFuture(m_zoneUnreachableUntilTick, now)) {
         // Session 11 [LOCKUP FIX]: give up after repeated failures instead of
         // retrying forever — see m_zoneTravelFailCount's comment in the
         // header. A genuinely-unreachable zone (bad gateway data, wrong
         // zoneMapId) used to loop this every tick indefinitely with no way
         // to stop it short of editing the config file with the game closed.
         if (m_zoneTravelFailCount >= kMaxZoneTravelFailures) {
-            spdlog::error("[hunt] Giving up reaching hunt zone after {} failed attempts — disabling hunting. Check zoneMapId ({}) and gateway routes.",
-                m_zoneTravelFailCount, settings.zoneMapId);
             m_zoneTravelFailCount = 0;
+            // Session 15 [ZONE-UNREACHABLE FALLBACK]: if we're already ON the
+            // zone map but the anchor is unreachable (FindPath keeps returning
+            // empty — e.g. the Ape City 2 portal landed us across an impassable
+            // center), do NOT disable the whole hunt. Hunt from the current
+            // position and back off retrying the anchor for a while; normal
+            // targeting/exploration takes over from here. Only the genuinely
+            // WRONG-map case (nothing local to fall back to) still disables.
+            if (Game::GetCurrentMapId() == settings.zoneMapId) {
+                spdlog::warn("[hunt] Hunt-zone anchor unreachable on map {} — hunting from current position instead of disabling (retry in 60s).",
+                    settings.zoneMapId);
+                m_zoneUnreachableUntilTick = now + 60000;
+                m_targetId = 0;
+                SetState(AutoHuntState::AcquireTarget, "Anchor unreachable — hunting here");
+                return;
+            }
+            spdlog::error("[hunt] Giving up reaching hunt zone after {} failed attempts — disabling hunting. Check zoneMapId ({}) and gateway routes.",
+                kMaxZoneTravelFailures, settings.zoneMapId);
             ApplyHuntModeSelection(settings.combatMode, false);
             SetState(AutoHuntState::Failed, "Could not reach hunt zone after repeated attempts — hunting disabled");
             return;
@@ -2704,11 +3270,28 @@ void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
 
     if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
         ImGui::Text("Zone Map: %u", settings.zoneMapId);
-        HelpMarkerOnSameLine("The bot may go anywhere on this map — no drawn shape. "
+        HelpMarkerOnSameLine("No shape to draw — the bot builds its own zone on this map "
+                             "as it hunts, growing/shrinking toward live monster clusters "
+                             "and relocating to a new hot spot when the current one dries "
+                             "up (see the cyan cells on the minimap). Hunting is bounded to "
+                             "that zone the same way Circle/Polygon bound themselves; "
+                             "relocating lets it use the whole map over a session. "
                              "Use \"Use Hero Position\" below to set which map.");
         if (hero && ImGui::Button("Use Hero Position")) {
             settings.zoneMapId = Game::GetCurrentMapId();
         }
+        ImGui::SliderInt("Zone Cell Size", &settings.dynZoneCellTiles, 8, 100, "%d tiles");
+        HelpMarkerOnSameLine("How large each cell of the dynamic zone is. Bigger cells cover "
+                             "more ground per growth step and immediately claim more area on "
+                             "a fresh relocate — useful for a fast build that outpaces the "
+                             "default 8-tile grid. Changing this reseeds the zone (map-change "
+                             "behavior) rather than resizing cells already grown, so it takes "
+                             "a moment to rebuild after you move the slider.");
+        ImGui::SliderInt("Max Zone Cells", &settings.dynZoneMaxCells, 4, 60);
+        HelpMarkerOnSameLine("How many cells the zone can grow to at once. Smaller cells need "
+                             "more of them to cover the same real ground, so raise this if "
+                             "you're running a small Zone Cell Size and the zone keeps hitting "
+                             "its cap instead of continuing to expand.");
         // The leash/anchor text further down still applies and is shown
         // unconditionally, so nothing else to render for this mode.
         ImGui::TextDisabled("Leash: %d tiles out of zone / engage %d tiles out%s",
@@ -3089,23 +3672,23 @@ void BaseHuntPlugin::RenderSafetySection()
     ImGui::Checkbox("Paranoia Mode", &settings.paranoiaEnabled);
     HelpMarkerOnSameLine(
         "Stealth evasion, distinct from Player Safety above - keeps hunting instead of fully retreating to "
-        "Market. When a non-whitelisted player is detected within Detection Range the bot FLEES away at a human "
-        "pace (it won't speed-hack while a player can still see it); once out of everyone's sight it RELOCATES - "
-        "speed-hacking to a different heatmap-hot area away from where the player was; if that player was only "
-        "passing through it RETURNS to the original spot, otherwise it stays at the new area. Tune the "
-        "passing-vs-lingering time and re-nudge distance on the Advanced tab. MapWide zone works best (the whole "
-        "map to relocate into). Does not apply to town runs or mining. There's no facing/camera data to read - "
-        "this is positioning-based avoidance, not a guarantee of being unseen.");
+        "Market. When any non-whitelisted player comes into view the bot GENTLY hops ~Flee Distance tiles away "
+        "(just out of their ~30-tile view) at a human pace, then RESUMES hunting right there - no sprint across "
+        "the map, no compulsive return. Only when a spot is genuinely compromised (the same place draws a player "
+        "'Abandon Spot After' times, or one player keeps it in sight past 'Linger Before Relocate') does it "
+        "RELOCATE for good to a new heatmap-hot area. Tune it all on the Advanced tab. MapWide zone works best. "
+        "Does not apply to town runs or mining. There's no facing/camera data to read - this is positioning-based "
+        "avoidance, not a guarantee of being unseen.");
 
     if (settings.paranoiaEnabled) {
         const char* evadeName =
-            m_evadeState == EvadeState::Fleeing       ? "FLEEING (human pace)" :
-            m_evadeState == EvadeState::Relocating    ? "RELOCATING (speed-hack to new area)" :
-            m_evadeState == EvadeState::ReturningHome ? "RETURNING to original spot" :
-                                                        "idle (no player detected)";
+            m_evadeState == EvadeState::Fleeing    ? "FLEEING (stepping out of view)" :
+            m_evadeState == EvadeState::Relocating ? "RELOCATING (new area)" :
+                                                     "idle (no player detected)";
         const bool evading = m_evadeState != EvadeState::None;
         ImGui::TextColored(evading ? ImVec4(1, 0.7f, 0.3f, 1) : ImVec4(0.4f, 1, 0.4f, 1),
-            "Evasion: %s  (players tracked: %d)", evadeName, (int)m_playerTracks.size());
+            "Evasion: %s  (players tracked: %d, encounters: %d)",
+            evadeName, (int)m_playerTracks.size(), m_evadeEncounterCount);
     }
 
     if (settings.paranoiaEnabled) {
@@ -3151,6 +3734,8 @@ void BaseHuntPlugin::RenderAdvancedSection()
             settings.itemPickupDelayMs = defaults.itemPickupDelayMs;
             settings.decisionThrottleMs = defaults.decisionThrottleMs;
             settings.randomWalkIntervalMs = defaults.randomWalkIntervalMs;
+            settings.paranoiaFleeDistance = defaults.paranoiaFleeDistance;
+            settings.paranoiaAbandonAfter = defaults.paranoiaAbandonAfter;
             settings.paranoiaPassingThresholdMs = defaults.paranoiaPassingThresholdMs;
             settings.paranoiaRenudgeTiles = defaults.paranoiaRenudgeTiles;
         }
@@ -3194,16 +3779,21 @@ void BaseHuntPlugin::RenderAdvancedSection()
         "value (never subtracted), so the actual cadence is never perfectly periodic. 0 disables it.");
 
     ImGui::SeparatorText("Paranoia Evasion");
-    ImGui::TextDisabled("Tuning for Paranoia Mode's flee -> relocate -> return flow (enable it on the Safety tab).");
-    ImGui::SliderInt("Passing vs Lingering (ms)", &settings.paranoiaPassingThresholdMs, 1000, 30000);
-    HelpMarkerOnSameLine("How long a player must be continuously detected (from first sighting until the bot "
-        "loses sight of them) to count as LINGERING. Below this they were 'just passing' -> after relocating "
-        "out of sight the bot returns to its original hunting spot. At or above it, the bot treats the spot as "
-        "watched and stays at the new area.");
+    ImGui::TextDisabled("Tuning for Paranoia Mode's gentle-flee behavior (enable it on the Safety tab).");
+    ImGui::SliderInt("Flee Distance (tiles)", &settings.paranoiaFleeDistance, 0, 100);
+    HelpMarkerOnSameLine("How far to hop away from a detected player before resuming the hunt — just enough to "
+        "leave their ~30-tile view, NOT a sprint across the map. 36 is a good default (a bit past view range). "
+        "0 disables the hop (it will only relocate when a spot is contested).");
+    ImGui::SliderInt("Abandon Spot After (encounters)", &settings.paranoiaAbandonAfter, 1, 20);
+    HelpMarkerOnSameLine("How many times a player may be re-encountered at the current spot (within a couple "
+        "minutes of each other) before the bot gives up on it and RELOCATES for good to a new heatmap-hot area, "
+        "instead of shuffling out-and-back forever. The count resets after a stretch of undisturbed hunting.");
+    ImGui::SliderInt("Linger Before Relocate (ms)", &settings.paranoiaPassingThresholdMs, 1000, 30000);
+    HelpMarkerOnSameLine("If a single player keeps the bot in sight this long during one flee (they're "
+        "following/camping, not just passing), skip straight to relocating rather than continuing to edge away.");
     ImGui::SliderInt("Re-nudge Distance (tiles)", &settings.paranoiaRenudgeTiles, 0, 40);
-    HelpMarkerOnSameLine("If a player reappears while the bot is relocating (the new area was still too close "
-        "or in their path), the next relocate destination is pushed this many extra tiles farther from the "
-        "threat, per reappearance. 0 = don't push farther.");
+    HelpMarkerOnSameLine("If a player is also at the area the bot relocated to, the next relocate destination is "
+        "pushed this many extra tiles farther from the threat, per reappearance. 0 = don't push farther.");
 }
 
 // Session 13: merged in Misc tab's former "Hunt Diagnostics" section (was a
@@ -3371,6 +3961,54 @@ void BaseHuntPlugin::RenderDebugSection()
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear map"))
             SpawnMemory::ClearMap(mid);
+    }
+    // Phase 2b dynamic-zone readout (Map-Wide only).
+    if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
+        if (IsDynamicZoneActive(settings)) {
+            const DWORD unprodMs = GetTickCount() - m_dynProductiveTick;
+            ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1),
+                "dyn-zone: %d cells  mobsInZone=%d  kills=%d  sinceKill=%.1fs",
+                (int)m_dynCells.size(), CountMonstersInDynamicZone(settings),
+                hero ? hero->GetGameKillCount() : 0, unprodMs / 1000.0f);
+        } else {
+            ImGui::TextDisabled("dyn-zone: seeding...");
+        }
+    }
+    // Session 15 [KILL-SIGNAL RE]: dump the game's own indexed stat table so we
+    // can find a client-side kill-counter index (GetValue(1)=HP is the only one
+    // read so far). Stand in-game, note your kill count, click, then match it to
+    // an index in the log ([statdump]); kill a few and re-dump to confirm the
+    // index that ticks up. Read-only via the same native accessor used for HP.
+    if (ImGui::Button("Dump Stat Table (find kill counter)")) {
+        if (hero && hero->m_pStatTable) {
+            spdlog::info("[statdump] CStatTable::GetValue(0..63):");
+            for (int i = 0; i < 64; ++i)
+                spdlog::info("[statdump]   [{}] = {}", i, hero->m_pStatTable->GetValue(i));
+        } else {
+            spdlog::warn("[statdump] no hero / stat table available");
+        }
+    }
+    // Session 15 [KILL-SIGNAL RE]: raw byte-dump — GetValue() returns 0 on v1074,
+    // so read the real memory. Dumps (1) a wide CHero int window around the stat
+    // pointer (HP/kills may be a direct CHero field), and (2) the objects the
+    // stat pointer at +0x968 and the v1074-shifted +0x9B8 point to, as int32s.
+    // Note your HP and kill count, click, then match them in the [statbytes] log.
+    if (ImGui::Button("Dump Stat BYTES (find HP/kills offset)")) {
+        if (hero) {
+            const uintptr_t base = reinterpret_cast<uintptr_t>(hero);
+            spdlog::info("[statbytes] === hero=0x{:X} : CHero ints +0x800..+0xD00 (kills are at +0xA30) ===", base);
+            DumpInts("CHero", base + 0x800, 320);   // 0x500 bytes as int32s (widened to hunt HP)
+            uintptr_t p968 = 0, p9B8 = 0;
+            SafeReadBlock(base + 0x968, &p968, sizeof(p968));
+            SafeReadBlock(base + 0x9B8, &p9B8, sizeof(p9B8));
+            spdlog::info("[statbytes] statPtr@+0x968=0x{:X}  statPtr@+0x9B8=0x{:X}", p968, p9B8);
+            if (p968 > 0x10000)
+                DumpInts("*statPtr(0x968)", p968, 64);   // 0x100 bytes as int32s
+            if (p9B8 > 0x10000 && p9B8 != p968)
+                DumpInts("*statPtr(0x9B8)", p9B8, 64);
+        } else {
+            spdlog::warn("[statbytes] no hero available");
+        }
     }
     {
         // Ground-item scan (session 10): map->m_vecItems was NEVER

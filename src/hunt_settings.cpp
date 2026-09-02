@@ -5,6 +5,8 @@
 #include "CGameMap.h"
 #include "CItem.h"
 #include "itemtype.h"
+#include "plugins/base_hunt_plugin.h"
+#include "plugins/plugin_mgr.h"
 
 const char* HuntSkillName(HuntSkillType type)
 {
@@ -85,6 +87,37 @@ bool PointInPolygon(const Position& point, const std::vector<Position>& polygon)
     return inside;
 }
 
+namespace {
+BaseHuntPlugin* GetActiveHuntPlugin()
+{
+    for (auto& p : PluginManager::Get().GetPlugins())
+        if (auto* h = dynamic_cast<BaseHuntPlugin*>(p.get()); h && h->m_enabled)
+            return h;
+    return nullptr;
+}
+}
+
+bool IsInDynamicZone(const Position& pos)
+{
+    BaseHuntPlugin* h = GetActiveHuntPlugin();
+    return h && h->IsDynZoneInit() && h->InDynamicZone(pos);
+}
+
+bool IsNearDynamicZone(const Position& pos, int margin)
+{
+    BaseHuntPlugin* h = GetActiveHuntPlugin();
+    if (!h || !h->IsDynZoneInit())
+        return false;
+    if (h->InDynamicZone(pos))
+        return true;
+    if (margin <= 0)
+        return false;
+    for (const Position& c : h->GetDynZoneCellCenters())
+        if (c.DistanceTo(pos) <= (float)margin)
+            return true;
+    return false;
+}
+
 bool HasValidHuntZone(const AutoHuntSettings& settings)
 {
     if (settings.zoneMapId == 0)
@@ -108,10 +141,11 @@ bool IsPointInHuntZone(const AutoHuntSettings& settings, OBJID mapId, const Posi
     if (mapId != settings.zoneMapId)
         return false;
 
-    // Map-wide: every point on the target map counts as "in zone" — that's
-    // the entire point of the mode.
+    // Map-wide: bounded by the dynamic zone the bot has built for itself
+    // (BaseHuntPlugin::UpdateDynamicZone), not "every point on the map" —
+    // that was Map-Wide's meaning before the dynamic-zone engine existed.
     if (settings.zoneMode == AutoHuntZoneMode::MapWide)
-        return true;
+        return IsInDynamicZone(pos);
 
     if (settings.zoneMode == AutoHuntZoneMode::Route) {
         // "Inside the zone" for a route means inside the corridor — the band
@@ -233,9 +267,11 @@ bool IsPointNearHuntZone(const AutoHuntSettings& settings, OBJID mapId, const Po
 {
     if (mapId != settings.zoneMapId)
         return false;
-    // Map-wide has no boundary to be "near" — every point is already inside.
+    // Map-wide: same leash-margin treatment as every other mode, bounded by
+    // the dynamic zone instead of a fixed shape — a monster/position just
+    // past its edge still counts as "near" within `margin` tiles.
     if (settings.zoneMode == AutoHuntZoneMode::MapWide)
-        return true;
+        return IsNearDynamicZone(pos, margin);
     if (margin <= 0)
         return IsPointInHuntZone(settings, mapId, pos);
 
@@ -265,13 +301,23 @@ bool IsPointNearHuntZone(const AutoHuntSettings& settings, OBJID mapId, const Po
 
 Position GetHuntZoneAnchor(const AutoHuntSettings& settings)
 {
-    // Map-wide has no fixed center — anchor on wherever the hero currently
-    // is, since "return to zone" for this mode just means "stay on the
-    // target map," not walk back to any particular point on it.
+    // Map-wide: anchor on the nearest active dynamic-zone cell, so "return
+    // to zone" walks back toward the area the bot actually built for itself
+    // instead of nowhere. Falls back to the hero's own position before the
+    // zone has seeded (or if no hunt plugin is enabled).
     if (settings.zoneMode == AutoHuntZoneMode::MapWide) {
-        if (CHero* hero = Game::GetHero())
-            return hero->m_posMap;
-        return {};
+        CHero* hero = Game::GetHero();
+        if (!hero)
+            return {};
+        Position best = hero->m_posMap;
+        if (BaseHuntPlugin* h = GetActiveHuntPlugin()) {
+            float bestDist = (std::numeric_limits<float>::max)();
+            for (const Position& c : h->GetDynZoneCellCenters()) {
+                const float d = hero->m_posMap.DistanceTo(c);
+                if (d < bestDist) { bestDist = d; best = c; }
+            }
+        }
+        return best;
     }
     if (settings.zoneMode == AutoHuntZoneMode::Route) {
         // Anchor on the waypoint nearest the hero rather than the route's
