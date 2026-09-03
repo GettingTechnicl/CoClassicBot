@@ -107,10 +107,30 @@ private:
     BYTE _padCFD[0x1050 - 0xCFD];  // +0xCFD
 
 public:
-    BOOL m_bNpcActive;             // +0x1050 (v1074) active NPC dialog flag [inferred]
+    // +0x1050 [LIVE-VERIFIED 2026-09-02]: 0 -> 1 when a dialog opens (the only
+    // 0/1 flip in a closed-vs-open hero dump) — but STICKY: it stays 1 after
+    // the dialog is closed, and a bot-sent ActivateNpc packet on a session
+    // that never had a manual click leaves it 0 even though the dialog
+    // renders. So it answers "has a dialog ever been opened by a click", not
+    // "is one open now". Do not gate on it alone. See m_pNpcDialog.
+    BOOL m_bNpcActive;             // +0x1050 (v1074)
 
 private:
-    BYTE _pad1054[0x1968 - 0x1054]; // +0x1054 gap to magic vector
+    BYTE _pad1054[0x1060 - 0x1054];
+
+public:
+    // +0x1060 [LIVE-VERIFIED 2026-09-02, npctest v3]: pointer to the current
+    // NPC dialog object. Sticky across a close too — but it is REPLACED with a
+    // fresh object every time a dialog is created, including dialogs opened by
+    // the bot's own ActivateNpc packet (observed 0AAC01A0 -> 08F45D50 within
+    // 300 ms of the send). That change is the only client-side signal found
+    // that says "a dialog appeared just now" for a packet-opened dialog, which
+    // is what the confirm-open gates in hunt_town.cpp need. Compare against
+    // the value captured immediately before sending the activate.
+    uintptr_t m_pNpcDialog;        // +0x1060 (v1074)
+
+private:
+    BYTE _pad1068[0x1968 - 0x1068]; // +0x1068 gap to magic vector
 
 public:
     std::vector<PMagic> m_vecMagic; // +0x1968 (v1074) learned skills [LIVE-VERIFIED: count 18]
@@ -119,7 +139,11 @@ private:
     BYTE _pad1980[0x3774 - 0x1980]; // +0x1980 gap to active NPC UID
 
 public:
-    OBJID m_idActiveNpc;            // +0x3774 (v1074) NPC entity currently in dialog [inferred]
+    // +0x3774 [LIVE-VERIFIED 2026-09-02]: id of the NPC the client's own click
+    // path last opened (101545 -> 101395 when MillionaireLee was clicked).
+    // Same caveat as m_bNpcActive: set by the click path, sticky, not updated
+    // by a bot-sent activate on a cold session.
+    OBJID m_idActiveNpc;            // +0x3774 (v1074)
 
 private:
     BYTE _pad3778[0x3790 - 0x3778]; // +0x3778 gap to VIP flag
@@ -177,6 +201,14 @@ public:
     void AnswerNpcEx(int answer, int taskId);    // explicit task ID
     bool IsNpcActive() const;
     OBJID GetActiveNpc() const;
+    // Opaque token for "which dialog object is current". Capture it right
+    // before ActivateNpc(); NpcDialogOpenedSince(token) is true once the
+    // client has created a NEW dialog object (i.e. the server answered and the
+    // dialog rendered). Works on a cold session where m_bNpcActive never flips.
+    uintptr_t GetNpcDialogToken() const { return m_pNpcDialog; }
+    bool NpcDialogOpenedSince(uintptr_t token) const {
+        return m_pNpcDialog != 0 && m_pNpcDialog != token;
+    }
 
     // ── State queries ──
     int GetCurrentHp() const;
@@ -205,6 +237,7 @@ static_assert(offsetof(CHero, m_qwRuntimeA30) == 0xA80, "CHero::m_qwRuntimeA30")
 static_assert(offsetof(CHero, m_nMaxMana) == 0xCF8, "CHero::m_nMaxMana");           // v1074 +0x50
 static_assert(offsetof(CHero, m_bMaxManaValid) == 0xCFC, "CHero::m_bMaxManaValid"); // v1074 +0x50
 static_assert(offsetof(CHero, m_bNpcActive) == 0x1050, "CHero::m_bNpcActive");      // v1074 +0x50
+static_assert(offsetof(CHero, m_pNpcDialog) == 0x1060, "CHero::m_pNpcDialog");      // live-verified 2026-09-02
 static_assert(offsetof(CHero, m_deqItem) == 0xB70, "CHero::m_deqItem");             // v1074 +0x50
 static_assert(offsetof(CHero, m_equipment) == 0xBD8, "CHero::m_equipment");         // v1074 +0x50
 static_assert(offsetof(CHero, m_vecMagic) == 0x1968, "CHero::m_vecMagic");          // v1074 +0x50

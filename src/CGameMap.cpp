@@ -212,6 +212,37 @@ std::vector<Position> CGameMap::FindPath(int ox, int oy, int tx, int ty, int max
 }
 
 // =====================================================================
+std::vector<uint8_t> CGameMap::FloodReachable(int ox, int oy, int maxNodes) const
+{
+    const int w = m_sizeMap.iWidth, h = m_sizeMap.iHeight;
+    std::vector<uint8_t> seen;
+    if (w <= 0 || h <= 0 || !IsWalkable(ox, oy))
+        return seen;
+    seen.assign((size_t)w * (size_t)h, 0);
+    std::vector<Position> q;
+    q.reserve(4096);
+    q.push_back({ox, oy});
+    seen[(size_t)oy * w + ox] = 1;
+    static const int kDX[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+    static const int kDY[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+    int nodes = 0;
+    for (size_t head = 0; head < q.size() && nodes < maxNodes; ++head, ++nodes) {
+        const Position c = q[head];
+        const int16_t curAlt = GetAltitude(GetCell(c.x, c.y));
+        for (int d = 0; d < 8; ++d) {
+            const int nx = c.x + kDX[d], ny = c.y + kDY[d];
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            uint8_t& mark = seen[(size_t)ny * w + nx];
+            if (mark) continue;
+            if (!IsWalkable(nx, ny)) continue;
+            if (abs(GetAltitude(GetCell(nx, ny)) - curAlt) > 200) continue;
+            mark = 1;
+            q.push_back({nx, ny});
+        }
+    }
+    return seen;
+}
+
 // Simplify tile path into jump waypoints (greedy largest jumps)
 // =====================================================================
 std::vector<Position> CGameMap::SimplifyPath(const std::vector<Position>& tilePath) const

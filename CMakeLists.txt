@@ -181,6 +181,16 @@ set_target_properties(explorer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ── NPC dialog test (standalone; inject mid-session, calls the client's own
+#    ActivateNpc and logs m_bNpcActive/m_idActiveNpc — see src/npctest.cpp) ──
+add_library(npctest SHARED
+    src/npctest.cpp
+)
+set_target_properties(npctest PROPERTIES
+    OUTPUT_NAME "npctest"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ── Net finder (standalone; Detour-hooks Winsock send/WSASend to locate
 #    CNetClient::SendMsg — safe alternative to hardware-breakpoint tracing) ──
 add_library(netfinder SHARED

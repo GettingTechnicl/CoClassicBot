@@ -1429,6 +1429,41 @@ static void RenderMinimapSection(CHero* hero, CGameMap* map,
                             }
                         }
 
+                        // ── Draw EVERY file-declared portal, numbered ──
+                        // The map file lists all of this map's portals
+                        // (MapGrid::GetPortals); the gateway table only has the
+                        // ones whose destination has been observed. Show both
+                        // states so a capture walk can see at a glance which
+                        // portals still need jumping through:
+                        //   green  "#N"  = a gateway Portal entry sits within 2
+                        //                  tiles -> destination known
+                        //   orange "#N"  = no gateway entry -> destination unknown
+                        if (const MapGrid* fileGrid = GetCurrentMapGrid()) {
+                            if (fileGrid->IsLoaded() && (OBJID)fileGrid->GetMapId() == Game::GetCurrentMapId()) {
+                                for (const MapPortal& fp : fileGrid->GetPortals()) {
+                                    float pdx = (float)fp.x - camTileX;
+                                    float pdy = (float)fp.y - camTileY;
+                                    if (pdx > effectiveRadius || pdx < -effectiveRadius) continue;
+                                    if (pdy > effectiveRadius || pdy < -effectiveRadius) continue;
+                                    bool known = false;
+                                    for (auto& gw : gateways) {
+                                        if (gw.type == GatewayType::Portal
+                                            && abs(gw.pos.x - fp.x) <= 2 && abs(gw.pos.y - fp.y) <= 2) {
+                                            known = true; break;
+                                        }
+                                    }
+                                    const float pcx = centerX + (pdx - pdy) * fs;
+                                    const float pcy = centerY + (pdx + pdy) * fs;
+                                    const ImU32 col = known ? IM_COL32(80, 255, 120, 235)
+                                                            : IM_COL32(255, 150, 40, 235);
+                                    dl->AddCircle(ImVec2(pcx, pcy), fs * 1.6f, col, 12, 2.0f);
+                                    char lbl[16];
+                                    snprintf(lbl, sizeof(lbl), "#%d", fp.id);
+                                    dl->AddText(ImVec2(pcx + fs * 1.8f, pcy - fs * 1.2f), col, lbl);
+                                }
+                            }
+                        }
+
                         // ── Draw gateway markers on minimap ──
                         for (auto& gw : gateways) {
                             float gdx = (float)gw.pos.x - camTileX;

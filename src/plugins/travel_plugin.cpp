@@ -714,6 +714,32 @@ void TravelPlugin::Update()
 
         m_gatewayIndex++;
         m_gatewayApproachPos = {0, 0};
+
+        // Landed somewhere the plan didn't expect? Re-plan from here instead
+        // of walking the rest of a path that assumes a different map. This is
+        // ordinary on Adventure Islands: any portal there can randomly drop
+        // you on the second instance (map 1219) at a fixed tile instead of
+        // its own destination — not a bad table entry, a server mechanic —
+        // and the old path's next gateway is then on a map you're not on.
+        if (m_gatewayIndex < m_gatewayPath.size()
+            && m_gatewayPath[m_gatewayIndex].mapId != Game::GetCurrentMapId()) {
+            OBJID currentMap = Game::GetCurrentMapId();
+            spdlog::warn("[travel] Landed on map {} but the next gateway is on map {} — re-planning",
+                         currentMap, m_gatewayPath[m_gatewayIndex].mapId);
+            Position replanPos = {hero->m_posMap.x, hero->m_posMap.y};
+            m_gatewayPath = BuildGatewayPathForHero(hero, currentMap, m_destMapId, replanPos, hero->GetSilver(),
+                CanUseVipTeleportNow(hero), m_destPos);
+            if (m_gatewayPath.empty()) {
+                snprintf(m_statusText, sizeof(m_statusText), "No route from %s",
+                         GetMapName(currentMap));
+                SetState(TravelState::Failed);
+            } else {
+                m_gatewayIndex = 0;
+                SetState(TravelState::PathfindToGateway);
+            }
+            return;
+        }
+
         if (m_gatewayIndex >= m_gatewayPath.size()) {
             OBJID currentMap = Game::GetCurrentMapId();
             if (currentMap == m_destMapId) {

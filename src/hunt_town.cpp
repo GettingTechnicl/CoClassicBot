@@ -3,6 +3,7 @@
 #include "hunt_intervals.h"
 #include "hunt_targeting.h"
 #include "hunt_town.h"
+#include <cstdint>
 #include "inventory_utils.h"
 #include "npc_utils.h"
 #include "CHero.h"
@@ -69,13 +70,45 @@ bool HuntTownService::HasBlacksmithOnMap(OBJID mapId)
     return FindBlacksmithForMap(mapId) != nullptr;
 }
 
-bool HuntTownService::GetFallbackBlacksmithCity(OBJID& outMapId, Position& outPos)
+bool HuntTownService::GetFallbackBlacksmithCity(OBJID fromMapId, const Position& heroPos,
+                                                 OBJID& outMapId, Position& outPos)
 {
-    constexpr size_t kCount = sizeof(kBlacksmiths) / sizeof(kBlacksmiths[0]);
-    if (kCount == 0)
-        return false;
-    outMapId = kBlacksmiths[0].mapId;
-    outPos = kBlacksmiths[0].pos;
+    // Pick the blacksmith city with the FEWEST gateway hops from where the
+    // hero actually is. This used to return kBlacksmiths[0] (Twin City)
+    // unconditionally — live 2026-09-03 an archer that ran dry on Ape City 2
+    // travelled Ape City 2 -> Ape Mountain -> Conductress -> Twin City
+    // (3 hops) to buy arrows, walking straight past Ape Mountain's own
+    // blacksmith one hop from where it started.
+    size_t bestHops = SIZE_MAX;
+    const BlacksmithEntry* best = nullptr;
+    for (const auto& entry : kBlacksmiths) {
+        if (entry.pos.x == 0 && entry.pos.y == 0)
+            continue;
+        if (entry.mapId == fromMapId) {           // already here — 0 hops
+            best = &entry; bestHops = 0; break;
+        }
+        const std::vector<Gateway> path = FindGatewayPath(fromMapId, entry.mapId, heroPos);
+        if (path.empty())
+            continue;                              // unreachable from here
+        if (path.size() < bestHops) {
+            bestHops = path.size();
+            best = &entry;
+        }
+    }
+    if (!best) {
+        // Nothing reachable by the gateway graph — keep the old behaviour as
+        // a last resort rather than leaving the archer at 0 arrows forever.
+        constexpr size_t kCount = sizeof(kBlacksmiths) / sizeof(kBlacksmiths[0]);
+        if (kCount == 0) return false;
+        best = &kBlacksmiths[0];
+        spdlog::warn("[hunt] no blacksmith city reachable from map {} via gateways; defaulting to {}",
+                     fromMapId, GetMapName(best->mapId));
+    } else {
+        spdlog::info("[hunt] nearest blacksmith from map {}: {} ({} hop{})",
+                     fromMapId, GetMapName(best->mapId), bestHops, bestHops == 1 ? "" : "s");
+    }
+    outMapId = best->mapId;
+    outPos = best->pos;
     return true;
 }
 
@@ -868,7 +901,10 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
             CRole* npc = FindNpcByName("MillionaireLee", kMillionaireLeePos, 16);
             const Position npcPos = npc ? npc->m_posMap : kMillionaireLeePos;
             const int npcDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, npcPos.x, npcPos.y);
-            if (npcDist > 5) {
+            // 7, not 5: a manual click from 7 tiles opened Lee's dialog
+            // (2026-09-02 differential dump, hero never moved), and Lee stands
+            // behind a counter — the nearest REACHABLE tile can be 5-7 away.
+            if (npcDist > 7) {
                 cb.startPathNearTargetFn(hero, map, npcPos, 4);
                 cb.setStateFn(AutoHuntState::StoreItems, "Moving to MillionaireLee");
                 return;
@@ -886,6 +922,7 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
             m_storeMeteorCountBefore = meteorCount;
             spdlog::info("[hunt] MillionaireLee: hero=({},{}) npc=({},{}) dist={} — activating",
                 hero->m_posMap.x, hero->m_posMap.y, npcPos.x, npcPos.y, npcDist);
+            m_npcDialogToken = hero->GetNpcDialogToken();
             hero->ActivateNpc(m_millionaireLeeNpcId);
             m_millionaireLeeAnswerCount = 0;
             m_lastNpcActionTick = now;
@@ -896,9 +933,16 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
 
         case StorePhase::WaitPackMeteors: {
             // Same freeze-safety shape as WaitTreasureBank below: never send
-            // the pack-confirm without IsNpcActive() actually confirming the
-            // dialog opened, bounded retry, then give up on this cycle.
-            const bool dialogOpen = hero->IsNpcActive() && hero->GetActiveNpc() == m_millionaireLeeNpcId;
+            // the pack-confirm without the dialog actually confirmed open,
+            // bounded retry, then give up on this cycle.
+            //
+            // 2026-09-02: confirmation is "a NEW dialog object appeared since
+            // the activate was sent" (CHero::m_pNpcDialog changed), not
+            // IsNpcActive()/GetActiveNpc(). Those are click-path-set and
+            // sticky; live differential dumps showed the bot's packet opens
+            // the dialog on screen without ever flipping them, which is why
+            // this gate failed for weeks (3 activates, 0 answers, give up).
+            const bool dialogOpen = hero->NpcDialogOpenedSince(m_npcDialogToken);
             if (!dialogOpen) {
                 if (now - m_lastNpcActionTick > 1200) {
                     if (++m_millionaireLeeOpenAttempts >= kMaxBankOpenAttempts) {
@@ -909,9 +953,11 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
                         m_storePhase = StorePhase::MoveToWarehouse;
                         return;
                     }
-                    spdlog::info("[hunt] MillionaireLee: retry {} — hero=({},{}), IsNpcActive={} activeNpc={}",
+                    spdlog::info("[hunt] MillionaireLee: retry {} — hero=({},{}), dialogToken={:#x} now={:#x} (IsNpcActive={} activeNpc={})",
                         m_millionaireLeeOpenAttempts, hero->m_posMap.x, hero->m_posMap.y,
+                        (unsigned long long)m_npcDialogToken, (unsigned long long)hero->GetNpcDialogToken(),
                         hero->IsNpcActive(), hero->GetActiveNpc());
+                    m_npcDialogToken = hero->GetNpcDialogToken();
                     hero->ActivateNpc(m_millionaireLeeNpcId);
                     m_lastNpcActionTick = now;
                 }
@@ -1114,6 +1160,7 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
         case StorePhase::OpenTreasureBank:
             if (now - m_lastNpcActionTick < npcActionInterval)
                 return;
+            m_npcDialogToken = hero->GetNpcDialogToken();
             hero->OpenTreasureBank(m_treasureBankNpcId);
             m_storePhase = StorePhase::WaitTreasureBank;
             m_lastNpcActionTick = now;
@@ -1129,7 +1176,11 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
             // packet in that exact unconfirmed-window state. Never proceed
             // to deposit without confirmation — retry the open a bounded
             // number of times, then give up on this bank for the cycle.
-            if (hero->IsNpcActive() && hero->GetActiveNpc() == m_treasureBankNpcId) {
+            // 2026-09-02: "confirmed" = a NEW dialog object exists since the
+            // open was sent (see m_npcDialogToken) — IsNpcActive()/
+            // GetActiveNpc() are click-path-set and never flip for a
+            // packet-opened window on a bot-only session.
+            if (hero->NpcDialogOpenedSince(m_npcDialogToken)) {
                 m_treasureBankOpenAttempts = 0;
                 m_storePhase = HasTreasureBankMeteorItems(hero)
                     ? StorePhase::DepositTreasureMeteors
@@ -1226,6 +1277,7 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
         case StorePhase::OpenComposeBank:
             if (now - m_lastNpcActionTick < npcActionInterval)
                 return;
+            m_npcDialogToken = hero->GetNpcDialogToken();
             hero->OpenComposeBank(m_composeBankNpcId);
             m_storePhase = StorePhase::WaitComposeBank;
             m_lastNpcActionTick = now;
@@ -1234,9 +1286,10 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
 
         case StorePhase::WaitComposeBank:
             // Session 11 [FREEZE FIX]: same unconfirmed-window issue as
-            // WaitTreasureBank above — never proceed to deposit without
-            // IsNpcActive() confirmation.
-            if (hero->IsNpcActive() && hero->GetActiveNpc() == m_composeBankNpcId) {
+            // WaitTreasureBank above — never proceed to deposit without the
+            // dialog confirmed open (new dialog object since the open was
+            // sent; see m_npcDialogToken).
+            if (hero->NpcDialogOpenedSince(m_npcDialogToken)) {
                 m_composeBankOpenAttempts = 0;
                 m_storePhase = StorePhase::DepositComposeBank;
                 return;

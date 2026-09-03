@@ -229,7 +229,10 @@ near (87,33) on map 1010.
   Also in the client but not yet visited: 2022 `Dsquare` (424²), 2023 `Dcloister` (676²).
   **Mine pattern confirmed:** Phoenix = mine-one (1025), Ape = mine-two (1026), Twin City = mine-four
   (1028) → Desert is almost certainly mine-three (1027).
-- Desert City #3 (163,471) — likely Fountain (7) / Yumen Village (6)
+- ~~Desert City #3~~ **Captured 2026-09-02 21:41 (walked twice each way): Desert #3 (163,471) → 1077 New
+  Desert City (756,873); 1077 #0 (756,877) → Desert City (159,467).** The Adventure Zone entrance.
+  **Desert City is fully mapped** (#0 Mystic Castle, #1 Twin City, #3 New Desert City) — and with it
+  **every file portal on every main-loop city now has a known destination.**
 - Bird Island: 30 of 31 inner-island portals (checklist in the map file; walk with the logger)
 - ~~Mine Cave (49,71) → Grotto 1 suspect~~ **Confirmed working by user walk** (`1028 (49,71) -> 1926 (339,353)`), even though the map file declares no portal there and the tile is plain walkable ground. **So the file's portal list is NOT exhaustive** — some transitions exist without a `.DMap` portal record. Treat the file list as "definitely exists", never as "this is all".
 - **BUG — the bot is blind on Frozen Grotto 1.** Server map id **1926** has no `GameMap.json` entry; the file `icecrypt-lev1.DMap` is DocumentId **1762**. Live log: `[mapdata] no .DMap entry for map id 1926`. The bot loads no terrain there → no pathfinding, no walkability. Map id and document id are separate things in this client (`CGameMap::m_idMap` vs `m_idDoc`); the bot resolves files by map id and only works where the two coincide. Needs a map-id → doc-id alias (1926 → 1762) at minimum; other maps may have the same split.
@@ -253,7 +256,7 @@ planning to work with you on." Chain of numbered maps, entered from **New Desert
 The zone's maps are the `task*` / `*-snail` / `*-fairy` files, ids 1201–1216.
 
 ```
-1077 New Desert City (360,6)  -NPC->  1205 task05  (1351,1198)     [map 2]     back: 1205 #1 (1355,1198) -> 1077 (362,12)
+1077 New Desert City (360,6)  -NPC "Explorer"->  1205 task05 (1351,1198)  [map 2]     back: 1205 #1 (1355,1198) -> 1077 (362,12)
 1205 #0 (3,160)               ->      1202 task02  (691,398)       [map 3]
 1202 #0 (3,301)               ->      1201 task01  (592,398)       [map 4]
 1201 #0 (3,201)               ->      1213 desert-snail (1072,798) [map 5 "Backup City" — desert map]
@@ -297,8 +300,9 @@ WEST   1216 #0 (3,480) -> 1210 task10 (1039,718) = "METEOR ZONE" [map 9]   ← T
                                                   [aliased to mine-a 1500, inferred — verify terrain]
            1218 (28,66) NPC -> 1210 (715,1036)   mine exit (presumably the same MineSupervisor)
 ```
-Still to walk: Meteor Zone's exit back to the hub, the Meteor mine's exit, 1211 task11 (2 portals),
-and 1212 island-snail = **Adventure Islands** (33 portals).
+**Return chain, walked 21:37–21:38:** Backup City #1 (1075,798) → map 4 (10,202); map 4 #1 (594,397) →
+map 3 (8,302); map 3 #1 (694,398) → map 2 (8,161); map 2 #1 (1355,1198) → New Desert City (362,12);
+New Desert City #0 (756,877) → Desert City (159,467). The entrance chain is two-way end to end.
 
 ### Adventure Islands (1212 `island-snail`, 1360×1360) — the islands, computed from the map file
 
@@ -345,7 +349,7 @@ portals #19 (872,847), #20 (861,846), #22 (871,856) just south of I7.
 | I2 | #15 (710,377) | (674,418) | I5, beside #14 | ↔ #14 |
 | I5 | #14 (674,415) | (713,377) | I2, beside #15 | ↔ #15 |
 | I5 | #13 (620,399) | (611,311) | I0, beside #12 | #12 unwalked (presumably ↔) |
-| I0 | **#11 (375,153)** — inferred | **map 1219** | **off-map, NO FILE ENTRY** | client froze on this hop; character died on 1219 |
+| I0 | **#11 (375,153)** | (310,174) | I1, beside #10 | normal; the 1219 landings were the random redirect |
 
 **Pattern so far:** portals come in adjacent pairs — you land right beside the return portal, and
 every walked pair is a two-way link. The islet south of I7 is a 3-way junction (#19/#20/#22).
@@ -391,13 +395,49 @@ Same file as AZ1, so same islands and numbers. Every walked link is an adjacent 
 **The complete island graph** (both instances agree wherever both were walked):
 I14 –#27/#26– I12 –#28/#29– I15 · I12 –#23/#22– islet –#19/#18– I7 · islet –#20/#21– I9 –#0/#1– I10 –#2/#3– I8
 –#4/#5– I3 –#6/#7– I4 –#8/#9– I1 –#10/#11– I0 –#12/#13– I5 –#14/#15– I2 –#16/#17– I7 –#24/#25– I6.
-Not yet walked on either instance: #30 (I7), #31 (I13), #26, and the reverse halves #1 #3 #5 #9 #21 #22 #25.
+Walked 21:27: **#30 ↔ #31 (I7 ↔ I13)** — I13 reached; **#1** (I10 → I9) and **#3** (I8 → I10) close their
+pairs. Also 1211 #1 (955,558) → 1210 (8,329), task11's way back to Meteor Zone.
+Not yet walked on either instance: #5 (I3), #9 (I1) — the last two reverse halves.
+**ADVENTURE ISLANDS 2 VERIFIED COMPLETE (21:34–21:37).** 20 hops on AZ2 in one sweep, every one landing
+exactly where the mirrored table says (29 of its 33 portals now walked across sessions; the four unwalked
+— #22, #24, #25, #26 — are reverse halves of walked pairs). **No random redirect was ever observed on
+AZ2** — every hop stayed on 1219. The redirect is an AZ1-only mechanic. Exit re-confirmed:
+Boatman at (382,37) → Backup City (448,272). **The whole Adventure Zone is mapped and wired.**
 
-**CORRECTION — how AZ1 leads to AZ2.** I had inferred AZ1's #11 goes to 1219. AZ2 shows #11 is simply
-the I0 ↔ I1 pair (#10/#11), and AZ2's exit is a **Boatman NPC on I0 at (386,40)**. The far more likely
-story is that AZ1 has the same Boatman on its I0 and *that* is what took you to AZ2 (the client froze on
-the hop, so nothing was logged). Treat "AZ1 #11 → 1219" as **withdrawn**; AZ1's I0 Boatman → 1219 is the
-working assumption, unverified.
+**Grandpa ↔ AZ2 #32 (walked 21:28–21:30, both ways, twice):** NPC **"Grandpa"** on AZ1's I0 at ~(378,32)
+— the exact spot the Boatman occupies on AZ2 — sends you to AZ2's I14 (landed (1016,1292) and
+(1003,1278)). AZ2's **#32 (1015,1295) → AZ1 (378,37)**, right beside Grandpa. So the two instances are
+linked at both ends: AZ1 #11 → AZ2 (entry), and Grandpa ↔ AZ2 #32 (I0 ↔ I14). Both in the table.
+
+**Death/revive observations (unverified, not edges):** `1219 (672,418) -> 1213 (448,272)` at 21:18 from
+AZ2's I5 with no NPC nearby, landing on the Boatman's Backup City tile — the user died then, so dying on
+AZ2 appears to revive you at Backup City (448,272).
+**Unexplained hop 21:28:35:** `1212 (583,825) -> 1219 (1003,1278)` tagged as NPC, from I10 beside #2,
+landing on AZ2's entry tile. User reported dying around then — most likely the death/revive sends you
+to AZ2's spawn. Not recorded as an edge until confirmed.
+
+**ALL 33 PORTALS WALKED on AZ1 (21:31): #5 (I3 → I8) and #9 (I1 → I4) closed the last two pairs.**
+
+**The random-redirect mechanic — this is what the #11 confusion actually was.** Portal use on AZ1
+*sometimes* drops you on AZ2 at a fixed tile, (1003,1278) on its I14, instead of the portal's own
+destination. Observed: #11 → AZ2 (21:16, 21:30:43) but #11 → I1 (310,174) eleven seconds later
+(21:30:54); #4 → I3 twice then #4 → AZ2 (21:32:05); and the "unexplained" hop at (583,825) with no
+portal nearby. Same landing tile every time. So #11 is an ordinary I0 ↔ I1 pair on both instances,
+and every AZ1 portal carries a chance of the redirect. **For the bot:** any island hop may land on
+1219 instead; that's a re-plan, not a table error — AZ2's #32 returns to AZ1's I0 at (378,37).
+
+**(Superseded history, kept for honesty:)** *How AZ1 leads to AZ2 — "settled" by log 2026-09-02 21:16:*
+```
+[portal] 1212 (375,153) -> 1219 (1003,1278) via portal #11 @(375,153)
+```
+**AZ1's #11 on I0 goes to AZ2** (landing on AZ2's I14, beside its #32). The same portal number on AZ2
+is just the I0 ↔ I1 pair — the server wires the two instances differently at #11. AZ2's exit is the
+Boatman NPC on I0. (An earlier note here withdrew the #11 theory in favour of a Boatman on AZ1; the
+log shows the original inference was right. There may still be a Boatman on AZ1 — unverified — but
+#11 is the confirmed route.)
+
+Also confirmed this pass: #26 ↔ #27 (I12 ↔ I14), #16 ↔ #17, #24 ↔ #25, #14 ↔ #15 — all two-way.
+The 1219 → 1212 alias loaded terrain on arrival (`map 1219 -> ALIAS 1212`), Map tab and pathing live.
 
 **Unwalked (17):** #0, #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #12, #16, #26, #30, #31 — and #11 if
 it wasn't the one. By island: I0 #12; I1 #9,#10; I3 #5,#6; I4 #7,#8; I8 #3,#4; I10 #1,#2; I7 #30;

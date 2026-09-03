@@ -95,6 +95,10 @@ static const std::unordered_map<OBJID, std::vector<Gateway>> s_gateways = {
             // Portals
             {GatewayType::Portal, MAP_DESERT_CITY, {977, 668}, MAP_TWIN_CITY, {69, 473}},
             {GatewayType::Portal, MAP_DESERT_CITY, {77, 320}, MAP_MYSTIC_CASTLE, {312, 646}},
+            // Map file portal #3 -> New Desert City (the Adventure Zone entrance).
+            // LIVE-VALIDATED 2026-09-02, walked twice:
+            //   [portal] 1000 (163,471) -> 1077 (756,873) via portal #3 @(163,471)
+            {GatewayType::Portal, MAP_DESERT_CITY, {163, 471}, MAP_NEW_DESERT_CITY, {756, 873}},
         }
     },
     {
@@ -220,6 +224,201 @@ static const std::unordered_map<OBJID, std::vector<Gateway>> s_gateways = {
             {GatewayType::Portal, MAP_GROTTO2, {385, 633}, MAP_GROTTO1, {293, 67}},
         }
     },
+    // =====================================================================
+    // Adventure Zone -- every edge captured by the portal logger 2026-09-02.
+    // Tile portals are exact (source = the map file's own portal tile, landing
+    // = where the hero appeared). NPC hops carry the NPC's name; dialogue
+    // shape (single option vs menu) is NOT yet verified for any of them.
+    // =====================================================================
+    {
+        MAP_NEW_DESERT_CITY, {
+            // NPC "Explorer", top-right corner. Logged 2026-09-02:
+            //   [portal] 1077 (360,6) -> 1205 (1351,1198)
+            {GatewayType::Npc, MAP_NEW_DESERT_CITY, {360, 6}, MAP_ADV_2, {1351, 1198}, "Explorer"},
+            // Back to Desert City. Walked three times.
+            {GatewayType::Portal, MAP_NEW_DESERT_CITY, {756, 877}, MAP_DESERT_CITY, {159, 467}},
+        }
+    },
+    {
+        MAP_ADV_2, {
+            {GatewayType::Portal, MAP_ADV_2, {1355, 1198}, MAP_NEW_DESERT_CITY, {362, 12}},
+            {GatewayType::Portal, MAP_ADV_2, {3, 160}, MAP_ADV_3, {691, 398}},
+        }
+    },
+    {
+        MAP_ADV_3, {
+            {GatewayType::Portal, MAP_ADV_3, {3, 301}, MAP_ADV_4, {592, 398}},
+            {GatewayType::Portal, MAP_ADV_3, {694, 398}, MAP_ADV_2, {8, 161}},
+        }
+    },
+    {
+        MAP_ADV_4, {
+            {GatewayType::Portal, MAP_ADV_4, {3, 201}, MAP_BACKUP_CITY, {1072, 798}},
+            {GatewayType::Portal, MAP_ADV_4, {594, 397}, MAP_ADV_3, {8, 302}},
+        }
+    },
+    {
+        MAP_BACKUP_CITY, {
+            {GatewayType::Portal, MAP_BACKUP_CITY, {4, 281}, MAP_ADV_6, {1351, 1199}},
+            {GatewayType::Portal, MAP_BACKUP_CITY, {1075, 798}, MAP_ADV_4, {10, 202}},
+        }
+    },
+    {
+        MAP_ADV_6, {
+            {GatewayType::Portal, MAP_ADV_6, {3, 160}, MAP_ADV_HUB, {950, 478}},
+        }
+    },
+    {
+        MAP_ADV_HUB, {
+            // four exits: east back to 6, north woods, south canyon, west Meteor Zone
+            {GatewayType::Portal, MAP_ADV_HUB, {954, 479}, MAP_ADV_6, {9, 161}},
+            {GatewayType::Portal, MAP_ADV_HUB, {480, 3}, MAP_ADV_WOODS, {9, 376}},
+            {GatewayType::Portal, MAP_ADV_HUB, {479, 954}, MAP_ADV_7_1, {641, 9}},
+            {GatewayType::Portal, MAP_ADV_HUB, {3, 480}, MAP_METEOR_ZONE, {1039, 718}},
+            // OldExplorer NPC beside the west portal lands in the same spot.
+            {GatewayType::Npc, MAP_ADV_HUB, {12, 476}, MAP_METEOR_ZONE, {1039, 718}, "OldExplorer"},
+        }
+    },
+    {
+        MAP_ADV_WOODS, {
+            {GatewayType::Portal, MAP_ADV_WOODS, {3, 376}, MAP_ADV_HUB, {481, 10}},
+            {GatewayType::Portal, MAP_ADV_WOODS, {938, 567}, MAP_ADV_TASK07, {958, 1211}},
+        }
+    },
+    {
+        MAP_ADV_TASK07, {
+            {GatewayType::Portal, MAP_ADV_TASK07, {958, 1214}, MAP_ADV_WOODS, {934, 565}},
+            {GatewayType::Portal, MAP_ADV_TASK07, {260, 4}, MAP_ADV_TASK08, {9, 502}},
+        }
+    },
+    {
+        MAP_ADV_TASK08, {
+            {GatewayType::Portal, MAP_ADV_TASK08, {3, 500}, MAP_ADV_TASK07, {261, 10}},
+        }
+    },
+    {
+        MAP_ADV_7_1, {
+            {GatewayType::Portal, MAP_ADV_7_1, {640, 3}, MAP_ADV_HUB, {479, 950}},
+            {GatewayType::Portal, MAP_ADV_7_1, {799, 1434}, MAP_ADV_7_2, {363, 13}},
+        }
+    },
+    {
+        MAP_ADV_7_2, {
+            // -> back to 7.1 is an NPC at (360,6); name not yet captured -- no entry.
+        }
+    },
+    {
+        MAP_METEOR_ZONE, {
+            {GatewayType::Portal, MAP_METEOR_ZONE, {4, 329}, MAP_ADV_TASK11, {951, 558}},
+            {GatewayType::Npc, MAP_METEOR_ZONE, {719, 1036}, MAP_METEOR_MINE, {29, 70}, "MineSupervisor"},
+        }
+    },
+    {
+        MAP_METEOR_MINE, {
+            // Exit is by NPC at (28,66); presumed to be MineSupervisor again.
+            {GatewayType::Npc, MAP_METEOR_MINE, {28, 66}, MAP_METEOR_ZONE, {715, 1036}, "MineSupervisor"},
+        }
+    },
+    {
+        MAP_ADV_TASK11, {
+            {GatewayType::Portal, MAP_ADV_TASK11, {3, 400}, MAP_ADV_ISLANDS, {1017, 1294}},
+            {GatewayType::Portal, MAP_ADV_TASK11, {955, 558}, MAP_METEOR_ZONE, {8, 329}},
+        }
+    },
+    {
+        MAP_ADV_ISLANDS, {
+            // Same-map island hops. Every pair walked is two-way and lands you
+            // beside the return portal. Reverse halves not yet walked on either
+            // All 33 walked on instance 1; instance 2 mirrors it except #32.
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {1015, 1295}, MAP_ADV_TASK11, {10, 401}},
+            // RANDOM REDIRECT — read before trusting any island edge on this map.
+            // Portal use on instance 1 SOMETIMES drops you on instance 2 at a fixed
+            // tile, (1003,1278) on its I14, instead of the portal's own destination.
+            // Seen from #11 (twice), from #4 (once, right after two normal uses),
+            // and once with no portal nearby at (583,825). The normal destination is
+            // the one wired below; a routing step that lands on map 1219 instead is
+            // this mechanic, not a wrong table entry — re-plan from there (its #32
+            // returns to this map's I0 at (378,37), beside Grandpa).
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {375, 153}, MAP_ADV_ISLANDS, {310, 174}},   // #11  I0 -> I1
+            // NPC "Grandpa" on I0 at ~(378,32) — same spot the Boatman occupies on
+            // instance 2 — is the other door to Adventure Islands 2. Landed at
+            // (1016,1292) once and (1003,1278) once; both on AZ2's I14.
+            {GatewayType::Npc, MAP_ADV_ISLANDS, {378, 32}, MAP_ADV_ISLANDS2, {1016, 1292}, "Grandpa"},
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {906, 1041}, MAP_ADV_ISLANDS, {942, 1012}},   // #27
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {942, 1015}, MAP_ADV_ISLANDS, {903, 1041}},   // #26
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {1025, 1038}, MAP_ADV_ISLANDS, {1087, 1124}},   // #28
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {1083, 1120}, MAP_ADV_ISLANDS, {1022, 1035}},   // #29
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {896, 891}, MAP_ADV_ISLANDS, {871, 853}},   // #23
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {871, 856}, MAP_ADV_ISLANDS, {899, 894}},   // #22
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {872, 847}, MAP_ADV_ISLANDS, {900, 826}},   // #19
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {898, 828}, MAP_ADV_ISLANDS, {872, 850}},   // #18
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {861, 846}, MAP_ADV_ISLANDS, {808, 823}},   // #20
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {811, 826}, MAP_ADV_ISLANDS, {864, 846}},   // #21
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {781, 841}, MAP_ADV_ISLANDS, {705, 921}},   // #0
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {579, 824}, MAP_ADV_ISLANDS, {539, 752}},   // #2
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {476, 688}, MAP_ADV_ISLANDS, {369, 651}},   // #4
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {352, 512}, MAP_ADV_ISLANDS, {404, 451}},   // #6
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {404, 454}, MAP_ADV_ISLANDS, {349, 512}},   // #7
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {392, 387}, MAP_ADV_ISLANDS, {335, 282}},   // #8
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {310, 171}, MAP_ADV_ISLANDS, {378, 153}},   // #10
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {614, 314}, MAP_ADV_ISLANDS, {623, 402}},   // #12
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {620, 399}, MAP_ADV_ISLANDS, {611, 311}},   // #13
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {674, 415}, MAP_ADV_ISLANDS, {713, 377}},   // #14
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {710, 377}, MAP_ADV_ISLANDS, {674, 418}},   // #15
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {837, 458}, MAP_ADV_ISLANDS, {846, 558}},   // #16
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {846, 555}, MAP_ADV_ISLANDS, {834, 455}},   // #17
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {810, 677}, MAP_ADV_ISLANDS, {690, 667}},   // #24
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {693, 667}, MAP_ADV_ISLANDS, {813, 677}},   // #25
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {1049, 838}, MAP_ADV_ISLANDS, {1138, 895}},   // #30  I7 -> I13
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {1135, 892}, MAP_ADV_ISLANDS, {1046, 835}},   // #31  I13 -> I7
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {708, 921}, MAP_ADV_ISLANDS, {781, 838}},   // #1   I10 -> I9
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {542, 755}, MAP_ADV_ISLANDS, {582, 827}},   // #3   I8 -> I10
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {372, 651}, MAP_ADV_ISLANDS, {479, 691}},   // #5   I3 -> I8
+            {GatewayType::Portal, MAP_ADV_ISLANDS, {338, 285}, MAP_ADV_ISLANDS, {395, 390}},   // #9   I1 -> I4
+        }
+    },
+    {
+        MAP_ADV_ISLANDS2, {
+            // Same file, same portal numbers as Adventure Islands 1; wired the
+            // same except #11 (I0<->I1 here) and the exit, which is the Boatman.
+            // #32 here does NOT go to task11 like instance 1's — it drops you on
+            // instance 1's I0 at (378,37), right beside Grandpa. Walked twice.
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {1015, 1295}, MAP_ADV_ISLANDS, {378, 37}},
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {375, 153}, MAP_ADV_ISLANDS2, {310, 174}},
+            {GatewayType::Npc, MAP_ADV_ISLANDS2, {386, 40}, MAP_BACKUP_CITY, {448, 272}, "Boatman"},
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {906, 1041}, MAP_ADV_ISLANDS2, {942, 1012}},   // #27
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {942, 1015}, MAP_ADV_ISLANDS2, {903, 1041}},   // #26
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {1025, 1038}, MAP_ADV_ISLANDS2, {1087, 1124}},   // #28
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {1083, 1120}, MAP_ADV_ISLANDS2, {1022, 1035}},   // #29
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {896, 891}, MAP_ADV_ISLANDS2, {871, 853}},   // #23
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {871, 856}, MAP_ADV_ISLANDS2, {899, 894}},   // #22
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {872, 847}, MAP_ADV_ISLANDS2, {900, 826}},   // #19
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {898, 828}, MAP_ADV_ISLANDS2, {872, 850}},   // #18
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {861, 846}, MAP_ADV_ISLANDS2, {808, 823}},   // #20
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {811, 826}, MAP_ADV_ISLANDS2, {864, 846}},   // #21
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {781, 841}, MAP_ADV_ISLANDS2, {705, 921}},   // #0
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {579, 824}, MAP_ADV_ISLANDS2, {539, 752}},   // #2
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {476, 688}, MAP_ADV_ISLANDS2, {369, 651}},   // #4
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {352, 512}, MAP_ADV_ISLANDS2, {404, 451}},   // #6
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {404, 454}, MAP_ADV_ISLANDS2, {349, 512}},   // #7
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {392, 387}, MAP_ADV_ISLANDS2, {335, 282}},   // #8
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {310, 171}, MAP_ADV_ISLANDS2, {378, 153}},   // #10
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {614, 314}, MAP_ADV_ISLANDS2, {623, 402}},   // #12
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {620, 399}, MAP_ADV_ISLANDS2, {611, 311}},   // #13
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {674, 415}, MAP_ADV_ISLANDS2, {713, 377}},   // #14
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {710, 377}, MAP_ADV_ISLANDS2, {674, 418}},   // #15
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {837, 458}, MAP_ADV_ISLANDS2, {846, 558}},   // #16
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {846, 555}, MAP_ADV_ISLANDS2, {834, 455}},   // #17
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {810, 677}, MAP_ADV_ISLANDS2, {690, 667}},   // #24
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {693, 667}, MAP_ADV_ISLANDS2, {813, 677}},   // #25
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {1049, 838}, MAP_ADV_ISLANDS2, {1138, 895}},   // #30  I7 -> I13
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {1135, 892}, MAP_ADV_ISLANDS2, {1046, 835}},   // #31  I13 -> I7
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {708, 921}, MAP_ADV_ISLANDS2, {781, 838}},   // #1   I10 -> I9
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {542, 755}, MAP_ADV_ISLANDS2, {582, 827}},   // #3   I8 -> I10
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {372, 651}, MAP_ADV_ISLANDS2, {479, 691}},   // #5   I3 -> I8
+            {GatewayType::Portal, MAP_ADV_ISLANDS2, {338, 285}, MAP_ADV_ISLANDS2, {395, 390}},   // #9   I1 -> I4
+        }
+    },
     {
         MAP_OCEAN, {
             WithSilverCost({GatewayType::Npc, MAP_OCEAN, {67, 119}, MAP_GUILD, {351, 341}, "GuildTeleporter1"},
@@ -240,6 +439,12 @@ static const Destination s_destinations[] = {
     {"Ape City 2", MAP_APE_CITY2, {361, 6}},
     {"Phoenix Castle 2", MAP_PHOENIX_CASTLE2, {11, 361}},
     {"Dreamland", MAP_DREAMLAND, {532, 529}},
+    {"New Desert City", MAP_NEW_DESERT_CITY, {362, 12}},
+    {"Backup City", MAP_BACKUP_CITY, {448, 272}},
+    {"Adventure Hub", MAP_ADV_HUB, {950, 478}},
+    {"Meteor Zone", MAP_METEOR_ZONE, {1039, 718}},
+    {"Adventure Islands", MAP_ADV_ISLANDS, {1017, 1294}},
+    {"Adventure Islands 2", MAP_ADV_ISLANDS2, {1003, 1278}},
     {"Bird Island", MAP_BIRD_ISLAND, {717, 577}},
     {"Mine Cave", MAP_MINE_CAVE, {157, 91}},
     {"Market", MAP_MARKET, {211, 196}},

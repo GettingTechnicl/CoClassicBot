@@ -1704,12 +1704,42 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
         hx, hy, destination.x, destination.y);
 
     auto tilePath = map->FindPath(hx, hy, destination.x, destination.y, 1000000);
-    if (tilePath.empty())
+    if (tilePath.empty()) {
+        // Was silent. Live 2026-09-03 the store flow retried this every 430 ms
+        // for minutes ("trying A*" with no result line) because the chosen
+        // destination was walkable but sealed off — say so, throttled.
+        static DWORD s_lastNoPathWarn = 0;
+        const DWORD nowTick = GetTickCount();
+        if (nowTick - s_lastNoPathWarn > 5000) {
+            s_lastNoPathWarn = nowTick;
+            spdlog::warn("[hunt] A* found NO ROUTE ({},{}) -> ({},{}) — destination walkable but unreachable?",
+                         hx, hy, destination.x, destination.y);
+        }
         return false;
+    }
 
     auto waypoints = map->SimplifyPath(tilePath);
-    if (waypoints.empty())
+    if (waypoints.empty()) {
+        // Was completely silent — the other empty-result branches above both
+        // log, this one didn't. Live 2026-09-03: this is exactly the shape a
+        // WALK-ONLY destination takes when FindPath's own graph only connects
+        // to it via a jump-length edge (confirmed offline for the Market:
+        // MillionaireLee's platform is NOT walk-reachable from the landing
+        // tile — nearest walk-connected tile is 4 away — yet FindPath found
+        // SOME tile-path, which SimplifyPath then can't turn into any
+        // walk-legal jump segment). Without this the caller retried at
+        // ~430ms forever with the hero's position never changing and zero
+        // diagnostic output.
+        static DWORD s_lastEmptyWaypointsWarn = 0;
+        const DWORD nowTick = GetTickCount();
+        if (nowTick - s_lastEmptyWaypointsWarn > 5000) {
+            s_lastEmptyWaypointsWarn = nowTick;
+            spdlog::warn("[hunt] A* found a route but SimplifyPath produced no walkable waypoints "
+                         "({},{}) -> ({},{}) — likely a jump-only gap on a walk-only map", hx, hy,
+                         destination.x, destination.y);
+        }
         return false;
+    }
 
     spdlog::debug("[hunt] A* route: {} waypoint(s), first=({},{}) last=({},{})",
         waypoints.size(), waypoints.front().x, waypoints.front().y,
@@ -1748,9 +1778,12 @@ bool BaseHuntPlugin::TryRandomWalk(CHero* hero, CGameMap* map, const AutoHuntSet
         return false;
     m_lastRandomWalkTick = now;
 
-    // Short random hop, 1-2 tiles in any direction. StartWalkTo() already
-    // handles walkability/occupancy/reachability and won't fire while the
-    // hero is jumping or the pathfinder is mid-route.
+    // Short random hop, 1-2 tiles in any direction. StartWalkTo() handles
+    // walkability/occupancy/reachability and skips while the hero is
+    // jumping — but NOTE it STOPS an active pathfinder route to take the hop
+    // (it does not wait for it). The caller is responsible for not invoking
+    // this while a route, travel, or NPC interaction is in progress; see the
+    // gate at the call site in Update().
     for (int attempt = 0; attempt < 6; ++attempt) {
         const int dx = (int)(NextRandom32() % 5) - 2; // -2..2
         const int dy = (int)(NextRandom32() % 5) - 2;
@@ -1849,12 +1882,23 @@ bool BaseHuntPlugin::StartPathNearTarget(CHero* hero, CGameMap* map, const Posit
     if (currentDist <= desiredRange)
         return false;
 
-    Position bestPos = targetPos;
-    bool found = false;
-    int bestTargetDist = (std::numeric_limits<int>::max)();
-    float bestHeroDist = (std::numeric_limits<float>::max)();
+    // Collect every walkable, unoccupied tile within range of the target,
+    // ordered by "closest to the target, then closest to the hero" — the old
+    // single best pick — and then take the first one A* can actually REACH.
+    //
+    // Why reachability matters (2026-09-03): NPCs behind counters. Market's
+    // MillionaireLee stands at (242,242) inside a walled stall; the tiles
+    // around him are walkable in the map file but sealed off from the
+    // street (offline A* from the Market landing: NO PATH, altitude or not).
+    // The old picker chose the tile touching him, FindPath came back empty,
+    // and the store flow retried every 430 ms for minutes without moving —
+    // the user had to walk the character over by hand. (237,236), four
+    // tiles out in front of the counter, is reachable and is what a player
+    // actually stands on. Same failure shape applies to any bank/warehouse
+    // NPC behind furniture.
+    struct Cand { Position pos; int targetDist; float heroDist; };
+    std::vector<Cand> cands;
     const int searchRadius = (std::max)(desiredRange + 2, 4);
-
     for (int dx = -searchRadius; dx <= searchRadius; ++dx) {
         for (int dy = -searchRadius; dy <= searchRadius; ++dy) {
             const Position candidate = {targetPos.x + dx, targetPos.y + dy};
@@ -1867,22 +1911,42 @@ bool BaseHuntPlugin::StartPathNearTarget(CHero* hero, CGameMap* map, const Posit
                 && IsTileOccupied(candidate.x, candidate.y)) {
                 continue;
             }
-
-            const float heroDist = effectivePos.DistanceTo(candidate);
-            if (!found || targetDist < bestTargetDist
-                || (targetDist == bestTargetDist && heroDist < bestHeroDist)) {
-                found = true;
-                bestPos = candidate;
-                bestTargetDist = targetDist;
-                bestHeroDist = heroDist;
-            }
+            cands.push_back({candidate, targetDist, effectivePos.DistanceTo(candidate)});
         }
     }
-
-    if (!found)
+    if (cands.empty())
         return false;
 
-    return StartPathTo(hero, map, bestPos, 0);
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+        return a.targetDist != b.targetDist ? a.targetDist < b.targetDist : a.heroDist < b.heroDist;
+    });
+
+    // One flood from the hero, then scan candidates against it. Per-candidate
+    // A* was measured offline against Lee's stall and is bad in BOTH
+    // directions: the first 34 candidates are sealed, and each failed A*
+    // exhausts a whole connected region — the street (~6k tiles) going
+    // forward, the building interior (~17k) going backward, ~570k node
+    // expansions in total. The flood is one ~6k pass.
+    const int hx = effectivePos.x, hy = effectivePos.y;
+    const std::vector<uint8_t> reach = map->FloodReachable(hx, hy);
+    const int mapW = map->m_sizeMap.iWidth;
+    auto reachable = [&](const Position& c) {
+        return !reach.empty() && reach[(size_t)c.y * mapW + c.x] != 0;
+    };
+    for (size_t i = 0; i < cands.size(); ++i) {
+        const Position& c = cands[i].pos;
+        if (c.x == hx && c.y == hy)
+            return false;                          // already standing on a valid tile
+        if (!reachable(c))
+            continue;                              // walkable but sealed off — next
+        if (i > 0)
+            spdlog::info("[hunt] near-target: skipped {} unreachable tile(s) around ({},{}), using ({},{})",
+                         (int)i, targetPos.x, targetPos.y, c.x, c.y);
+        return StartPathTo(hero, map, c, 0);
+    }
+    spdlog::warn("[hunt] near-target: no reachable tile within {} of ({},{}) from ({},{}) (checked {})",
+                 searchRadius, targetPos.x, targetPos.y, hx, hy, (int)cands.size());
+    return false;
 }
 
 bool BaseHuntPlugin::TrySteerTowardZoneClump(CHero* hero, CGameMap* map, const AutoHuntSettings& settings)
@@ -2134,6 +2198,16 @@ void BaseHuntPlugin::HandleTravelToMarket(TravelPlugin* travel, CHero* hero, con
 
 void BaseHuntPlugin::HandleTravelToBlacksmith(TravelPlugin* travel, const AutoHuntSettings& settings)
 {
+    // The user can untick "Buy Arrows" mid-run. Without this the state
+    // machine ignored the toggle until the multi-hop trip finished (live
+    // 2026-09-03: unticked while en route to Twin City, kept going). Abort
+    // the trip and head back to the zone instead.
+    if (!settings.buyArrows) {
+        if (travel) travel->CancelTravel();
+        spdlog::info("[hunt] Buy Arrows disabled mid-trip — cancelling blacksmith run, returning to zone");
+        BeginTravelToZone(travel, settings);
+        return;
+    }
     if (!travel) {
         SetState(AutoHuntState::Failed, "Travel plugin not available");
         return;
@@ -2317,7 +2391,23 @@ void BaseHuntPlugin::Update()
     // Session 10: independent of the decision throttle below — paced on its
     // own timer so it can be dialed down for testing without being tied to
     // how often the rest of the decision logic runs.
-    TryRandomWalk(hero, map, settings, GetTickCount());
+    //
+    // 2026-09-03: ONLY while idle in the zone, and never over an active
+    // route. This used to run unconditionally, before any state gate, and
+    // StartWalkTo() stops the pathfinder to take its 1-2 tile hop — so every
+    // ~5.6 s it killed whatever route was in progress. Live: the travel
+    // plugin logged "Path interrupted externally, replanning" on that exact
+    // cadence all the way to Twin City, and at MillionaireLee it hopped the
+    // hero BETWEEN dialog activates. (Walking does NOT close an NPC dialog
+    // in this game — user-confirmed 2026-09-03 — so the hop is a distance
+    // and timing problem there, not a dialog-cancel.) Humanizing an idle
+    // hero is the whole point of this; humanizing a hero mid-route or
+    // mid-interaction is just sabotage.
+    if (m_state == AutoHuntState::AcquireTarget
+        && !Pathfinder::Get().IsActive()
+        && !(travel && travel->IsTraveling())) {
+        TryRandomWalk(hero, map, settings, GetTickCount());
+    }
 
     m_lootMgr.PruneLootPickupAttempts(hero, map);
     PruneLootDropRecords();
@@ -2502,6 +2592,14 @@ void BaseHuntPlugin::Update()
     }
 
     if (m_state == AutoHuntState::BuyArrows) {
+        // Same as HandleTravelToBlacksmith: the toggle can be unticked while
+        // this state is active — honour it instead of finishing the purchase.
+        if (!settings.buyArrows) {
+            spdlog::info("[hunt] Buy Arrows disabled mid-purchase — abandoning, returning to zone");
+            m_townService.ResetBuyArrowsSequence();
+            BeginTravelToZone(travel, settings);
+            return;
+        }
         m_townService.HandleBuyArrowsState(hero, map, settings, MakeTownCallbacks(travel, hero, settings));
         return;
     }
@@ -2551,7 +2649,9 @@ void BaseHuntPlugin::Update()
         // the real hunt zone afterward via beginTravelToZoneFn.
         OBJID fallbackMapId = 0;
         Position fallbackPos = {};
-        if (travel && HuntTownService::GetFallbackBlacksmithCity(fallbackMapId, fallbackPos)) {
+        if (travel && HuntTownService::GetFallbackBlacksmithCity(
+                Game::GetCurrentMapId(), hero ? hero->m_posMap : Position{0, 0},
+                fallbackMapId, fallbackPos)) {
             m_blacksmithTravelMapId = fallbackMapId;
             travel->StartTravel(fallbackMapId, fallbackPos);
             SetState(AutoHuntState::TravelToBlacksmith, "Traveling to buy arrows");

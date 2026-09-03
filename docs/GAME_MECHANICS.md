@@ -290,3 +290,9 @@ the exact reconnect-screen flow matters.
   different (fields pre-filled, extra dialog, different focus)?
 - When you reconnect **manually**, what's the exact click/type sequence you
   do?
+
+### NPC dialogs — movement ✅
+- **Walking does NOT close an open NPC dialog** (user-confirmed 2026-09-03). A dialog opened by
+  a click or by the bot's activate packet stays open while the character moves. Do not build
+  logic that assumes movement cancels a dialog. (Distance still matters for *opening* one —
+  a manual click from 7 tiles away worked; the server's exact range is not pinned.)

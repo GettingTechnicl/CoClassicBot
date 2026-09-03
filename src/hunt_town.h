@@ -186,7 +186,9 @@ public:
     // no path into this feature at all. Returns false only if the blacksmith
     // table itself is empty. See base_hunt_plugin.cpp's arrow-restocking
     // dispatch for the caller.
-    static bool GetFallbackBlacksmithCity(OBJID& outMapId, Position& outPos);
+    // Nearest known blacksmith city by gateway hop count from (fromMapId, heroPos).
+    static bool GetFallbackBlacksmithCity(OBJID fromMapId, const Position& heroPos,
+                                          OBJID& outMapId, Position& outPos);
 
     // ── Accessors for state the parent plugin may need ───────────────────────
     RepairPhase    GetRepairPhase()    const { return m_repairPhase; }
@@ -222,6 +224,15 @@ public:
     // Shared NPC-action throttle tick: parent plugin reads/writes this so the
     // timer is consistent with other NPC actions the plugin performs.
     DWORD m_lastNpcActionTick = 0;
+    // CHero::GetNpcDialogToken() captured immediately before the most recent
+    // ActivateNpc(). The dialog is confirmed open once the client has created
+    // a NEW dialog object (CHero::NpcDialogOpenedSince). This replaced the
+    // IsNpcActive()/GetActiveNpc() gate for MillionaireLee and both banks on
+    // 2026-09-02: those two fields are set by the client's own click path and
+    // are sticky, so on a bot-only session they never confirm a dialog the bot
+    // opened by packet — the dialog rendered on screen while the bot re-sent
+    // the activate three times and gave up without ever answering.
+    uintptr_t m_npcDialogToken = 0;
 
 private:
     RepairPhase    m_repairPhase    = RepairPhase::MoveToNpc;

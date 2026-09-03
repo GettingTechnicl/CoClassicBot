@@ -201,6 +201,14 @@ public:
     // Returns empty vector if no path found. Includes start and goal.
     std::vector<Position> FindPath(int ox, int oy, int tx, int ty, int maxIter = 50000) const;
 
+    // Every tile reachable from (ox,oy) under EXACTLY FindPath's rules
+    // (8-directional, walkable, altitude step <= 200), as a w*h byte map
+    // (1 = reachable). One BFS; use it to test many destinations at once —
+    // e.g. "which of these 100 tiles around an NPC can I actually get to" —
+    // instead of running A* per destination, which exhausts a whole connected
+    // region on every sealed-off candidate. maxNodes bounds the flood.
+    std::vector<uint8_t> FloodReachable(int ox, int oy, int maxNodes = 200000) const;
+
     // Simplify a tile path into jump waypoints (greedy: largest valid jumps)
     // Returns waypoints excluding the start position.
     std::vector<Position> SimplifyPath(const std::vector<Position>& tilePath) const;
