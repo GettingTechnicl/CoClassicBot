@@ -8,6 +8,7 @@
 #include "plugin_mgr.h"
 #include "travel_plugin.h"
 #include "discord.h"
+#include "profiles.h"
 #include "game.h"
 #include "map_items.h"
 #include "gateway.h"
@@ -2001,6 +2002,9 @@ void MiningPlugin::RenderUI()
     CHero* hero = Game::GetHero();
     TravelPlugin* travel = PluginManager::Get().GetPlugin<TravelPlugin>();
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
+
+    RenderProfileBar(ProfileKind::Mining);
+    ImGui::Separator();
 
     if (ImGui::CollapsingHeader("General", kSectionFlags)) {
         ImGui::Checkbox("Enabled", &settings.enabled);

@@ -23,6 +23,7 @@
 #include "config.h"
 #include "discord.h"
 #include "hunt_stats.h"
+#include "profiles.h"
 #include "itemtype.h"
 #include "pathfinder.h"
 #include "log.h"
@@ -70,6 +71,10 @@ constexpr int kMinMobClumpSize = 2;
 constexpr int kMinLootRange = 0;
 constexpr int kMaxLootRange = CGameMap::MAX_JUMP_DIST;
 constexpr int kLootPathStopRange = 0;
+// See StartPathTo's m_pathFailBackoffUntilTick use — how long to pause
+// retrying a walk-only A* route after Pathfinder::StartPath() fails to
+// actually issue movement (occupied/unreachable landing tile).
+constexpr DWORD kPathFailBackoffMs = 800;
 constexpr int kMinEntityScanIntervalMs = 100;
 constexpr int kMaxEntityScanIntervalMs = 5000;
 constexpr int kMinItemPickupDelayMs = 0;
@@ -185,7 +190,8 @@ static const char* StateName(AutoHuntState state)
         case AutoHuntState::AttackTarget:   return "Attack Target";
         case AutoHuntState::LootNearby:     return "Loot Nearby";
         case AutoHuntState::Recover:        return "Recover";
-        case AutoHuntState::TravelToMarket: return "Travel To Market";
+        case AutoHuntState::TravelToMarket:     return "Travel To Market";
+        case AutoHuntState::TravelToBlacksmith: return "Travel To Blacksmith";
         case AutoHuntState::Repair:         return "Repair";
         case AutoHuntState::BuyArrows:      return "Buy Arrows";
         case AutoHuntState::StoreItems:     return "Store Items";
@@ -1171,19 +1177,28 @@ void BaseHuntPlugin::UpdateDynamicZone(CHero* hero, const AutoHuntSettings& sett
     // re-keying live cells in place — mixing two different grids in
     // m_dynCells would corrupt neighbor/membership math.
     if (!m_dynInit || m_dynMapId != mapId || m_dynCellTiles != cellTiles) {
+        // A marked MapWide start point (settings.mapWideStartPos) only
+        // applies to THIS one-time seed, and only when hunting is actually
+        // beginning on the map it was marked for — never referenced again
+        // afterward by growth/shrink/relocate below, so the bot is never
+        // tied back to it once hunting is under way.
+        const Position seedPos = (!IsZeroPos(settings.mapWideStartPos) && settings.zoneMapId == mapId)
+            ? settings.mapWideStartPos
+            : hero->m_posMap;
         m_dynCells.clear();
         m_dynCellHotStreak.clear();
         m_dynCellColdStreak.clear();
         m_dynCellTiles = cellTiles;
-        m_dynCells.insert(DynCellKeyFor(hero->m_posMap, cellTiles));
+        m_dynCells.insert(DynCellKeyFor(seedPos, cellTiles));
         m_dynMapId = mapId;
         m_dynInit = true;
         m_dynLastSizeTick = now;
         m_dynLastRecenterTick = now;
         m_dynProductiveTick = now;
         m_dynLastKills = hero->GetGameKillCount();
+        m_dynHasArrived = false;
         spdlog::info("[dynzone] Seeded 1 cell ({} tiles) at ({},{}) on map {}",
-            cellTiles, hero->m_posMap.x, hero->m_posMap.y, mapId);
+            cellTiles, seedPos.x, seedPos.y, mapId);
         return;
     }
 
@@ -1238,6 +1253,20 @@ void BaseHuntPlugin::UpdateDynamicZone(CHero* hero, const AutoHuntSettings& sett
             const Position c = DynCellCenterOf(key, cellTiles);
             return CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, c.x, c.y) <= kViewTiles;
         };
+
+        // See m_dynHasArrived's comment: don't let the idle-relocate check
+        // below fire on travel time alone. Sticky (never cleared here) —
+        // only a fresh seed/relocate resets it.
+        if (!m_dynHasArrived) {
+            for (uint32_t key : m_dynCells) {
+                if (isCellChecked(key)) {
+                    m_dynHasArrived = true;
+                    m_dynProductiveTick = now;   // real hunting starts now, not back at relocate time
+                    break;
+                }
+            }
+        }
+
         for (auto it = m_dynCells.begin(); it != m_dynCells.end(); ) {
             const uint32_t key = *it;
             if (liveCells.count(key)) {
@@ -1331,8 +1360,12 @@ void BaseHuntPlugin::UpdateDynamicZone(CHero* hero, const AutoHuntSettings& sett
 
     // Full relocate when kills have stalled (low kill rate) for a sustained
     // window — the whole zone's played out or too slow, abandon it and reseed
-    // a single cell at the next reachable hot bucket.
-    if (now - m_dynProductiveTick >= kDynIdleRecenterMs
+    // a single cell at the next reachable hot bucket. Gated on m_dynHasArrived
+    // (see its comment) — otherwise a relocate target farther than the hero
+    // can travel within kDynIdleRecenterMs just relocates again before
+    // arrival, forever.
+    if (m_dynHasArrived
+        && now - m_dynProductiveTick >= kDynIdleRecenterMs
         && now - m_dynLastRecenterTick >= kDynRecenterGapMs) {
         m_dynLastRecenterTick = now;
         Position centroid{};
@@ -1353,6 +1386,7 @@ void BaseHuntPlugin::UpdateDynamicZone(CHero* hero, const AutoHuntSettings& sett
             m_dynCellColdStreak.clear();
             m_dynCells.insert(DynCellKeyFor(newCenter, cellTiles));
             m_dynProductiveTick = now;   // fresh window at the new area
+            m_dynHasArrived = false;     // don't count travel time toward the new area's window either
         }
     }
 }
@@ -1373,6 +1407,7 @@ void BaseHuntPlugin::ReseedDynamicZoneAt(const Position& pos, const AutoHuntSett
     m_dynLastSizeTick = now;
     m_dynLastRecenterTick = now;
     m_dynProductiveTick = now;
+    m_dynHasArrived = false;   // see its comment on the seed branch in UpdateDynamicZone
     if (CHero* hero = Game::GetHero())
         m_dynLastKills = hero->GetGameKillCount();
     spdlog::info("[dynzone] Paranoia moved the zone: 1 cell ({} tiles) at ({},{})",
@@ -1590,6 +1625,12 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
         return true;
     }
 
+    if (now < m_pathFailBackoffUntilTick) {
+        spdlog::trace("[hunt] Move blocked: path-fail backoff for {}ms more, dest=({},{})",
+            m_pathFailBackoffUntilTick - now, destination.x, destination.y);
+        return true;
+    }
+
     const AutoHuntSettings& settings = GetAutoHuntSettings();
 
     // Session 10: this settle delay was hardcoded to 500ms, completely
@@ -1670,9 +1711,25 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
     if (waypoints.empty())
         return false;
 
+    spdlog::debug("[hunt] A* route: {} waypoint(s), first=({},{}) last=({},{})",
+        waypoints.size(), waypoints.front().x, waypoints.front().y,
+        waypoints.back().x, waypoints.back().y);
+
     Pathfinder::Get().StartPath(waypoints, [] { return GetMovementIntervalMs(GetAutoHuntSettings()); },
         [] { return GetJumpDistanceCapTiles(GetAutoHuntSettings()); });
     m_lastMoveTick = now;
+    if (!Pathfinder::Get().IsActive()) {
+        // StartPath() couldn't issue movement toward even the first waypoint
+        // (see Pathfinder::IssueMovementToWaypoint — walk-only requires
+        // CanReach + an unoccupied landing tile) and gave up immediately.
+        // Retrying at the normal movementIntervalMs cadence (as low as
+        // ~100ms under aggressive speed) just repeats the same failing
+        // FindPath/StartPath call hundreds of times a second next to a
+        // crowded NPC without ever making progress — force a real pause.
+        m_pathFailBackoffUntilTick = now + kPathFailBackoffMs;
+        spdlog::warn("[hunt] StartPath failed to activate (blocked/unreachable landing tile), backing off {}ms, dest=({},{})",
+            kPathFailBackoffMs, destination.x, destination.y);
+    }
     return true;
 }
 
@@ -2075,6 +2132,32 @@ void BaseHuntPlugin::HandleTravelToMarket(TravelPlugin* travel, CHero* hero, con
     }
 }
 
+void BaseHuntPlugin::HandleTravelToBlacksmith(TravelPlugin* travel, const AutoHuntSettings& settings)
+{
+    if (!travel) {
+        SetState(AutoHuntState::Failed, "Travel plugin not available");
+        return;
+    }
+
+    if (travel->GetState() == TravelState::Failed) {
+        SetState(AutoHuntState::Failed, "Failed to reach a blacksmith city");
+        return;
+    }
+
+    if (travel->IsTraveling()) {
+        SetState(AutoHuntState::TravelToBlacksmith, "Traveling to buy arrows");
+        return;
+    }
+
+    if (m_lastMapId != m_blacksmithTravelMapId) {
+        SetState(AutoHuntState::Failed, "Lost track of the blacksmith destination");
+        return;
+    }
+
+    m_townService.ResetBuyArrowsSequence();
+    SetState(AutoHuntState::BuyArrows, "Buying arrows");
+}
+
 HuntTownCallbacks BaseHuntPlugin::MakeTownCallbacks(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings)
 {
     HuntTownCallbacks cb;
@@ -2398,6 +2481,11 @@ void BaseHuntPlugin::Update()
         return;
     }
 
+    if (m_state == AutoHuntState::TravelToBlacksmith) {
+        HandleTravelToBlacksmith(travel, settings);
+        return;
+    }
+
     // A Recover tick (HP potion, meteor-pack, trash-drop) must never abandon an
     // in-progress repair while a piece of gear is sitting unequipped in the bag
     // — resume repairing so it gets repaired and re-equipped. Without this the
@@ -2428,31 +2516,13 @@ void BaseHuntPlugin::Update()
         return;
     }
 
-    // Meteor packing (shared)
-    if (hero) {
-        static DWORD s_lastPackDiagTick = 0;
-        const DWORD diagNow = GetTickCount();
-        if (diagNow - s_lastPackDiagTick >= 5000) {
-            s_lastPackDiagTick = diagNow;
-            spdlog::trace("[town-diag] packMeteorsIntoScrolls={} meteorCount={} autoRepair={} autoStore={} immediateReturnOnPriorityItems={}",
-                settings.packMeteorsIntoScrolls, CountInventoryItemsByType(hero, ItemTypeId::METEOR),
-                settings.autoRepair, settings.autoStore, settings.immediateReturnOnPriorityItems);
-        }
-    }
-    if (settings.packMeteorsIntoScrolls && hero) {
-        const DWORD packNow = GetTickCount();
-        if (packNow - m_lastPackTick >= GetItemActionIntervalMs(settings)) {
-            if (CountInventoryItemsByType(hero, ItemTypeId::METEOR) >= 10) {
-                CItem* meteor = FindInventoryItemByType(hero, ItemTypeId::METEOR);
-                if (meteor) {
-                    hero->UseItem(meteor->GetID());
-                    m_lastPackTick = packNow;
-                    SetState(AutoHuntState::Recover, "Packing Meteors into MeteorScrolls");
-                    return;
-                }
-            }
-        }
-    }
+    // Session 16: the standalone "pack anywhere via UseItem" block that used
+    // to live here is gone — it never actually worked (there's no NPC-less
+    // combine mechanic; packing genuinely requires visiting MillionaireLee).
+    // Packing is now StorePhase::PackMeteors inside HandleStoreState, which
+    // only runs at Market as part of a town trip already happening for
+    // another reason (bag-full/repair/DragonBall), matching how the user
+    // actually wants this to ride along rather than trigger its own trip.
 
     // Repair / storage — at Market (arrows handled separately below)
     if (m_townService.NeedTownRun(hero, settings, false)) {
@@ -2469,6 +2539,22 @@ void BaseHuntPlugin::Update()
         }
         if (HuntTownService::HasBlacksmithOnMap(settings.zoneMapId)) {
             BeginTravelToZone(travel, settings);
+            return;
+        }
+        // Session 16b [ARROW-RESTOCK FALLBACK]: neither the current map nor
+        // the hunt zone has a known blacksmith (e.g. a zone on Ape City 2,
+        // which has no vendor NPCs of its own) — without this, the two
+        // checks above never fire, NeedsTownRunArrows just sits true
+        // forever with nowhere to go, and the archer keeps "hunting" at 0
+        // arrows indefinitely. Fall back to the nearest known blacksmith
+        // city; BuyArrows' own finishBuyArrows() already routes back to
+        // the real hunt zone afterward via beginTravelToZoneFn.
+        OBJID fallbackMapId = 0;
+        Position fallbackPos = {};
+        if (travel && HuntTownService::GetFallbackBlacksmithCity(fallbackMapId, fallbackPos)) {
+            m_blacksmithTravelMapId = fallbackMapId;
+            travel->StartTravel(fallbackMapId, fallbackPos);
+            SetState(AutoHuntState::TravelToBlacksmith, "Traveling to buy arrows");
             return;
         }
     }
@@ -3280,6 +3366,23 @@ void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
         if (hero && ImGui::Button("Use Hero Position")) {
             settings.zoneMapId = Game::GetCurrentMapId();
         }
+        if (hero && ImGui::Button("Mark Current Location as Start")) {
+            settings.mapWideStartPos = hero->m_posMap;
+        }
+        ImGui::SameLine();
+        if (!IsZeroPos(settings.mapWideStartPos)) {
+            ImGui::Text("Start: (%d,%d)", settings.mapWideStartPos.x, settings.mapWideStartPos.y);
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Start"))
+                settings.mapWideStartPos = {};
+        } else {
+            ImGui::TextDisabled("Start: hero's position when hunting begins");
+        }
+        HelpMarkerOnSameLine("Simulates walking here yourself before turning the bot on — the "
+                             "dynamic zone's very first cell seeds at this spot instead of "
+                             "wherever the hero happens to be standing. One-time only: once "
+                             "hunting is under way the zone grows/shrinks/relocates completely "
+                             "independent of this point, same as if you'd walked here manually.");
         ImGui::SliderInt("Zone Cell Size", &settings.dynZoneCellTiles, 8, 100, "%d tiles");
         HelpMarkerOnSameLine("How large each cell of the dynamic zone is. Bigger cells cover "
                              "more ground per growth step and immediately claim more area on "
@@ -3350,6 +3453,25 @@ void BaseHuntPlugin::RenderZoneSetupUI(AutoHuntSettings& settings, CHero* hero)
                 }
                 ImGui::PopID();
             }
+            // Session 16b: routes only ever live in memory (never saved to
+            // the ini) — this is the only way to get a recorded trail's
+            // exact coordinates out for anything other than live patrol use
+            // (e.g. handing a walkability-override polyline like a windy
+            // bridge to Claude by pasting it directly into chat).
+            ImGui::SameLine();
+            ImGui::PushID(r.name.c_str());
+            if (ImGui::SmallButton("Copy Waypoints")) {
+                std::string csv;
+                char buf[32];
+                for (const Position& wp : r.waypoints) {
+                    snprintf(buf, sizeof(buf), "%d,%d", wp.x, wp.y);
+                    if (!csv.empty())
+                        csv += ";";
+                    csv += buf;
+                }
+                ImGui::SetClipboardText(csv.c_str());
+            }
+            ImGui::PopID();
         }
         if (settings.routes.empty())
             ImGui::TextDisabled("  (none recorded yet)");
@@ -3603,6 +3725,10 @@ void BaseHuntPlugin::RenderLootSection()
     ImGui::Checkbox("Elite##basehuntlootqualityelite", &settings.lootElite);
     ImGui::SameLine();
     ImGui::Checkbox("Super##basehuntlootqualitysuper", &settings.lootSuper);
+    ImGui::Checkbox("Also Store These Qualities at Warehouse", &settings.storeSelectedLootQuality);
+    HelpMarkerOnSameLine("Reuses the quality checkboxes above instead of a separate set — whatever you loot by quality "
+                         "also gets deposited at the Warehouse on a town run for another reason (bag full, repair, "
+                         "DragonBall). Off by default so existing loot-only setups aren't changed.");
 
     ImGui::SliderInt("Ignore Failed Pickup For (ms)", &settings.lootPickupIgnoreMs,
         kMinLootPickupIgnoreMs, kMaxLootPickupIgnoreMs);
@@ -3626,12 +3752,20 @@ void BaseHuntPlugin::RenderTownRunsSection()
     ImGui::SliderInt("Go To Town When Bag Has", &settings.bagStoreThreshold, 1, CHero::MAX_BAG_ITEMS);
     ImGui::Checkbox("Return to Town Immediately for Priority Items", &settings.immediateReturnOnPriorityItems);
     ImGui::Checkbox("Pack Meteors into Meteor Scrolls", &settings.packMeteorsIntoScrolls);
-    HelpMarkerOnSameLine("Self-service crafting, no NPC required - fires automatically anywhere once 10+ raw Meteors are in the bag.");
+    HelpMarkerOnSameLine("Visits MillionaireLee in Market and packs 10 Meteors into 1 MeteorScroll at a time, looping while "
+                         "10+ remain, then deposits the scrolls at the Warehouse. Rides along on a town trip already "
+                         "happening for another reason (bag full, gear repair, a DragonBall to deposit) rather than "
+                         "triggering its own trip.");
 
     ImGui::SeparatorText("Bank Deposits");
     ImGui::Checkbox("Auto-Deposit Meteors/DragonBalls at Treasure Bank", &settings.storeTreasureBank);
     ImGui::Checkbox("Auto-Deposit +1/+2 Gear at Compose Bank", &settings.storeComposeBank);
-    HelpMarkerOnSameLine("Items matching an entry on the Warehouse or Priority Return list below always go to the Warehouse instead, even if these are checked.");
+    HelpMarkerOnSameLine("OFF by default: the Compose Bank's dialog window doesn't reliably open (a missing confirm packet, same class of "
+                         "issue the Treasure Bank has), so a checked deposit here usually just silently does nothing after 3 attempts. Left "
+                         "in for a future fix; use \"Store + Gear at Warehouse\" below instead.");
+    ImGui::Checkbox("Store + Gear at Warehouse", &settings.storePlusGear);
+    HelpMarkerOnSameLine("Any enchanted item (+1 or higher) is deposited at the Warehouse — the actual working path while Compose Bank is off above.");
+    ImGui::TextDisabled("Items matching an entry on the Warehouse or Priority Return list below always go to the Warehouse regardless of these settings.");
     ImGui::Checkbox("Auto-Deposit Silver", &settings.autoDepositSilver);
     if (settings.autoDepositSilver)
         ImGui::InputInt("Keep This Much Silver On Hand", &settings.silverKeepAmount, 1000, 10000);
@@ -3967,9 +4101,10 @@ void BaseHuntPlugin::RenderDebugSection()
         if (IsDynamicZoneActive(settings)) {
             const DWORD unprodMs = GetTickCount() - m_dynProductiveTick;
             ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1),
-                "dyn-zone: %d cells  mobsInZone=%d  kills=%d  sinceKill=%.1fs",
+                "dyn-zone: %d cells  mobsInZone=%d  kills=%d  sinceKill=%.1fs  %s",
                 (int)m_dynCells.size(), CountMonstersInDynamicZone(settings),
-                hero ? hero->GetGameKillCount() : 0, unprodMs / 1000.0f);
+                hero ? hero->GetGameKillCount() : 0, unprodMs / 1000.0f,
+                m_dynHasArrived ? "(arrived)" : "(traveling — relocate clock paused)");
         } else {
             ImGui::TextDisabled("dyn-zone: seeding...");
         }
@@ -4107,6 +4242,9 @@ void BaseHuntPlugin::RenderDashboardUI()
             break;
         }
     }
+
+    RenderProfileBar(ProfileKind::Hunt);
+    ImGui::Separator();
 
     ImGui::TextDisabled("Workflow view: start in Quick Setup, then tune Combat, Loot, and Town Runs.");
     if (ImGui::BeginTabBar("##huntworkflowtabs")) {

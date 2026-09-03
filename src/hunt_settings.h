@@ -93,6 +93,7 @@ enum class AutoHuntState {
     LootNearby,
     Recover,
     TravelToMarket,
+    TravelToBlacksmith,
     Repair,
     BuyArrows,
     StoreItems,
@@ -139,7 +140,14 @@ struct AutoHuntSettings
     int mobSearchRange = 0;
     bool immediateReturnOnPriorityItems = false;
     bool storeTreasureBank = true;
-    bool storeComposeBank = true;
+    // Session 16: OFF by default per user request — OpenComposeBank only
+    // sends a bare ActivateNpc (missing the confirm packets OpenWarehouse
+    // sends), so the dialog window usually never opens and deposits
+    // silently no-op after 3 attempts anyway. Enchanted gear now routes to
+    // the Warehouse via storePlusGear instead (below). Left in (not
+    // deleted) in case the real Compose Bank packet sequence gets
+    // reverse-engineered later.
+    bool storeComposeBank = false;
     bool packMeteorsIntoScrolls = false;
     bool lootRefined = false;
     bool lootUnique = false;
@@ -155,10 +163,30 @@ struct AutoHuntSettings
     // tier and better get picked up. 0 (default) = every tier, matching the
     // previous behavior of picking up any money drop.
     int minimumGoldTier = 0;
+    // These four had no UI anywhere (config-file-only, always false unless
+    // hand-edited) — storeSelectedLootQuality below is the actual exposed
+    // control now, reusing the loot-quality checkboxes instead of asking the
+    // user to duplicate their quality picks in a second place. Left in
+    // (OR'd alongside it in ShouldStoreWarehouseItem) rather than removed.
     bool storeRefined = false;
     bool storeUnique = false;
     bool storeElite = false;
     bool storeSuper = false;
+    // Session 16: one checkbox (Loot tab, near the quality checkboxes)
+    // instead of exposing storeRefined/Unique/Elite/Super as their own
+    // separate UI, which would just duplicate the loot-quality picks above
+    // in a second place the user has to keep in sync. When on, whatever
+    // quality tiers are ticked for LOOTING are also deposited at the
+    // Warehouse on a town run.
+    bool storeSelectedLootQuality = false;
+    // Session 16, replaces the minimumStorePlus SLIDER — user's correction:
+    // "only +1 items drop from monsters, there is no scenario the character
+    // finds a +2 item," so a 0-12 threshold slider was solving a problem
+    // that doesn't exist. Plain on/off: any enchanted item (GetPlus() > 0,
+    // not scoped to exactly 1 — "store + items" means ALL of them) goes to
+    // the Warehouse. Default true (this was the actual ask this whole
+    // thread, not an opt-in extra).
+    bool storePlusGear = true;
     bool buyArrows = false;
     int hpPotionPercent = 50;
     int manaPotionPercent = 35;
@@ -241,7 +269,6 @@ struct AutoHuntSettings
     int reviveDelayMs = 0;
     int reviveRetryIntervalMs = 100;
     int minimumLootPlus = 0;
-    int minimumStorePlus = 0;
     // ── Phase 2a: gold-value floor for ground-item pickup ─────────────────
     // 0 disables; otherwise items whose ItemTypeInfo::price is below this
     // value are skipped on pickup unless explicitly listed in lootItemIds.
@@ -281,6 +308,15 @@ struct AutoHuntSettings
     // or a much larger one (few huge cells already cover a lot) the right
     // cap is a different number, so it's a slider instead of a guess.
     int dynZoneMaxCells = 12;
+
+    // Map-Wide only: where the dynamic zone's very first cell seeds when
+    // hunting begins on this map, simulating "I walked here, then turned
+    // the bot on." {0,0} means unset — seed at the hero's live position
+    // instead (today's behavior). This is a ONE-TIME seed, consulted only
+    // by UpdateDynamicZone's first-seed branch — nothing else in the
+    // dynamic-zone engine (growth/shrink/relocate) ever reads it again, so
+    // the bot is never tied back to this spot once hunting is under way.
+    Position mapWideStartPos = {};
 
     // Session 13: see AutoHuntGoal's comment. maxDangerTier is the slider —
     // deliberately per-character rather than a hardcoded avoid-Red/Black

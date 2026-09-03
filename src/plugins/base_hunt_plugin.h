@@ -254,6 +254,9 @@ protected:
     void BeginTravelToMarket(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings);
     void HandleTravelToZone(TravelPlugin* travel, const AutoHuntSettings& settings);
     void HandleTravelToMarket(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings);
+    // Fallback route for arrow restocking when neither the current map nor
+    // the hunt zone's map has a known blacksmith (see GetFallbackBlacksmithCity).
+    void HandleTravelToBlacksmith(TravelPlugin* travel, const AutoHuntSettings& settings);
 
     HuntTownCallbacks MakeTownCallbacks(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings);
     HuntBuffCallbacks MakeBuffCallbacks(CHero* hero, CGameMap* map, const AutoHuntSettings& settings);
@@ -313,9 +316,18 @@ protected:
     char m_itemSearch[64] = "";
 
     DWORD m_lastAttackTick = 0;
-    DWORD m_lastPackTick = 0;
     DWORD m_lastMoveTick = 0;
     DWORD m_manualControlPauseUntilTick = 0;
+
+    // MillionaireLee stall investigation: StartPathTo's A* fallback (walk-only
+    // areas) had no cooldown when Pathfinder::StartPath() failed to actually
+    // go active (occupied/unreachable landing tile) — the caller just retried
+    // every movementIntervalMs (as low as ~100ms under aggressive speed),
+    // producing hundreds of failed FindPath+StartPath calls per second near a
+    // crowded NPC with the hero barely moving. This forces a real pause after
+    // an observed failed activation so the crowd/obstruction has time to
+    // clear before the next attempt.
+    DWORD m_pathFailBackoffUntilTick = 0;
 
     // Session 13 [EXPLORE TABU]: explore destinations visited recently, so
     // the exploit pick can't oscillate between the map's two hottest buckets
@@ -349,6 +361,12 @@ protected:
     // BeginTravelToZone in base_hunt_plugin.cpp) fixes that regardless of
     // whatever the underlying map-data problem turns out to be.
     int m_zoneTravelFailCount = 0;
+
+    // Session 16b [ARROW-RESTOCK FALLBACK]: which blacksmith city
+    // HandleTravelToBlacksmith is currently en route to / waiting to arrive
+    // at (set once in the arrow-restocking dispatch, read on every tick
+    // while AutoHuntState::TravelToBlacksmith is active).
+    OBJID m_blacksmithTravelMapId = 0;
 
     // Session 15 [ZONE-UNREACHABLE FALLBACK]: when we're already ON the zone map
     // but the hunt-zone anchor is genuinely unreachable (e.g. a portal landed us
@@ -396,4 +414,15 @@ protected:
     int      m_dynLastKills = 0;        // CHero::GetGameKillCount() snapshot (accurate, +0xA30)
     DWORD    m_dynLastSizeTick = 0;     // throttle for the grow/shrink + productivity step
     DWORD    m_dynLastRecenterTick = 0; // throttle between full relocates
+    // Session 16b [CHASE-THE-ZONE FIX]: false from every seed/relocate until
+    // the hero is actually observed near a member cell at least once. The
+    // idle-relocate check below is gated on this — without it, a relocate
+    // whose target is farther away than the hero can travel within
+    // kDynIdleRecenterMs (12s) just relocates again before arrival, forever
+    // — live-confirmed: 30-tile cells relocating every 12-37s in a
+    // Travel-To-Zone<->Acquire-Target loop, zero attacks in a 3+ minute
+    // session. Once true it behaves exactly as before (a real kill still
+    // refreshes m_dynProductiveTick; staying unproductive AFTER arrival
+    // still relocates normally).
+    bool     m_dynHasArrived = false;
 };

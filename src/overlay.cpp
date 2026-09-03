@@ -11,6 +11,7 @@
 #include "mapdata.h"
 #include "spawn_memory.h"
 #include "mem_stats.h"
+#include "portal_capture.h"
 #include "pathfinder.h"
 #include "plugin_mgr.h"
 #include "gateway.h"
@@ -224,6 +225,7 @@ static void TickBackgroundLogic()
     CHero* hero = Game::GetHero();
     if (hero) {
         UpdateCharacterConfigBinding();
+        TrackPortalUsage();
         Pathfinder::Get().Update();
         PluginManager::Get().UpdateAll();
         UpdateItemNotifications();
@@ -268,6 +270,30 @@ static void RenderPlayerTab(CHero* hero)
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Player: %s", hero->GetName());
     ImGui::Text("UID:      %u", hero->GetID());
     ImGui::Text("Position: (%d, %d)", hero->m_posMap.x, hero->m_posMap.y);
+    {
+        const PortalUsageRecord& portal = GetLastPortalUsage();
+        if (portal.valid) {
+            // "via #N" is the source map's file-declared portal index
+            // (mapdata.h MapPortal) so a capture walk reports by number.
+            char via[48] = "";
+            if (portal.viaPortalId >= 0)
+                snprintf(via, sizeof(via), " via #%d @(%d,%d)",
+                    portal.viaPortalId, portal.viaPortalPos.x, portal.viaPortalPos.y);
+            ImGui::Text("Last Portal: map %u (%d,%d) -> map %u (%d,%d)%s",
+                portal.fromMapId, portal.fromPos.x, portal.fromPos.y,
+                portal.toMapId, portal.toPos.x, portal.toPos.y, via);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Copy")) {
+                char clip[200];
+                snprintf(clip, sizeof(clip), "%u (%d,%d) -> %u (%d,%d)%s",
+                    portal.fromMapId, portal.fromPos.x, portal.fromPos.y,
+                    portal.toMapId, portal.toPos.x, portal.toPos.y, via);
+                ImGui::SetClipboardText(clip);
+            }
+        } else {
+            ImGui::TextDisabled("Last Portal: none detected yet this session");
+        }
+    }
     ImGui::Text("World:    (%d, %d)", hero->m_posWorld.x, hero->m_posWorld.y);
     ImGui::Text("Screen:   (%d, %d)", hero->m_posScr.x, hero->m_posScr.y);
     ImGui::Text("Status:   0x%llX", (unsigned long long)hero->m_nStatusFlag);
@@ -1822,6 +1848,23 @@ static void RenderMinimapSection(CHero* hero, CGameMap* map,
                                 tileX, tileY, dist, reason);
                             ImGui::Text("terrain=%u mask=%u alt=%d",
                                 terrain, mask, alt);
+                            // Session 16b [BRIDGE WALKABILITY RE] used to dump
+                            // the whole per-cell LayerInfo chain here, chasing
+                            // a theory that bridge tiles carried a second,
+                            // walkable layer that GetLastLayer was skipping.
+                            // REMOVED as structurally incapable of testing
+                            // that: Game::GetMap() returns the file-backed
+                            // synthetic map, whose loader hardcodes
+                            // layer.next = nullptr for every cell — so the
+                            // dump could only ever print exactly one layer no
+                            // matter what the truth was, and reading "one
+                            // layer" off it as evidence (which happened) was
+                            // wrong. The real answer turned out to be
+                            // elsewhere entirely: bridges live in the .DMap's
+                            // scene-placement section, which ParseFile now
+                            // folds into the cell masks (see mapdata.cpp), so
+                            // the plain mask shown above is the whole story
+                            // for this tile.
                             ImGui::EndTooltip();
                         }
 

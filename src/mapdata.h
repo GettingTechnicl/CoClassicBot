@@ -22,15 +22,39 @@
 //   u32   height          @ 0x110
 //   cells from 0x114: { u16 mask, u16 terrain, s16 altitude }  = 6 bytes
 //   ...with a 4-byte checksum after EVERY ROW (row stride = width*6 + 4)
-//   further sections follow the cell data
+//   further sections follow the cell data — among them a list of scene-object
+//   placements, WHICH ARE PART OF WALKABILITY, not decoration (see below)
 //
 // mask 0 = walkable, 1 = blocked. Verified against six confirmed Twin City
 // hero positions (all 0) and the map border (1).
+//
+// THE CELL GRID ALONE IS NOT THE WHOLE WALKABILITY PICTURE
+// --------------------------------------------------------
+// Bridges are the case that proves it: a tile on a real, walkable bridge and
+// a tile of genuinely-empty void are byte-identical in the cell grid (both
+// mask=1 terrain=0 altitude=0 — live-verified by hovering the hero standing
+// mid-bridge on map 1010). What makes the bridge walkable is a scene-object
+// placement in the post-grid section naming a .scene file whose footprint
+// covers those tiles. ParseFile parses those placements and clears their
+// masks; mapdata.cpp documents the record layout and the anchoring/padding
+// evidence. Without it the two landmasses of map 1010 are disconnected and
+// A* simply cannot route between them.
 // =====================================================================
 #include "base.h"
 #include <cstdint>
 #include <string>
 #include <vector>
+
+// A portal as the map file declares it: where it sits on THIS map and its
+// per-map index. The DESTINATION is not in the client — it's server-side
+// (cq_portal) — so this is the "from" half only. gateway.cpp's s_gateways
+// carries the "to" half for the portals whose destination has been observed.
+struct MapPortal
+{
+    int x;
+    int y;
+    int id;
+};
 
 class MapGrid
 {
@@ -74,8 +98,15 @@ public:
         return c ? (int)c->altitude : 0;
     }
 
-    // Parse a .DMap directly (used by the loader and by tests).
-    static bool ParseFile(const std::string& path, int* w, int* h, std::vector<Cell>* out);
+    // Every portal the map file declares (position + per-map index). Exact
+    // and complete for every map — this is the checklist of what exists, even
+    // where the destination is still unknown.
+    const std::vector<MapPortal>& GetPortals() const { return m_portals; }
+
+    // Parse a .DMap directly (used by the loader and by tests). `portals` is
+    // optional; when given it receives the tail's portal list.
+    static bool ParseFile(const std::string& path, int* w, int* h, std::vector<Cell>* out,
+                          std::vector<MapPortal>* portals = nullptr);
 
     // Absolute path of the game install, derived from the running module.
     static std::string GetGameRoot();
@@ -90,6 +121,7 @@ private:
     int               m_height = 0;
     std::string       m_file;
     std::vector<Cell> m_cells;
+    std::vector<MapPortal> m_portals;
 };
 
 // Terrain for the map the hero is currently on. Reloads automatically when

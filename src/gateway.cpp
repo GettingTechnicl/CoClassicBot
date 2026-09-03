@@ -116,6 +116,32 @@ static const std::unordered_map<OBJID, std::vector<Gateway>> s_gateways = {
                            }, kConductressSilverCost),
             // Portals
             {GatewayType::Portal, MAP_PHOENIX_CASTLE, {6, 376}, MAP_TWIN_CITY, {958, 555}},
+            // Direct Phoenix -> Ape Mountain link, from the community world
+            // map the user supplied 2026-09-02 (Forest 452,819 <-> Canyon
+            // 922,558). Source tile is the map file's own portal #2
+            // (448,822); landing approximated as the partner's portal tile,
+            // same convention as the Ape City 2 entry — the bot re-reads its
+            // real position after the teleport. LIVE-VALIDATED 2026-09-02:
+            //   [portal] 1011 (448,822) -> 1020 (919,559) via portal #2 @(448,822)
+            {GatewayType::Portal, MAP_PHOENIX_CASTLE, {448, 822}, MAP_APE_MOUNTAIN, {919, 559}},
+            // Phoenix Castle 2 (1076, newwoods.DMap) — an exact copy of this map,
+            // same relationship as Ape Mountain -> Ape City 2. Map file portal #4.
+            // LIVE-VALIDATED 2026-09-02 by the user's walk, both directions:
+            //   [portal] 1011 (855,483) -> 1076 (11,361) via portal #4 @(855,482)
+            //   [portal] 1076 (2,360)   -> 1011 (850,485) via portal #0 @(2,360)
+            {GatewayType::Portal, MAP_PHOENIX_CASTLE, {855, 482}, MAP_PHOENIX_CASTLE2, {11, 361}},
+        }
+    },
+    {
+        MAP_DREAMLAND, {
+            // Back to Ape Mountain. Live-validated (see the Ape Mountain entry).
+            {GatewayType::Portal, MAP_DREAMLAND, {531, 534}, MAP_APE_MOUNTAIN, {23, 383}},
+        }
+    },
+    {
+        MAP_PHOENIX_CASTLE2, {
+            // Back to Phoenix Castle. Live-validated (see above).
+            {GatewayType::Portal, MAP_PHOENIX_CASTLE2, {2, 360}, MAP_PHOENIX_CASTLE, {850, 485}},
         }
     },
     {
@@ -130,6 +156,15 @@ static const std::unordered_map<OBJID, std::vector<Gateway>> s_gateways = {
                            }, kConductressSilverCost),
             // Portals
             {GatewayType::Portal, MAP_APE_MOUNTAIN, {377, 9}, MAP_TWIN_CITY, {555, 957}},
+            // Direct Ape Mountain -> Phoenix link. Map file portal #0 (926,557).
+            // LIVE-VALIDATED 2026-09-02 by the user's own walk:
+            //   [portal] 1020 (926,557) -> 1011 (453,819)
+            {GatewayType::Portal, MAP_APE_MOUNTAIN, {926, 557}, MAP_PHOENIX_CASTLE, {453, 819}},
+            // Dreamland (1012) off the west edge. Map file portal #4.
+            // LIVE-VALIDATED 2026-09-02 by the user's walk, both directions:
+            //   [portal] 1020 (12,377)   -> 1012 (532,529) via portal #4 @(11,377)
+            //   [portal] 1012 (531,534)  -> 1020 (23,383)  via portal #0 @(531,534)
+            {GatewayType::Portal, MAP_APE_MOUNTAIN, {11, 377}, MAP_DREAMLAND, {532, 529}},
             // Ape City 2 (1075) — hunting map. Landing approximated as the
             // return portal's own tile (bot re-reads real pos after teleport).
             {GatewayType::Portal, MAP_APE_MOUNTAIN, {610, 874}, MAP_APE_CITY2, {361, 6}},
@@ -203,6 +238,8 @@ static const Destination s_destinations[] = {
     {"Phoenix Castle", MAP_PHOENIX_CASTLE, {193, 266}},
     {"Ape Mountain", MAP_APE_MOUNTAIN, {566, 565}},
     {"Ape City 2", MAP_APE_CITY2, {361, 6}},
+    {"Phoenix Castle 2", MAP_PHOENIX_CASTLE2, {11, 361}},
+    {"Dreamland", MAP_DREAMLAND, {532, 529}},
     {"Bird Island", MAP_BIRD_ISLAND, {717, 577}},
     {"Mine Cave", MAP_MINE_CAVE, {157, 91}},
     {"Market", MAP_MARKET, {211, 196}},

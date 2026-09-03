@@ -10,8 +10,10 @@
 #include "CItem.h"
 #include "itemtype.h"
 #include "gateway.h"
+#include "pathfinder.h"
 #include "log.h"
 #include <algorithm>
+#include <cmath>
 
 // ── File-local constants and helpers ─────────────────────────────────────────
 namespace {
@@ -20,6 +22,9 @@ const Position kTreasureBankPos = {180, 183};
 const Position kComposeBankPos  = {179, 187};
 const Position kWarehousePos    = {182, 180};
 const Position kPharmacistPos   = {198, 181};
+
+// Session 16: MillionaireLee packs 10 Meteors -> 1 MeteorScroll.
+const Position kMillionaireLeePos = {241, 240};
 
 // Session 11 [FREEZE FIX]: bank NPCs give up (skip the deposit rather than
 // retry forever) after this many failed open confirmations.
@@ -64,6 +69,16 @@ bool HuntTownService::HasBlacksmithOnMap(OBJID mapId)
     return FindBlacksmithForMap(mapId) != nullptr;
 }
 
+bool HuntTownService::GetFallbackBlacksmithCity(OBJID& outMapId, Position& outPos)
+{
+    constexpr size_t kCount = sizeof(kBlacksmiths) / sizeof(kBlacksmiths[0]);
+    if (kCount == 0)
+        return false;
+    outMapId = kBlacksmiths[0].mapId;
+    outPos = kBlacksmiths[0].pos;
+    return true;
+}
+
 // ── HuntTownService — Reset helpers ──────────────────────────────────────────
 
 void HuntTownService::ResetRepairSequence()
@@ -96,6 +111,9 @@ void HuntTownService::ResetStoreSequence()
     m_packMeteorsFailCount = 0;
     m_warehouseDepositFailCount = 0;
     m_storeDepositSkipItemId = 0;
+    m_millionaireLeeNpcId = 0;
+    m_millionaireLeeOpenAttempts = 0;
+    m_millionaireLeeAnswerCount = 0;
 }
 
 // ── HuntTownService — Arrow helpers ──────────────────────────────────────────
@@ -334,7 +352,18 @@ bool HuntTownService::IsTreasureBankDragonBallFamily(const CItem& item) const
 
 bool HuntTownService::IsTreasureBankMeteorFamily(const CItem& item) const
 {
-    return item.IsMeteor() || item.IsMeteorScroll();
+    // Session 16: raw Meteor dropped from this family. MillionaireLee's
+    // packing flow (StorePhase::PackMeteors) is now the only path for raw
+    // Meteors, and per the user's own framing it rides along on a town trip
+    // already happening for another reason (bag-full/repair/DragonBall)
+    // rather than independently triggering one — so raw Meteor no longer
+    // needs to register as a "needs Treasure Bank" item for NeedsStorage's
+    // sake. MeteorScroll stays here as a fallback safety net in case one
+    // ever isn't caught by the Warehouse's own explicit MeteorScroll routing
+    // (ShouldStoreWarehouseItem, below) — Treasure Bank deposit is still
+    // broken (see OpenTreasureBank's header comment), so this rarely
+    // succeeds either, but it's a bounded-retry no-op, not a hang.
+    return item.IsMeteorScroll();
 }
 
 bool HuntTownService::IsTreasureBankItem(const CItem& item) const
@@ -408,6 +437,14 @@ bool HuntTownService::ShouldStoreWarehouseItem(const AutoHuntSettings& settings,
     if (IsSelectedWarehouseItem(settings, item.GetTypeID()))
         return true;
 
+    // Session 16: MeteorScroll (MillionaireLee's packing output) routes to
+    // the Warehouse, not the Treasure Bank — deposit there is broken the
+    // same way it is for the base items (missing confirm packet, see
+    // OpenTreasureBank's header comment), so claiming it here first avoids
+    // silently no-opping on every scroll produced.
+    if (item.IsMeteorScroll() || item.IsMegaMeteorScroll())
+        return true;
+
     if (settings.storeTreasureBank && IsTreasureBankItem(item))
         return false;
 
@@ -416,14 +453,22 @@ bool HuntTownService::ShouldStoreWarehouseItem(const AutoHuntSettings& settings,
 
     if (IsEquipmentQualitySort(item.GetSort())) {
         const int quality = item.GetQuality();
-        if ((quality == ItemQuality::REFINED && settings.storeRefined)
-            || (quality == ItemQuality::UNIQUE && settings.storeUnique)
-            || (quality == ItemQuality::ELITE && settings.storeElite)
-            || (quality == ItemQuality::SUPER && settings.storeSuper))
+        // Session 16: storeSelectedLootQuality (Loot tab checkbox) reuses
+        // the loot-quality picks instead of the separate storeX settings,
+        // which have no UI of their own — OR'd together so either path
+        // (a hand-edited ini, or the exposed checkbox) works.
+        if ((quality == ItemQuality::REFINED && (settings.storeRefined || (settings.storeSelectedLootQuality && settings.lootRefined)))
+            || (quality == ItemQuality::UNIQUE && (settings.storeUnique || (settings.storeSelectedLootQuality && settings.lootUnique)))
+            || (quality == ItemQuality::ELITE && (settings.storeElite || (settings.storeSelectedLootQuality && settings.lootElite)))
+            || (quality == ItemQuality::SUPER && (settings.storeSuper || (settings.storeSelectedLootQuality && settings.lootSuper))))
             return true;
     }
 
-    return settings.minimumStorePlus > 0 && item.GetPlus() >= settings.minimumStorePlus;
+    // Session 16: plain on/off (storePlusGear), not a plus-level threshold —
+    // user's correction: only +1 ever actually drops, a 0-12 slider was
+    // solving a problem that doesn't exist. "Store + items" means ANY
+    // enchanted item, not scoped to exactly +1.
+    return settings.storePlusGear && item.GetPlus() > 0;
 }
 
 // ── HuntTownService — HandleRepairState ──────────────────────────────────────
@@ -805,48 +850,111 @@ void HuntTownService::HandleStoreState(CHero* hero, CGameMap* map,
                 return;
             }
 
-            CItem* meteor = FindInventoryItemByType(hero, ItemTypeId::METEOR);
-            if (!meteor) {
-                m_storePhase = StorePhase::MoveToWarehouse;
+            // Session 16: packing genuinely requires visiting MillionaireLee
+            // (live packet capture: ActivateNpc then AnswerNpc(0) x2) — the
+            // old self-service UseItem() below never actually worked, there
+            // is no NPC-less combine mechanic. [SIMPLIFIED — 6th attempt]:
+            // every prior attempt added custom approach logic (a staging
+            // point, a two-leg split, a dedicated direct-walk path) trying to
+            // out-think the movement problem — and each one made the actual
+            // regression report worse, not better (this NPC used to at least
+            // get reached and open its dialog; the added complexity broke
+            // even that). None of the other 5 town NPCs (Pharmacist,
+            // Blacksmith, Warehouseman, TreasureBank, ComposeBank) need
+            // anything beyond a single startPathNearTargetFn call at their
+            // own live position — that's proven reliable, live, for all of
+            // them, regardless of how far into Market they are. Mirror that
+            // exact pattern here instead of any bespoke logic.
+            CRole* npc = FindNpcByName("MillionaireLee", kMillionaireLeePos, 16);
+            const Position npcPos = npc ? npc->m_posMap : kMillionaireLeePos;
+            const int npcDist = CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y, npcPos.x, npcPos.y);
+            if (npcDist > 5) {
+                cb.startPathNearTargetFn(hero, map, npcPos, 4);
+                cb.setStateFn(AutoHuntState::StoreItems, "Moving to MillionaireLee");
                 return;
             }
 
+            if (npc)
+                m_millionaireLeeNpcId = npc->GetID();
+            if (m_millionaireLeeNpcId == 0) {
+                cb.setStateFn(AutoHuntState::StoreItems, "Waiting for MillionaireLee");
+                return;
+            }
             if (now - m_lastNpcActionTick < npcActionInterval)
                 return;
 
             m_storeMeteorCountBefore = meteorCount;
-            m_storeItemId = meteor->GetID();
-            hero->UseItem(m_storeItemId);
-            m_storePhase = StorePhase::WaitPackMeteors;
+            spdlog::info("[hunt] MillionaireLee: hero=({},{}) npc=({},{}) dist={} — activating",
+                hero->m_posMap.x, hero->m_posMap.y, npcPos.x, npcPos.y, npcDist);
+            hero->ActivateNpc(m_millionaireLeeNpcId);
+            m_millionaireLeeAnswerCount = 0;
             m_lastNpcActionTick = now;
-            cb.setStateFn(AutoHuntState::StoreItems, "Packing Meteors into MeteorScrolls");
+            m_storePhase = StorePhase::WaitPackMeteors;
+            cb.setStateFn(AutoHuntState::StoreItems, "Opening MillionaireLee");
             return;
         }
 
         case StorePhase::WaitPackMeteors: {
-            const int meteorCount = CountInventoryItemsByType(hero, ItemTypeId::METEOR);
-            if (meteorCount < m_storeMeteorCountBefore || meteorCount < 10) {
-                m_storeItemId = 0;
-                m_storeMeteorCountBefore = 0;
-                m_packMeteorsFailCount = 0;
-                m_storePhase = StorePhase::PackMeteors;
+            // Same freeze-safety shape as WaitTreasureBank below: never send
+            // the pack-confirm without IsNpcActive() actually confirming the
+            // dialog opened, bounded retry, then give up on this cycle.
+            const bool dialogOpen = hero->IsNpcActive() && hero->GetActiveNpc() == m_millionaireLeeNpcId;
+            if (!dialogOpen) {
+                if (now - m_lastNpcActionTick > 1200) {
+                    if (++m_millionaireLeeOpenAttempts >= kMaxBankOpenAttempts) {
+                        spdlog::warn("[hunt] MillionaireLee NPC {} never confirmed open after {} attempts, giving up on packing this cycle (hero last at ({},{}))",
+                            m_millionaireLeeNpcId, m_millionaireLeeOpenAttempts, hero->m_posMap.x, hero->m_posMap.y);
+                        m_millionaireLeeOpenAttempts = 0;
+                        m_storeMeteorCountBefore = 0;
+                        m_storePhase = StorePhase::MoveToWarehouse;
+                        return;
+                    }
+                    spdlog::info("[hunt] MillionaireLee: retry {} — hero=({},{}), IsNpcActive={} activeNpc={}",
+                        m_millionaireLeeOpenAttempts, hero->m_posMap.x, hero->m_posMap.y,
+                        hero->IsNpcActive(), hero->GetActiveNpc());
+                    hero->ActivateNpc(m_millionaireLeeNpcId);
+                    m_lastNpcActionTick = now;
+                }
                 return;
             }
-            if (now - m_lastNpcActionTick > 2500) {
-                m_storeItemId = 0;
-                m_storeMeteorCountBefore = 0;
-                // Session 12 [LOCKUP FIX]: give up packing meteors after
-                // repeated failures instead of retrying forever -- see
-                // kMaxStoreStepFailures.
-                if (++m_packMeteorsFailCount >= kMaxStoreStepFailures) {
-                    spdlog::warn("[hunt] Packing meteors into scrolls never confirmed after {} attempts, giving up for this store cycle",
-                        m_packMeteorsFailCount);
-                    m_packMeteorsFailCount = 0;
-                    m_storePhase = StorePhase::MoveToWarehouse;
+            m_millionaireLeeOpenAttempts = 0;
+
+            // Confirmed open — send the pack-confirm. Live-captured from a
+            // manual craft: AnswerNpc(0), taskId=101, sent TWICE ~1s apart.
+            // Match that exactly rather than assuming one is enough.
+            if (m_millionaireLeeAnswerCount < 2) {
+                if (now - m_lastNpcActionTick < npcActionInterval)
                     return;
-                }
-                m_storePhase = StorePhase::PackMeteors;
+                hero->AnswerNpc(0);
+                ++m_millionaireLeeAnswerCount;
+                m_lastNpcActionTick = now;
+                return;
             }
+
+            const int meteorCount = CountInventoryItemsByType(hero, ItemTypeId::METEOR);
+            if (meteorCount < m_storeMeteorCountBefore) {
+                // Progress confirmed — loop for another batch of 10 if
+                // enough remain, otherwise move on to depositing.
+                m_millionaireLeeAnswerCount = 0;
+                m_packMeteorsFailCount = 0;
+                m_storeMeteorCountBefore = 0;
+                m_storePhase = (meteorCount >= 10) ? StorePhase::PackMeteors : StorePhase::MoveToWarehouse;
+                return;
+            }
+
+            // Session 12 [LOCKUP FIX]: give up packing meteors after
+            // repeated failures instead of retrying forever -- see
+            // kMaxStoreStepFailures.
+            if (++m_packMeteorsFailCount >= kMaxStoreStepFailures) {
+                spdlog::warn("[hunt] Packing meteors at MillionaireLee never confirmed after {} attempts, giving up for this store cycle",
+                    m_packMeteorsFailCount);
+                m_packMeteorsFailCount = 0;
+                m_millionaireLeeAnswerCount = 0;
+                m_storeMeteorCountBefore = 0;
+                m_storePhase = StorePhase::MoveToWarehouse;
+                return;
+            }
+            m_millionaireLeeAnswerCount = 0;  // retry the answer sequence
             return;
         }
 

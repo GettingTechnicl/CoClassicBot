@@ -76,6 +76,8 @@
     <ClCompile Include="src\CEntityInfo.cpp" />
     <ClCompile Include="src\gfx.cpp" />
     <ClCompile Include="src\config.cpp" />
+    <ClCompile Include="src\profiles.cpp" />
+    <ClCompile Include="src\portal_capture.cpp" />
     <ClCompile Include="src\CGameMap.cpp" />
     <ClCompile Include="src\gateway.cpp" />
     <ClCompile Include="src\discord.cpp" />
@@ -148,6 +150,8 @@
     <ClInclude Include="src\CMagic.h" />
     <ClInclude Include="src\CMapObj.h" />
     <ClInclude Include="src\config.h" />
+    <ClInclude Include="src\profiles.h" />
+    <ClInclude Include="src\portal_capture.h" />
     <ClInclude Include="src\discord.h" />
     <ClInclude Include="src\CRole.h" />
     <ClInclude Include="src\CEntitySet.h" />

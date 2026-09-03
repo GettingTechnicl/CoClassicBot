@@ -180,6 +180,13 @@ public:
     // ── Map query helpers ─────────────────────────────────────────────────────
     // Returns true if a known blacksmith NPC entry exists for the given map.
     static bool HasBlacksmithOnMap(OBJID mapId);
+    // Fallback for when neither the current map nor the hunt zone's map has a
+    // blacksmith (e.g. a hunt zone on a side-map like Ape City 2, which has no
+    // vendor NPCs of its own) — the nearest arrow-selling city otherwise has
+    // no path into this feature at all. Returns false only if the blacksmith
+    // table itself is empty. See base_hunt_plugin.cpp's arrow-restocking
+    // dispatch for the caller.
+    static bool GetFallbackBlacksmithCity(OBJID& outMapId, Position& outPos);
 
     // ── Accessors for state the parent plugin may need ───────────────────────
     RepairPhase    GetRepairPhase()    const { return m_repairPhase; }
@@ -265,4 +272,14 @@ private:
     // against an unconfirmed dialog.
     int   m_treasureBankOpenAttempts = 0;
     int   m_composeBankOpenAttempts  = 0;
+
+    // Session 16: MillionaireLee (packs 10 Meteors -> 1 MeteorScroll). Same
+    // freeze-safety shape as the bank NPCs above — m_millionaireLeeOpenAttempts
+    // bounds retrying ActivateNpc before giving up, m_millionaireLeeAnswerCount
+    // tracks how many of the two live-captured AnswerNpc(0) confirms have been
+    // sent this attempt (reset each retry). Reuses m_packMeteorsFailCount
+    // (already existed) for "no progress after a full answer sequence."
+    OBJID m_millionaireLeeNpcId      = 0;
+    int   m_millionaireLeeOpenAttempts = 0;
+    int   m_millionaireLeeAnswerCount  = 0;
 };

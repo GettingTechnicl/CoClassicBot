@@ -55,6 +55,8 @@ add_library(coclassic SHARED
     src/map_probe.cpp
     src/monster_scan.cpp
     src/config.cpp
+    src/profiles.cpp
+    src/portal_capture.cpp
     src/hunt_settings.cpp
     src/hunt_stats.cpp
     src/hunt_targeting.cpp

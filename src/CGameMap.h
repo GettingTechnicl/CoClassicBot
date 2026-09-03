@@ -158,7 +158,13 @@ public:
         return layer ? layer->mask : 0;
     }
 
-    // Check if a cell is walkable
+    // Check if a cell is walkable.
+    //
+    // Bridges and other standable structures are NOT in the base terrain
+    // grid — they arrive via the .DMap's scene-placement section, which
+    // MapGrid::ParseFile now parses and folds into the cell masks before
+    // this ever runs (see mapdata.cpp's scene-overlay block). So a plain
+    // mask test is correct again; there is no override table.
     bool IsWalkable(int x, int y) const {
         return GetMask(GetCell(x, y)) != 1;
     }

@@ -9,6 +9,7 @@
 #include "plugins/mining_plugin.h"
 #include "plugins/mule_plugin.h"
 #include "plugins/follow_plugin.h"
+#include "profiles.h"
 #include "log.h"
 #include <windows.h>
 #include <wincrypt.h>
@@ -192,7 +193,7 @@ static bool g_configAutosavePending = false;
 
 static constexpr DWORD kConfigAutosaveDebounceMs = 500;
 
-static std::string GetConfigDirectory()
+std::string GetConfigDirectory()
 {
     extern HMODULE g_hModule;  // from dllmain.cpp
     char buf[MAX_PATH];
@@ -222,26 +223,26 @@ static bool FileExists(const char* path)
 }
 
 // Helper: write int/float to INI
-static void WriteInt(const char* file, const char* section, const char* key, int val)
+void WriteInt(const char* file, const char* section, const char* key, int val)
 {
     char buf[32];
     snprintf(buf, sizeof(buf), "%d", val);
     WritePrivateProfileStringA(section, key, buf, file);
 }
 
-static void WriteFloat(const char* file, const char* section, const char* key, float val)
+void WriteFloat(const char* file, const char* section, const char* key, float val)
 {
     char buf[32];
     snprintf(buf, sizeof(buf), "%.6f", val);
     WritePrivateProfileStringA(section, key, buf, file);
 }
 
-static int ReadInt(const char* file, const char* section, const char* key, int def)
+int ReadInt(const char* file, const char* section, const char* key, int def)
 {
     return GetPrivateProfileIntA(section, key, def, file);
 }
 
-static float ReadFloat(const char* file, const char* section, const char* key, float def)
+float ReadFloat(const char* file, const char* section, const char* key, float def)
 {
     char buf[32];
     GetPrivateProfileStringA(section, key, "", buf, sizeof(buf), file);
@@ -249,7 +250,7 @@ static float ReadFloat(const char* file, const char* section, const char* key, f
     return strtof(buf, nullptr);
 }
 
-static void ReadString(const char* file, const char* section, const char* key,
+void ReadString(const char* file, const char* section, const char* key,
                        const char* def, char* out, DWORD outSize)
 {
     GetPrivateProfileStringA(section, key, def, out, outSize, file);
@@ -320,11 +321,11 @@ static void ParseU32List(const char* text, std::vector<uint32_t>& out)
     }
 }
 
-static std::string SanitizeIniToken(const char* text)
+std::string SanitizeIniToken(const char* text, const char* emptyFallback)
 {
     std::string token;
     if (!text)
-        return token;
+        text = "";
 
     while (*text) {
         const unsigned char ch = (unsigned char)*text++;
@@ -336,7 +337,7 @@ static std::string SanitizeIniToken(const char* text)
     }
 
     if (token.empty())
-        token = "Hero";
+        token = emptyFallback;
     return token;
 }
 
@@ -346,7 +347,7 @@ static std::string GetCharacterConfigKey(const CHero* hero)
         return {};
 
     char buf[96];
-    const std::string name = SanitizeIniToken(hero->GetName());
+    const std::string name = SanitizeIniToken(hero->GetName(), "Hero");
     snprintf(buf, sizeof(buf), "%s_%u", name.c_str(), hero->GetID());
     return buf;
 }
@@ -469,6 +470,8 @@ static std::string BuildCurrentConfigSnapshot()
     AppendBoolSnapshot(snapshot, "storeUnique", autoHunt.storeUnique);
     AppendBoolSnapshot(snapshot, "storeElite", autoHunt.storeElite);
     AppendBoolSnapshot(snapshot, "storeSuper", autoHunt.storeSuper);
+    AppendBoolSnapshot(snapshot, "storeSelectedLootQuality", autoHunt.storeSelectedLootQuality);
+    AppendBoolSnapshot(snapshot, "storePlusGear", autoHunt.storePlusGear);
     AppendBoolSnapshot(snapshot, "buyArrows", autoHunt.buyArrows);
     AppendIntSnapshot(snapshot, "arrowTypeId", (int)autoHunt.arrowTypeId);
     AppendIntSnapshot(snapshot, "arrowBuyCount", autoHunt.arrowBuyCount);
@@ -503,7 +506,6 @@ static std::string BuildCurrentConfigSnapshot()
     AppendIntSnapshot(snapshot, "decisionThrottleMs", autoHunt.decisionThrottleMs);
     AppendIntSnapshot(snapshot, "randomWalkIntervalMs", autoHunt.randomWalkIntervalMs);
     AppendIntSnapshot(snapshot, "minimumLootPlus", autoHunt.minimumLootPlus);
-    AppendIntSnapshot(snapshot, "minimumStorePlus", autoHunt.minimumStorePlus);
     AppendIntSnapshot(snapshot, "minimumLootGoldValue", autoHunt.minimumLootGoldValue);
     AppendIntSnapshot(snapshot, "minimumGoldTier", autoHunt.minimumGoldTier);
     AppendBoolSnapshot(snapshot, "autoDropTrashWhenFull", autoHunt.autoDropTrashWhenFull);
@@ -531,6 +533,8 @@ static std::string BuildCurrentConfigSnapshot()
     AppendBoolSnapshot(snapshot, "disableInstantAttackOnPlayer", autoHunt.disableInstantAttackOnPlayer);
     AppendIntSnapshot(snapshot, "dynZoneCellTiles", autoHunt.dynZoneCellTiles);
     AppendIntSnapshot(snapshot, "dynZoneMaxCells", autoHunt.dynZoneMaxCells);
+    AppendIntSnapshot(snapshot, "mapWideStartPosX", autoHunt.mapWideStartPos.x);
+    AppendIntSnapshot(snapshot, "mapWideStartPosY", autoHunt.mapWideStartPos.y);
     AppendIntSnapshot(snapshot, "paranoiaFleeDistance", autoHunt.paranoiaFleeDistance);
     AppendIntSnapshot(snapshot, "paranoiaAbandonAfter", autoHunt.paranoiaAbandonAfter);
     AppendIntSnapshot(snapshot, "paranoiaPassingThresholdMs", autoHunt.paranoiaPassingThresholdMs);
@@ -625,7 +629,7 @@ static void ResetConfigAutosaveState()
     g_configAutosavePending = false;
 }
 
-static void SaveAutoHuntSection(const char* file, const char* section)
+void SaveAutoHuntSection(const char* file, const char* section)
 {
     AutoHuntSettings& autoHunt = GetAutoHuntSettings();
     WriteInt(file, section, "enabled", autoHunt.enabled ? 1 : 0);
@@ -688,6 +692,8 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "storeUnique", autoHunt.storeUnique ? 1 : 0);
     WriteInt(file, section, "storeElite", autoHunt.storeElite ? 1 : 0);
     WriteInt(file, section, "storeSuper", autoHunt.storeSuper ? 1 : 0);
+    WriteInt(file, section, "storeSelectedLootQuality", autoHunt.storeSelectedLootQuality ? 1 : 0);
+    WriteInt(file, section, "storePlusGear", autoHunt.storePlusGear ? 1 : 0);
     WriteInt(file, section, "buyArrows", autoHunt.buyArrows ? 1 : 0);
     WriteInt(file, section, "arrowTypeId", (int)autoHunt.arrowTypeId);
     WriteInt(file, section, "arrowBuyCount", autoHunt.arrowBuyCount);
@@ -722,7 +728,6 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "decisionThrottleMs", autoHunt.decisionThrottleMs);
     WriteInt(file, section, "randomWalkIntervalMs", autoHunt.randomWalkIntervalMs);
     WriteInt(file, section, "minimumLootPlus", autoHunt.minimumLootPlus);
-    WriteInt(file, section, "minimumStorePlus", autoHunt.minimumStorePlus);
     WriteInt(file, section, "minimumLootGoldValue", autoHunt.minimumLootGoldValue);
     WriteInt(file, section, "minimumGoldTier", autoHunt.minimumGoldTier);
     WriteInt(file, section, "autoDropTrashWhenFull", autoHunt.autoDropTrashWhenFull ? 1 : 0);
@@ -750,6 +755,8 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WriteInt(file, section, "disableInstantAttackOnPlayer", autoHunt.disableInstantAttackOnPlayer ? 1 : 0);
     WriteInt(file, section, "dynZoneCellTiles", autoHunt.dynZoneCellTiles);
     WriteInt(file, section, "dynZoneMaxCells", autoHunt.dynZoneMaxCells);
+    WriteInt(file, section, "mapWideStartPosX", autoHunt.mapWideStartPos.x);
+    WriteInt(file, section, "mapWideStartPosY", autoHunt.mapWideStartPos.y);
     WriteInt(file, section, "paranoiaFleeDistance", autoHunt.paranoiaFleeDistance);
     WriteInt(file, section, "paranoiaAbandonAfter", autoHunt.paranoiaAbandonAfter);
     WriteInt(file, section, "paranoiaPassingThresholdMs", autoHunt.paranoiaPassingThresholdMs);
@@ -766,7 +773,7 @@ static void SaveAutoHuntSection(const char* file, const char* section)
     WritePrivateProfileStringA(section, "priorityReturnItemIds", priorityReturnIds.c_str(), file);
 }
 
-static void LoadAutoHuntSection(const char* file, const char* section)
+void LoadAutoHuntSection(const char* file, const char* section)
 {
     AutoHuntSettings& autoHunt = GetAutoHuntSettings();
     autoHunt = AutoHuntSettings{};
@@ -864,6 +871,8 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     autoHunt.storeUnique = ReadInt(file, section, "storeUnique", 0) != 0;
     autoHunt.storeElite = ReadInt(file, section, "storeElite", 0) != 0;
     autoHunt.storeSuper = ReadInt(file, section, "storeSuper", 0) != 0;
+    autoHunt.storeSelectedLootQuality = ReadInt(file, section, "storeSelectedLootQuality", 0) != 0;
+    autoHunt.storePlusGear = ReadInt(file, section, "storePlusGear", 1) != 0;
     autoHunt.buyArrows = ReadInt(file, section, "buyArrows", 0) != 0;
     autoHunt.arrowTypeId = (uint32_t)ReadInt(file, section, "arrowTypeId", 1050002);
     autoHunt.arrowBuyCount = ReadInt(file, section, "arrowBuyCount", 3);
@@ -1018,7 +1027,6 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     if (autoHunt.randomWalkIntervalMs > 10000)
         autoHunt.randomWalkIntervalMs = 10000;
     autoHunt.minimumLootPlus = ReadInt(file, section, "minimumLootPlus", 0);
-    autoHunt.minimumStorePlus = ReadInt(file, section, "minimumStorePlus", autoHunt.minimumLootPlus);
     autoHunt.minimumLootGoldValue = ReadInt(file, section, "minimumLootGoldValue", 0);
     if (autoHunt.minimumLootGoldValue < 0) autoHunt.minimumLootGoldValue = 0;
     autoHunt.minimumGoldTier = ReadInt(file, section, "minimumGoldTier", 0);
@@ -1049,6 +1057,8 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     autoHunt.disableInstantAttackOnPlayer = ReadInt(file, section, "disableInstantAttackOnPlayer", 1) != 0;
     autoHunt.dynZoneCellTiles = ReadInt(file, section, "dynZoneCellTiles", 8);
     autoHunt.dynZoneMaxCells = ReadInt(file, section, "dynZoneMaxCells", 12);
+    autoHunt.mapWideStartPos.x = ReadInt(file, section, "mapWideStartPosX", 0);
+    autoHunt.mapWideStartPos.y = ReadInt(file, section, "mapWideStartPosY", 0);
     autoHunt.paranoiaFleeDistance = ReadInt(file, section, "paranoiaFleeDistance", 36);
     autoHunt.paranoiaAbandonAfter = ReadInt(file, section, "paranoiaAbandonAfter", 3);
     autoHunt.paranoiaPassingThresholdMs = ReadInt(file, section, "paranoiaPassingThresholdMs", 7000);
@@ -1073,7 +1083,7 @@ static void LoadAutoHuntSection(const char* file, const char* section)
     ParseU32List(priorityReturnBuf, autoHunt.priorityReturnItemIds);
 }
 
-static void SaveMiningSection(const char* file, const char* section)
+void SaveMiningSection(const char* file, const char* section)
 {
     MiningSettings& mining = GetMiningSettings();
     WriteInt(file, section, "enabled", mining.enabled ? 1 : 0);
@@ -1100,7 +1110,7 @@ static void SaveMiningSection(const char* file, const char* section)
     WritePrivateProfileStringA(section, "dropItemIds", miningDropIds.c_str(), file);
 }
 
-static void LoadMiningSection(const char* file, const char* section)
+void LoadMiningSection(const char* file, const char* section)
 {
     MiningSettings& mining = GetMiningSettings();
     mining = MiningSettings{};
@@ -1277,6 +1287,14 @@ static void SaveSharedSections(const char* file)
     const std::string miscMentionIds = SerializeU32List(misc.mentionItemIds);
     WritePrivateProfileStringA("Misc", "mentionItemIds", miscMentionIds.c_str(), file);
     WriteInt(file, "Misc", "logLevel", misc.logLevel);
+
+    // Bookkeeping only — which shared profile (if any) this character last
+    // Loaded/Saved. Never part of a profile's own saved content, see
+    // profiles.h.
+    WritePrivateProfileStringA("Profiles", "activeHuntProfile",
+        GetActiveProfileName(ProfileKind::Hunt).c_str(), file);
+    WritePrivateProfileStringA("Profiles", "activeMiningProfile",
+        GetActiveProfileName(ProfileKind::Mining).c_str(), file);
 }
 
 static void LoadSharedSections(const char* file)
@@ -1352,6 +1370,13 @@ static void LoadSharedSections(const char* file)
     ParseU32List(miscMentionBuf, misc.mentionItemIds);
     misc.logLevel = ReadInt(file, "Misc", "logLevel", 0);
     Log::SetLevel(misc.logLevel);
+
+    char activeHuntProfile[128] = {};
+    ReadString(file, "Profiles", "activeHuntProfile", "", activeHuntProfile, sizeof(activeHuntProfile));
+    GetActiveProfileName(ProfileKind::Hunt) = activeHuntProfile;
+    char activeMiningProfile[128] = {};
+    ReadString(file, "Profiles", "activeMiningProfile", "", activeMiningProfile, sizeof(activeMiningProfile));
+    GetActiveProfileName(ProfileKind::Mining) = activeMiningProfile;
 }
 
 static std::string SaveCharacterConfigForKey(const std::string& characterKey)
