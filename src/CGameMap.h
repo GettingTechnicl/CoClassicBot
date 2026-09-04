@@ -213,6 +213,25 @@ public:
     // Returns waypoints excluding the start position.
     std::vector<Position> SimplifyPath(const std::vector<Position>& tilePath) const;
 
+    // Session 18 [WALK-ONLY STUTTER FIX]: same greedy idea as SimplifyPath,
+    // but for legs that will only ever be WALKED (Market, see
+    // ShouldWalkOnlyOnMap), never jumped. SimplifyPath is built around
+    // CanJump, which hard-caps every segment at MAX_JUMP_DIST (18 tiles) —
+    // wrong tool here, since the actual walk-only movement check
+    // (Pathfinder::IssueMovementToWaypoint's walkOnly branch) uses CanReach
+    // directly with no distance cap at all. Using CanJump-sized segments on a
+    // walk-only map means more, shorter legs than the terrain actually
+    // allows, and — critically — if even one short segment's endpoint is
+    // transiently blocked (an entity briefly standing on it), the existing
+    // fallback (Pathfinder::LoadTilePath) discards ALL structure and walks
+    // the raw tile-by-tile path one tile at a time for the rest of the
+    // route: the "small steps, pause, small steps, pause" stutter reported
+    // live 2026-09-04 walking to MillionaireLee at Market. Uses CanReach
+    // (uncapped) as the per-segment legality test instead, so a walk-only
+    // route stays a handful of long legs even when SimplifyPath's jump-
+    // capped version would have chopped it into dozens.
+    std::vector<Position> SimplifyPathWalkOnly(const std::vector<Position>& tilePath) const;
+
     // Dump map cell data (mask + altitude per cell) to a binary file.
     // Format: [uint32 width][uint32 height][uint32 mapId][per cell: uint16 mask, int16 altitude]
     bool DumpToFile(const char* path) const;

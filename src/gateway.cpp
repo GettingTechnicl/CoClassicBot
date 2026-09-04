@@ -169,15 +169,24 @@ static const std::unordered_map<OBJID, std::vector<Gateway>> s_gateways = {
             //   [portal] 1020 (12,377)   -> 1012 (532,529) via portal #4 @(11,377)
             //   [portal] 1012 (531,534)  -> 1020 (23,383)  via portal #0 @(531,534)
             {GatewayType::Portal, MAP_APE_MOUNTAIN, {11, 377}, MAP_DREAMLAND, {532, 529}},
-            // Ape City 2 (1075) — hunting map. Landing approximated as the
-            // return portal's own tile (bot re-reads real pos after teleport).
-            {GatewayType::Portal, MAP_APE_MOUNTAIN, {610, 874}, MAP_APE_CITY2, {361, 6}},
+            // Ape City 2 (1075) — hunting map.
+            // LIVE-VALIDATED 2026-09-04 by the user's own walk, both directions,
+            // and cross-checked against dozens of the bot's own prior portal-
+            // logger captures across many past sessions (all tightly consistent):
+            //   [portal] 1020 (610,874) -> 1075 (360,10) via portal #10 @(610,874)
+            //   [portal] 1075 (361,6)   -> 1020 (607,870) via portal #0  @(360,5)
+            // Replaces a prior "approximated" placeholder (each destPos had been
+            // guessed as the RETURN portal's own trigger tile rather than the
+            // real landing spot) that was off by several tiles in both
+            // directions and was the suspected cause of an archer getting stuck
+            // failing to path back to Market from Ape City 2.
+            {GatewayType::Portal, MAP_APE_MOUNTAIN, {610, 874}, MAP_APE_CITY2, {360, 10}},
         }
     },
     {
         MAP_APE_CITY2, {
-            // Back to Ape Mountain.
-            {GatewayType::Portal, MAP_APE_CITY2, {361, 6}, MAP_APE_MOUNTAIN, {610, 874}},
+            // Back to Ape Mountain. See the LIVE-VALIDATED note above.
+            {GatewayType::Portal, MAP_APE_CITY2, {360, 5}, MAP_APE_MOUNTAIN, {607, 870}},
         }
     },
     {
@@ -436,7 +445,7 @@ static const Destination s_destinations[] = {
     {"Mystic Castle", MAP_MYSTIC_CASTLE, {312, 646}},
     {"Phoenix Castle", MAP_PHOENIX_CASTLE, {193, 266}},
     {"Ape Mountain", MAP_APE_MOUNTAIN, {566, 565}},
-    {"Ape City 2", MAP_APE_CITY2, {361, 6}},
+    {"Ape City 2", MAP_APE_CITY2, {360, 10}},
     {"Phoenix Castle 2", MAP_PHOENIX_CASTLE2, {11, 361}},
     {"Dreamland", MAP_DREAMLAND, {532, 529}},
     {"New Desert City", MAP_NEW_DESERT_CITY, {362, 12}},

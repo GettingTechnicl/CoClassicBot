@@ -21,6 +21,7 @@ protected:
         CRole* target) override;
     bool HandleCombatItems(CHero* hero, const AutoHuntSettings& settings) override;
     bool NeedsTownRunArrows(const CHero* hero, const AutoHuntSettings& settings) const override;
+    bool NeedsTownRunArrowsEmergency(const CHero* hero, const AutoHuntSettings& settings) const override;
     void RenderCombatUI(AutoHuntSettings& settings) override;
     bool HandleNoTargetIdle(CHero* hero, CGameMap* map, const AutoHuntSettings& settings) override;
     void RefreshCombatState(CHero* hero, const AutoHuntSettings& settings) override;
@@ -58,6 +59,7 @@ private:
     // Arrow management
     bool TryManageArrows(CHero* hero, const AutoHuntSettings& settings);
     bool NeedsArrows(const CHero* hero, const AutoHuntSettings& settings) const;
+    bool NeedsArrowsEmergency(const CHero* hero, const AutoHuntSettings& settings) const;
     int CountUsableArrowPacks(const CHero* hero) const;
 
     // Archer-specific state

@@ -339,7 +339,14 @@ bool Pathfinder::RepathFrom(CHero* hero, CGameMap* map, const Position& finalDes
     if (tilePath.empty())
         return false;
 
-    auto waypoints = map->SimplifyPath(tilePath);
+    // Session 18 [WALK-ONLY STUTTER FIX]: match StartPathTo's choice of
+    // simplifier — a mid-route repath on a walk-only map (Market) must stay
+    // walk-legal-long, not jump-capped, or a single transient obstruction
+    // degrades the rest of the route to LoadTilePath's one-tile-at-a-time
+    // fallback below (the reported "small steps, pause" stutter). See
+    // CGameMap::SimplifyPathWalkOnly's header comment for the full mechanism.
+    const bool walkOnly = ShouldWalkOnlyOnMap(Game::GetCurrentMapId());
+    auto waypoints = walkOnly ? map->SimplifyPathWalkOnly(tilePath) : map->SimplifyPath(tilePath);
     if (!waypoints.empty()) {
         m_waypoints = waypoints;
         m_index = 0;

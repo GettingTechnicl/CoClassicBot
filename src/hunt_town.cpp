@@ -329,7 +329,13 @@ bool HuntTownService::IsDragonBallMapItem(const CMapItem& item)
 
 bool HuntTownService::ShouldLootMapItem(const AutoHuntSettings& settings, const CMapItem& item)
 {
-    if (settings.lootMoney && IsMoneyMapItem(item))
+    // Session 17 [GOLD-TIER FIX]: was `IsMoneyMapItem(item)` alone, which
+    // accepted every money type (Silver through GoldBars) the instant
+    // lootMoney was on — settings.minimumGoldTier was never consulted here,
+    // so "Gold and better" still picked up Sycee. Live-confirmed via trace
+    // log: a Shooter411 run configured for minimumGoldTier=2 (Gold) picked up
+    // a type=1090010 (Sycee, tier 1) item with no "not_wanted" skip logged.
+    if (settings.lootMoney && IsMoneyMapItem(item) && GetMoneyTier(item) >= settings.minimumGoldTier)
         return true;
     if (IsSelectedLootItem(settings, item.m_idType))
         return true;

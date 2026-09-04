@@ -74,8 +74,16 @@ protected:
 
     virtual void RenderCombatUI(AutoHuntSettings& settings) = 0;
 
-    // Whether this combat mode needs a town run for arrows.
+    // Whether this combat mode is comfortably below its configured arrow-pack
+    // threshold. This is NOT a standing invitation to travel — a comfort-level
+    // shortage only gets topped up opportunistically once a town run is
+    // already under way for some other reason (see TryDispatchArrowRestock).
     virtual bool NeedsTownRunArrows(const CHero* hero, const AutoHuntSettings& settings) const { return false; }
+
+    // Whether this combat mode has truly run out of usable arrows (the last
+    // pack is gone) — the ONLY arrow condition allowed to trigger a town run
+    // on its own, mirroring NeedsRepair's role in HuntTownService::NeedTownRun.
+    virtual bool NeedsTownRunArrowsEmergency(const CHero* hero, const AutoHuntSettings& settings) const { return false; }
 
     // Called during Update after buffs to manage combat-specific items (arrows etc.).
     // Return true to short-circuit the rest of Update.
@@ -252,6 +260,16 @@ protected:
 
     void BeginTravelToZone(TravelPlugin* travel, const AutoHuntSettings& settings);
     void BeginTravelToMarket(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings);
+
+    // Comfort-level arrow top-up, called ONLY once a town run is confirmed to
+    // need nothing else (repair/storage both false) — arrows ride along on an
+    // already-happening trip instead of triggering one. Dispatches travel to
+    // wherever arrows can actually be bought (local blacksmith, the hunt
+    // zone's blacksmith, or the nearest fallback blacksmith city) and returns
+    // true if it did so; false means nothing to do here, fall through to
+    // BeginTravelToZone as before. Shared by BeginTravelToMarket's
+    // already-at-Market branch and HandleTravelToMarket's tail.
+    bool TryDispatchArrowRestock(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings);
     void HandleTravelToZone(TravelPlugin* travel, const AutoHuntSettings& settings);
     void HandleTravelToMarket(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings);
     // Fallback route for arrow restocking when neither the current map nor
@@ -328,6 +346,35 @@ protected:
     // an observed failed activation so the crowd/obstruction has time to
     // clear before the next attempt.
     DWORD m_pathFailBackoffUntilTick = 0;
+
+    // Session 18 [NEAR-TARGET STUCK FIX]: the 800ms backoff above stops the
+    // spin but does nothing about WHICH tile keeps getting retried —
+    // StartPathNearTarget's candidate search is a deterministic function of
+    // the hero's current position and the static map grid, so from a fixed
+    // origin it rebuilds the exact same sorted candidate list and floods the
+    // exact same reachability bitmap every single call. If the one candidate
+    // it settles on happens to be blocked by something FloodReachable can't
+    // see (FloodReachable is pure terrain/altitude — it has no entity-
+    // occupancy check at all, unlike Pathfinder::IssueMovementToWaypoint's
+    // final activation gate, which does), every retry reproduces the
+    // identical failure forever with no fallback. Live 2026-09-04: an archer
+    // — sorry, a Trojan (Kinux) — sat retrying the exact same marginal
+    // landing tile near MillionaireLee for the entire time trace logging was
+    // on, never varying, never moving; manually nudging the character
+    // resolved it (a different hero origin produces a different A* solve,
+    // sidestepping whatever tile was actually blocked).
+    //
+    // Tracks whether the CURRENT top candidate is making zero progress (same
+    // tile, same hero origin, tick after tick) for too long; once it has,
+    // that one tile gets excluded for a cooldown so the next-best
+    // flood-reachable candidate gets a turn instead — self-healing if the
+    // obstruction was transient (another player/NPC standing there), and at
+    // worst no worse than today's permanent stall if it wasn't.
+    Position m_nearTargetStuckTile = {};
+    Position m_nearTargetStuckOrigin = {};
+    DWORD    m_nearTargetStuckSinceTick = 0;
+    Position m_nearTargetExcludedTile = {};
+    DWORD    m_nearTargetExcludeUntilTick = 0;
 
     // Session 13 [EXPLORE TABU]: explore destinations visited recently, so
     // the exploit pick can't oscillate between the map's two hottest buckets

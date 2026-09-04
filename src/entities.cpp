@@ -102,6 +102,36 @@ namespace
             return false;
         if (fn) ++fn->pos;
 
+        // Session 18 [GHOST-PLAYER LEVEL CHECK, PLAYER-ONLY]: live 2026-09-04
+        // — a heap-scan false positive passed vtable/id/position/name (name
+        // validation is deliberately loose, see HasRealName's comment: real
+        // names use ~/$/accented characters, so a garbage name containing one
+        // real letter — e.g. "001/500/520. c3" — isn't reliably
+        // distinguishable from a legitimate one by character content alone)
+        // and was displayed as a real player with level 252876865, no real
+        // player ever reaches. This silently held Paranoia mode in
+        // FLEEING/RELOCATING for 20+ minutes against a phantom that never
+        // actually leaves view (it's not a real entity that can walk away).
+        //
+        // FIRST VERSION OF THIS FIX applied to every entity and broke NPCs
+        // within minutes of shipping: Conductress (and presumably other
+        // vendor/quest NPCs) apparently carries level<=0 (not a leveled
+        // combatant), so the blanket check made her fail this shape check
+        // entirely — she vanished from Entities::Get(), which made
+        // IsTileOccupied stop seeing her standing on her own tile, which let
+        // StartPathNearTarget treat her exact position as a free landing
+        // spot: both the archer and the Trojan jumped directly onto
+        // Conductress and got stuck there instead of routing to Market.
+        // Scoped to the PLAYER id range only (id >= 1000000, the same
+        // convention entities.cpp's Rescan() classification already uses) —
+        // only players have a level meaningfully bounded by the real level
+        // cap; NPCs and monsters are left untouched by this check entirely.
+        if (id >= 1000000) {
+            int32_t level = 0;
+            if (!TryRead(p + 0x6E8, &level) || level <= 0 || level > 999)
+                return false;
+        }
+
         *idOut = id;
         return true;
     }

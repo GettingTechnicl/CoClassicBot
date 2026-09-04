@@ -50,6 +50,24 @@ const Position kMarketLandingPos = {211, 196};
 // Shared with GetEvadeRelocateMinDist's "beyond view" distance below.
 constexpr int kViewTiles = 35;
 
+// Session 18 [EVADE ESCAPE VALVE]: EvadeState::Relocating's renudge loop had
+// no cap — live 2026-09-04 an archer sat "pushing farther" 100+ times over
+// 20+ minutes against a threat that never left view (a heap-scan false-
+// positive entity — see entities.cpp's level-plausibility fix — is one way
+// this can happen, but the escalation itself has no upper bound regardless
+// of cause, same structural gap as StartPathNearTarget's before its own
+// fix). GetEvadeRelocateMinDist grows LINEARLY with renudge count
+// (kViewTiles + renudge*paranoiaRenudgeTiles, default +10 tiles/renudge) —
+// past a handful of renudges it's asking for a relocate destination farther
+// than most maps are wide, which is exactly the "stuck in a map corner"
+// symptom: FindParanoiaRelocateDest can only ever return the farthest tile
+// actually available, never satisfying the ever-growing minimum. Past this
+// many renudges, stop escalating and just resume hunting from wherever the
+// hero ended up — matches every other "N failures -> give up and move on"
+// pattern already used elsewhere in this codebase (m_zoneTravelFailCount,
+// the repair/store step fail counters in hunt_town.cpp).
+constexpr int kMaxEvadeRenudgeCount = 8;
+
 // Session 16 [USER-TUNABLE CELL SIZE]: the Phase 2b dynamic zone's own grid,
 // independent of SpawnMemory's fixed 8-tile heatmap bucket grid — see
 // settings.dynZoneCellTiles. Declared up here (not down with the rest of the
@@ -75,6 +93,14 @@ constexpr int kLootPathStopRange = 0;
 // retrying a walk-only A* route after Pathfinder::StartPath() fails to
 // actually issue movement (occupied/unreachable landing tile).
 constexpr DWORD kPathFailBackoffMs = 800;
+// See StartPathNearTarget's m_nearTargetStuckTile/m_nearTargetExcludedTile
+// use — how long a candidate tile can keep getting picked with zero hero
+// movement before it's treated as blocked, and how long it stays excluded
+// once it is. Deliberately longer than a few backoff cycles (kPathFailBackoffMs)
+// so a normal brief stall never misfires this — this is for the case where
+// backoff alone never recovers.
+constexpr DWORD kNearTargetStuckTimeoutMs = 6000;
+constexpr DWORD kNearTargetExcludeCooldownMs = 30000;
 constexpr int kMinEntityScanIntervalMs = 100;
 constexpr int kMaxEntityScanIntervalMs = 5000;
 constexpr int kMinItemPickupDelayMs = 0;
@@ -847,7 +873,21 @@ bool BaseHuntPlugin::UpdateEvadeState(CHero* hero, const AutoHuntSettings& setti
         if (!IsZeroPos(m_evadeRelocateDest)
             && CGameMap::TileDist(hero->m_posMap.x, hero->m_posMap.y,
                                   m_evadeRelocateDest.x, m_evadeRelocateDest.y) <= kEvadeArriveTiles) {
-            if (anyVisible) {
+            if (anyVisible && m_evadeRenudgeCount >= kMaxEvadeRenudgeCount) {
+                // Escalated this many times without ever losing the "threat"
+                // — either a genuinely, unusually persistent player (rare) or
+                // something that was never a real player to begin with. Either
+                // way, retrying farther has demonstrably not worked; stop
+                // digging and resume hunting from right here rather than
+                // chasing an ever-growing relocate distance forever.
+                spdlog::warn("[paranoia] Still \"visible\" after {} renudges — giving up on evasion and resuming hunting here "
+                             "(a persistent phantom detection would look like this; check the Entities overlay if this recurs)",
+                             m_evadeRenudgeCount);
+                m_evadeState = EvadeState::None;
+                m_evadeRenudgeCount = 0;
+                m_evadeEncounterCount = 0;
+                m_evadeLastEncounterTick = 0;
+            } else if (anyVisible) {
                 // Players here too — push the relocate farther and keep going
                 // (speed stays human via disableSpeedhackOnPlayer while seen).
                 ++m_evadeRenudgeCount;
@@ -958,8 +998,25 @@ bool BaseHuntPlugin::FindGentleFleeTarget(CHero* hero, CGameMap* map, const Auto
     // fanning lets it route around an impassable center instead of committing
     // to a blocked straight line. NOT zone-clamped — escaping view beats the
     // zone leash (which is already widened while evading).
+    //
+    // Session 18 [CORNER FLEE FIX]: the angle fan used to stop at ±1.35 rad
+    // (~±77° off the direct away-heading) — a ~154° cone, not the full
+    // circle. Live 2026-09-04: hunting was already anchored near a map
+    // corner when a threat appeared from the open side, so "directly away"
+    // pointed straight into the corner/wall and every angle in that ~154°
+    // cone was some flavor of "into the same dead end" — none of them ever
+    // pointed back out toward the open ground the threat had come from. The
+    // walkable+reachable check below did its job (it never committed to an
+    // actually-unwalkable tile), it just never got offered a genuinely
+    // different heading to check. Extended to the full circle, in priority
+    // order nearest the ideal away-direction first (so open ground roughly
+    // away from the threat is still always preferred when it exists) —
+    // ~180° (nearly back toward the threat) is a legitimate last resort
+    // when it's the only open direction, e.g. slipping past to open ground
+    // beyond, rather than pressing into a wall that clearly isn't opening up.
     const float dists[] = { 1.0f, 0.8f, 0.6f, 0.4f, 0.25f };
-    const float angs[]  = { 0.0f, 0.45f, -0.45f, 0.9f, -0.9f, 1.35f, -1.35f };
+    const float angs[]  = { 0.0f, 0.45f, -0.45f, 0.9f, -0.9f, 1.35f, -1.35f,
+                             1.8f, -1.8f, 2.25f, -2.25f, 2.7f, -2.7f, 3.14159f };
     constexpr int kReachBudget = 60000;
     for (float df : dists) {
         for (float da : angs) {
@@ -1718,7 +1775,10 @@ bool BaseHuntPlugin::StartPathTo(CHero* hero, CGameMap* map, const Position& des
         return false;
     }
 
-    auto waypoints = map->SimplifyPath(tilePath);
+    // Session 18 [WALK-ONLY STUTTER FIX]: SimplifyPath is jump-capped
+    // (MAX_JUMP_DIST=18) and the walk-only case never jumps — see
+    // SimplifyPathWalkOnly's header comment. Keeps walk-only legs long.
+    auto waypoints = walkOnly ? map->SimplifyPathWalkOnly(tilePath) : map->SimplifyPath(tilePath);
     if (waypoints.empty()) {
         // Was completely silent — the other empty-result branches above both
         // log, this one didn't. Live 2026-09-03: this is exactly the shape a
@@ -1933,12 +1993,36 @@ bool BaseHuntPlugin::StartPathNearTarget(CHero* hero, CGameMap* map, const Posit
     auto reachable = [&](const Position& c) {
         return !reach.empty() && reach[(size_t)c.y * mapW + c.x] != 0;
     };
+    const DWORD nearTargetNow = GetTickCount();
+    const bool tileExcluded = nearTargetNow < m_nearTargetExcludeUntilTick;
     for (size_t i = 0; i < cands.size(); ++i) {
         const Position& c = cands[i].pos;
         if (c.x == hx && c.y == hy)
             return false;                          // already standing on a valid tile
         if (!reachable(c))
             continue;                              // walkable but sealed off — next
+        if (tileExcluded && c.x == m_nearTargetExcludedTile.x && c.y == m_nearTargetExcludedTile.y)
+            continue;                              // just proved stuck — give the next candidate a turn
+
+        // Session 18 [NEAR-TARGET STUCK FIX]: FloodReachable calling this tile
+        // fine doesn't mean StartPathTo can actually activate a path to it —
+        // see the member declarations' comment. Detect zero progress (same
+        // candidate, same hero origin, tick after tick) and exclude the tile
+        // once it's gone on too long, rather than retrying it forever.
+        if (c.x != m_nearTargetStuckTile.x || c.y != m_nearTargetStuckTile.y
+            || hx != m_nearTargetStuckOrigin.x || hy != m_nearTargetStuckOrigin.y) {
+            m_nearTargetStuckTile = c;
+            m_nearTargetStuckOrigin = {hx, hy};
+            m_nearTargetStuckSinceTick = nearTargetNow;
+        } else if (nearTargetNow - m_nearTargetStuckSinceTick > kNearTargetStuckTimeoutMs) {
+            spdlog::warn("[hunt] near-target: ({},{}) made no progress from ({},{}) for over {}ms — "
+                         "likely blocked by another entity on the route; excluding it for {}ms and trying the next candidate",
+                         c.x, c.y, hx, hy, kNearTargetStuckTimeoutMs, kNearTargetExcludeCooldownMs);
+            m_nearTargetExcludedTile = c;
+            m_nearTargetExcludeUntilTick = nearTargetNow + kNearTargetExcludeCooldownMs;
+            continue;                              // try the next-best candidate in this same call
+        }
+
         if (i > 0)
             spdlog::info("[hunt] near-target: skipped {} unreachable tile(s) around ({},{}), using ({},{})",
                          (int)i, targetPos.x, targetPos.y, c.x, c.y);
@@ -2093,7 +2177,7 @@ void BaseHuntPlugin::BeginTravelToMarket(TravelPlugin* travel, CHero* hero, cons
         } else if (settings.autoStore && (m_townService.NeedsStorage(hero, settings)
                 || (settings.immediateReturnOnPriorityItems && m_townService.HasPriorityReturnItems(hero, settings)))) {
             SetState(AutoHuntState::StoreItems, "Processing storage rules");
-        } else {
+        } else if (!TryDispatchArrowRestock(travel, hero, settings)) {
             BeginTravelToZone(travel, settings);
         }
         return;
@@ -2106,6 +2190,38 @@ void BaseHuntPlugin::BeginTravelToMarket(TravelPlugin* travel, CHero* hero, cons
 
     travel->StartTravel(MAP_MARKET, kMarketLandingPos);
     SetState(AutoHuntState::TravelToMarket, "Traveling to Market");
+}
+
+bool BaseHuntPlugin::TryDispatchArrowRestock(TravelPlugin* travel, CHero* hero, const AutoHuntSettings& settings)
+{
+    if (!NeedsTownRunArrows(hero, settings))
+        return false;
+
+    if (HuntTownService::HasBlacksmithOnMap(m_lastMapId)) {
+        m_townService.ResetBuyArrowsSequence();
+        SetState(AutoHuntState::BuyArrows, "Buying arrows");
+        return true;
+    }
+    if (HuntTownService::HasBlacksmithOnMap(settings.zoneMapId)) {
+        BeginTravelToZone(travel, settings);
+        return true;
+    }
+    // Session 16b [ARROW-RESTOCK FALLBACK]: neither Market nor the hunt zone
+    // has a known blacksmith (e.g. a zone on Ape City 2, which has no vendor
+    // NPCs of its own) — fall back to the nearest known blacksmith city.
+    // BuyArrows' own finishBuyArrows() already routes back to the real hunt
+    // zone afterward via beginTravelToZoneFn.
+    OBJID fallbackMapId = 0;
+    Position fallbackPos = {};
+    if (travel && HuntTownService::GetFallbackBlacksmithCity(
+            Game::GetCurrentMapId(), hero ? hero->m_posMap : Position{0, 0},
+            fallbackMapId, fallbackPos)) {
+        m_blacksmithTravelMapId = fallbackMapId;
+        travel->StartTravel(fallbackMapId, fallbackPos);
+        SetState(AutoHuntState::TravelToBlacksmith, "Traveling to buy arrows");
+        return true;
+    }
+    return false;
 }
 
 void BaseHuntPlugin::HandleTravelToZone(TravelPlugin* travel, const AutoHuntSettings& settings)
@@ -2191,7 +2307,7 @@ void BaseHuntPlugin::HandleTravelToMarket(TravelPlugin* travel, CHero* hero, con
             || (settings.immediateReturnOnPriorityItems && m_townService.HasPriorityReturnItems(hero, settings)))) {
         m_townService.ResetStoreSequence();
         SetState(AutoHuntState::StoreItems, "Processing storage rules");
-    } else {
+    } else if (!TryDispatchArrowRestock(travel, hero, settings)) {
         BeginTravelToZone(travel, settings);
     }
 }
@@ -2622,41 +2738,16 @@ void BaseHuntPlugin::Update()
     // another reason (bag-full/repair/DragonBall), matching how the user
     // actually wants this to ride along rather than trigger its own trip.
 
-    // Repair / storage — at Market (arrows handled separately below)
-    if (m_townService.NeedTownRun(hero, settings, false)) {
+    // Repair / storage / emergency-out-of-arrows — at Market. A comfort-level
+    // arrow shortage (below settings.arrowBuyCount) is NOT a trigger here —
+    // it only rides along once one of these other reasons already got the
+    // hero to Market, via TryDispatchArrowRestock at the tail of that visit
+    // (BeginTravelToMarket / HandleTravelToMarket). Only truly running OUT of
+    // arrows (NeedsTownRunArrowsEmergency) is urgent enough to justify a trip
+    // by itself, mirroring how needsRepair already works.
+    if (m_townService.NeedTownRun(hero, settings, NeedsTownRunArrowsEmergency(hero, settings))) {
         BeginTravelToMarket(travel, hero, settings);
         return;
-    }
-
-    // Arrow restocking — buy at local blacksmith or travel to zone city
-    if (NeedsTownRunArrows(hero, settings)) {
-        if (HuntTownService::HasBlacksmithOnMap(m_lastMapId)) {
-            m_townService.ResetBuyArrowsSequence();
-            SetState(AutoHuntState::BuyArrows, "Buying arrows");
-            return;
-        }
-        if (HuntTownService::HasBlacksmithOnMap(settings.zoneMapId)) {
-            BeginTravelToZone(travel, settings);
-            return;
-        }
-        // Session 16b [ARROW-RESTOCK FALLBACK]: neither the current map nor
-        // the hunt zone has a known blacksmith (e.g. a zone on Ape City 2,
-        // which has no vendor NPCs of its own) — without this, the two
-        // checks above never fire, NeedsTownRunArrows just sits true
-        // forever with nowhere to go, and the archer keeps "hunting" at 0
-        // arrows indefinitely. Fall back to the nearest known blacksmith
-        // city; BuyArrows' own finishBuyArrows() already routes back to
-        // the real hunt zone afterward via beginTravelToZoneFn.
-        OBJID fallbackMapId = 0;
-        Position fallbackPos = {};
-        if (travel && HuntTownService::GetFallbackBlacksmithCity(
-                Game::GetCurrentMapId(), hero ? hero->m_posMap : Position{0, 0},
-                fallbackMapId, fallbackPos)) {
-            m_blacksmithTravelMapId = fallbackMapId;
-            travel->StartTravel(fallbackMapId, fallbackPos);
-            SetState(AutoHuntState::TravelToBlacksmith, "Traveling to buy arrows");
-            return;
-        }
     }
 
     // Same leash tolerance as above — do not travel back to the zone just

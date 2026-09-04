@@ -1097,6 +1097,11 @@ bool ArcherHuntPlugin::NeedsTownRunArrows(const CHero* hero, const AutoHuntSetti
     return NeedsArrows(hero, settings);
 }
 
+bool ArcherHuntPlugin::NeedsTownRunArrowsEmergency(const CHero* hero, const AutoHuntSettings& settings) const
+{
+    return NeedsArrowsEmergency(hero, settings);
+}
+
 
 // =============================================================================
 // HandleNoTargetIdle override
@@ -1233,6 +1238,18 @@ bool ArcherHuntPlugin::NeedsArrows(const CHero* hero, const AutoHuntSettings& se
     if (!HuntTownService::CanAffordArrowPurchase(hero))
         return false;
     return CountUsableArrowPacks(hero) < settings.arrowBuyCount;
+}
+
+// The ONLY arrow condition allowed to trigger a town run by itself: truly out
+// (zero usable packs left, equipped included), not merely below the
+// configurable comfort count. Deliberately ignores CanAffordArrowPurchase —
+// an archer who can't afford arrows and is out of them still needs the town
+// run for everything else (repair/storage), same as NeedsRepair would.
+bool ArcherHuntPlugin::NeedsArrowsEmergency(const CHero* hero, const AutoHuntSettings& settings) const
+{
+    if (!IsArcherModeEnabled(settings) || !settings.buyArrows)
+        return false;
+    return CountUsableArrowPacks(hero) == 0;
 }
 
 int ArcherHuntPlugin::CountUsableArrowPacks(const CHero* hero) const

@@ -269,6 +269,32 @@ std::vector<Position> CGameMap::SimplifyPath(const std::vector<Position>& tilePa
     return waypoints;
 }
 
+// Same greedy structure as SimplifyPath, but using CanReach (uncapped
+// straight-line walkability) instead of CanJump (hard-capped at
+// MAX_JUMP_DIST) — see the header comment.
+std::vector<Position> CGameMap::SimplifyPathWalkOnly(const std::vector<Position>& tilePath) const
+{
+    if (tilePath.size() <= 1) return {};
+
+    std::vector<Position> waypoints;
+    size_t cur = 0;
+
+    while (cur < tilePath.size() - 1) {
+        size_t best = cur + 1;
+        for (size_t ahead = tilePath.size() - 1; ahead > cur + 1; ahead--) {
+            if (CanReach(tilePath[cur].x, tilePath[cur].y,
+                         tilePath[ahead].x, tilePath[ahead].y, CGameMap::GetHeroAltThreshold())) {
+                best = ahead;
+                break;
+            }
+        }
+        waypoints.push_back(tilePath[best]);
+        cur = best;
+    }
+
+    return waypoints;
+}
+
 bool CGameMap::DumpToFile(const char* path) const
 {
     if (!m_pCellInfo || m_sizeMap.iWidth <= 0 || m_sizeMap.iHeight <= 0)
