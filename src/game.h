@@ -40,6 +40,26 @@ namespace Offsets {
     // time; the labels were not. Trust ini/GameMap.json, never data_maps.json.
     constexpr uintptr_t CURRENT_MAP_ID     = 0x699560;
     constexpr uintptr_t CURRENT_MAP_ID_ALT = 0x699564;   // adjacent survivor
+
+    // ── GAME REGISTRIES (v1074, 2026-09-03; see registries.h). The item vector
+    //    is a plain global. The role-set object holding ROLE_SET_ROLES/ALL is
+    //    NOT reached by a fixed address — two attempts at that (via the scene
+    //    pointer, then a "stable RVA" hunt) both failed to reproduce across
+    //    relogs. registries.cpp instead locates it by signature from
+    //    ROLE_MGR_PTR each session; these two offsets are only meaningful
+    //    relative to whatever object that locator finds.
+    constexpr uintptr_t ROLE_SET_ROLES = 0x1348;     // roleSet+.. = vector<shared_ptr<CRole>>  (roles only)
+    constexpr uintptr_t ROLE_SET_ALL   = 0x1318;     // roleSet+.. = vector<shared_ptr<CObject>> (all scene objects)
+
+    // Known-good 2-hop path from CRoleMgr to the role-set object, found by an
+    // exhaustive CRoleMgr-only signature search (heapfind v7, 2026-09-03).
+    // registries.cpp tries this FIRST and always re-validates it against the
+    // role-set signature before trusting it — a patch that changes the struct
+    // layout just fails that check, and the code falls back to the same
+    // signature scan that found this path in the first place.
+    constexpr uintptr_t ROLE_MGR_TO_ROLESET_HOP1 = 0x4A98;   // CRoleMgr+.. -> intermediate object
+    constexpr uintptr_t ROLE_MGR_TO_ROLESET_HOP2 = 0x9240;   // intermediate+.. -> role-set object
+    constexpr uintptr_t MAP_ITEM_VEC   = 0x6994D8;   // base+..   = vector<shared_ptr<CMapItem>> (GLOBAL, sole owner)
 }
 
 namespace GameRva {

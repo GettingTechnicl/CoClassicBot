@@ -50,6 +50,7 @@ add_library(coclassic SHARED
     src/entities.cpp
     src/mapdata.cpp
     src/map_items.cpp
+    src/registries.cpp
     src/spawn_memory.cpp
     src/mem_stats.cpp
     src/map_probe.cpp
@@ -188,6 +189,17 @@ add_library(npctest SHARED
 )
 set_target_properties(npctest PROPERTIES
     OUTPUT_NAME "npctest"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── Heap-registry finder (standalone, read-only, single-shot; inject mid-session.
+#    Inverse-pointer search: finds the game's own container of live CRole*/CMapItem*
+#    so the shape-based heap scanners can be replaced — see src/heapfind.cpp) ──
+add_library(heapfind SHARED
+    src/heapfind.cpp
+)
+set_target_properties(heapfind PROPERTIES
+    OUTPUT_NAME "heapfind"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

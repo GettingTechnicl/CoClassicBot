@@ -1,6 +1,7 @@
 #include "entities.h"
 #include "CRole.h"
 #include "game.h"
+#include "registries.h"
 #include "spawn_memory.h"
 
 #include <windows.h>
@@ -201,54 +202,70 @@ namespace
         Funnel funnel{};
         uint32_t nregions = 0, npassName = 0;
 
-        MEMORY_BASIC_INFORMATION mbi{};
-        uintptr_t addr = 0x10000;
         uint64_t scanned = 0;
-        const uint64_t kScanCap = 40000000ull;
 
-        while (addr < 0x7FFFFFFF0000ull && nseen < 512 && scanned < kScanCap) {
-            if (!VirtualQuery((void*)addr, &mbi, sizeof(mbi)))
-                break;
-            const uintptr_t rbase = (uintptr_t)mbi.BaseAddress;
-            const size_t    rsize = mbi.RegionSize;
-
-            const bool usable = mbi.State == MEM_COMMIT
-                             && mbi.Type == MEM_PRIVATE
-                             && (mbi.Protect == PAGE_READWRITE || mbi.Protect == PAGE_EXECUTE_READWRITE);
-
-            if (usable && rsize > 0x100 && rsize < 0x4000000) {
-                ++nregions;
-                for (uintptr_t a = rbase; a + 0xE0 < rbase + rsize && nseen < 512; a += 0x10) {
-                    ++scanned;
-                    uint32_t id = 0;
-                    if (!LooksLikeRole(a, &id, &funnel))
-                        continue;
-                    if (!HasRealName(a)) {
-                        if (id >= 1000000)
-                            DebugLogPlayerNameReject(a, id);
-                        continue;
-                    }
-                    ++npassName;
-
-                    bool dup = false;
-                    for (int k = 0; k < nseen; ++k)
-                        if (seen[k] == id) { dup = true; break; }
-                    if (dup)
-                        continue;
-
-                    seen[nseen++] = id;
-                    found.push_back(reinterpret_cast<CRole*>(a));
-
-                    if (id >= 1000000)                    ++nplr;
-                    else if (id >= 400000 && id < 500000) ++nmon;
-                    else if (id < 400000)                 ++nnpc;
-                    else                                  ++noth;
-                }
+        // Same predicate for both sources: the registry path merely replaces
+        // "every 16-byte-aligned address in ~40M of heap" with "the ~200 objects
+        // the game itself holds", so behaviour is identical minus the ghosts.
+        auto consider = [&](uintptr_t a) {
+            ++scanned;
+            uint32_t id = 0;
+            if (!LooksLikeRole(a, &id, &funnel))
+                return;
+            if (!HasRealName(a)) {
+                if (id >= 1000000)
+                    DebugLogPlayerNameReject(a, id);
+                return;
             }
+            ++npassName;
 
-            if (rsize == 0)
-                break;
-            addr = rbase + rsize;
+            for (int k = 0; k < nseen; ++k)
+                if (seen[k] == id) return;
+
+            seen[nseen++] = id;
+            found.push_back(reinterpret_cast<CRole*>(a));
+
+            if (id >= 1000000)                    ++nplr;
+            else if (id >= 400000 && id < 500000) ++nmon;
+            else if (id < 400000)                 ++nnpc;
+            else                                  ++noth;
+        };
+
+        // Preferred source: the game's own role vector (registries.h). Freed
+        // objects are never in it, so no ghost can pass. Falls back to the
+        // heap walk only if the anchor chain fails validation.
+        std::vector<CRole*> registry;
+        const bool viaRegistry = Registries::ReadRoles(registry);
+        if (viaRegistry) {
+            for (CRole* r : registry) {
+                if (nseen >= 512) break;
+                consider(reinterpret_cast<uintptr_t>(r));
+            }
+        } else {
+            MEMORY_BASIC_INFORMATION mbi{};
+            uintptr_t addr = 0x10000;
+            const uint64_t kScanCap = 40000000ull;
+
+            while (addr < 0x7FFFFFFF0000ull && nseen < 512 && scanned < kScanCap) {
+                if (!VirtualQuery((void*)addr, &mbi, sizeof(mbi)))
+                    break;
+                const uintptr_t rbase = (uintptr_t)mbi.BaseAddress;
+                const size_t    rsize = mbi.RegionSize;
+
+                const bool usable = mbi.State == MEM_COMMIT
+                                 && mbi.Type == MEM_PRIVATE
+                                 && (mbi.Protect == PAGE_READWRITE || mbi.Protect == PAGE_EXECUTE_READWRITE);
+
+                if (usable && rsize > 0x100 && rsize < 0x4000000) {
+                    ++nregions;
+                    for (uintptr_t a = rbase; a + 0xE0 < rbase + rsize && nseen < 512; a += 0x10)
+                        consider(a);
+                }
+
+                if (rsize == 0)
+                    break;
+                addr = rbase + rsize;
+            }
         }
 
         const uint32_t elapsed = GetTickCount() - t0;
@@ -272,9 +289,9 @@ namespace
         static int  s_logged = 0;
         static int  s_lastTotal = -1;
         if (s_logged < 3 || nseen != s_lastTotal) {
-            spdlog::info("[entities] scan #{}: {} entities ({} mon, {} plr, {} npc) in {}ms | "
+            spdlog::info("[entities] scan #{} ({}): {} entities ({} mon, {} plr, {} npc) in {}ms | "
                          "regions={} addrs={} vtable={} id={} pos={} name={}",
-                         s_scans, nseen, nmon, nplr, nnpc, elapsed,
+                         s_scans, viaRegistry ? "registry" : "heap-scan", nseen, nmon, nplr, nnpc, elapsed,
                          nregions, scanned, funnel.vtable, funnel.id, funnel.pos, npassName);
             ++s_logged;
             s_lastTotal = nseen;
@@ -392,10 +409,36 @@ namespace Entities
         return GetTickCount() >= g_mapDataSettledTick.load(std::memory_order_relaxed);
     }
 
+    // Liveness from the game's own container: a CRole the game has freed is
+    // gone from its role vector immediately, whereas its bytes can keep
+    // passing the shape check until the heap reuses them (the ghost bug).
+    // The vector read is ~200 pointers, but IsAlive is called many times per
+    // frame, so one snapshot is shared for 30ms. If the registry is
+    // unavailable the shape check alone decides, as before.
     bool IsAlive(const CRole* role)
     {
         if (!role)
             return false;
+        static std::mutex         s_snapMutex;
+        static std::vector<CRole*> s_snap;
+        static DWORD              s_snapTick = 0;
+        static bool               s_snapValid = false;
+        {
+            std::lock_guard<std::mutex> lk(s_snapMutex);
+            const DWORD now = GetTickCount();
+            // Throttle on time only: while the registry is failing this must
+            // NOT retry on every call (it did once: 9M reads/minute).
+            if (s_snapTick == 0 || now - s_snapTick > 30) {
+                s_snapValid = Registries::ReadRoles(s_snap);
+                s_snapTick = now ? now : 1;
+            }
+            if (s_snapValid) {
+                bool present = false;
+                for (CRole* r : s_snap) if (r == role) { present = true; break; }
+                if (!present)
+                    return false;
+            }
+        }
         uint32_t id = 0;
         return LooksLikeRole(reinterpret_cast<uintptr_t>(role), &id);
     }

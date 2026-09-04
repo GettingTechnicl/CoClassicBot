@@ -3,6 +3,7 @@
 #include "itemtype.h"
 #include "mapdata.h"
 #include "game.h"
+#include "registries.h"
 
 #include <windows.h>
 #include <spdlog/spdlog.h>
@@ -90,41 +91,51 @@ namespace
 
         static uint32_t seen[kMaxSeenItems];
         int nseen = 0;
-
-        MEMORY_BASIC_INFORMATION mbi{};
-        uintptr_t addr = 0x10000;
         uint64_t scanned = 0;
-        const uint64_t kScanCap = 40000000ull;
 
-        while (addr < 0x7FFFFFFF0000ull && nseen < kMaxSeenItems && scanned < kScanCap) {
-            if (!VirtualQuery((void*)addr, &mbi, sizeof(mbi)))
-                break;
-            const uintptr_t rbase = (uintptr_t)mbi.BaseAddress;
-            const size_t    rsize = mbi.RegionSize;
-            const bool usable = mbi.State == MEM_COMMIT
-                             && mbi.Type == MEM_PRIVATE
-                             && (mbi.Protect == PAGE_READWRITE || mbi.Protect == PAGE_EXECUTE_READWRITE);
+        auto consider = [&](uintptr_t a) {
+            ++scanned;
+            if (!LooksLikeMapItem(a, mapW, mapH))
+                return;
+            uint32_t id = 0;
+            TryRead(a, &id);
+            for (int k = 0; k < nseen; ++k)
+                if (seen[k] == id) return;
+            seen[nseen++] = id;
+            found.push_back(reinterpret_cast<CMapItem*>(a));
+        };
 
-            if (usable && rsize > 0x20 && rsize < 0x4000000) {
-                for (uintptr_t a = rbase; a + 0x20 < rbase + rsize && nseen < kMaxSeenItems; a += 0x10) {
-                    ++scanned;
-                    if (!LooksLikeMapItem(a, mapW, mapH))
-                        continue;
-
-                    uint32_t id = 0;
-                    TryRead(a, &id);
-                    bool dup = false;
-                    for (int k = 0; k < nseen; ++k)
-                        if (seen[k] == id) { dup = true; break; }
-                    if (dup)
-                        continue;
-
-                    seen[nseen++] = id;
-                    found.push_back(reinterpret_cast<CMapItem*>(a));
-                }
+        // Preferred source: the game's global item vector (registries.h) — the
+        // items' sole owner, so a picked-up or despawned item is gone from it
+        // on the very next call. The heap walk is only the fallback.
+        std::vector<CMapItem*> registry;
+        const bool viaRegistry = Registries::ReadItems(registry);
+        if (viaRegistry) {
+            for (CMapItem* it : registry) {
+                if (nseen >= kMaxSeenItems) break;
+                consider(reinterpret_cast<uintptr_t>(it));
             }
-            if (!rsize) break;
-            addr = rbase + rsize;
+        } else {
+            MEMORY_BASIC_INFORMATION mbi{};
+            uintptr_t addr = 0x10000;
+            const uint64_t kScanCap = 40000000ull;
+
+            while (addr < 0x7FFFFFFF0000ull && nseen < kMaxSeenItems && scanned < kScanCap) {
+                if (!VirtualQuery((void*)addr, &mbi, sizeof(mbi)))
+                    break;
+                const uintptr_t rbase = (uintptr_t)mbi.BaseAddress;
+                const size_t    rsize = mbi.RegionSize;
+                const bool usable = mbi.State == MEM_COMMIT
+                                 && mbi.Type == MEM_PRIVATE
+                                 && (mbi.Protect == PAGE_READWRITE || mbi.Protect == PAGE_EXECUTE_READWRITE);
+
+                if (usable && rsize > 0x20 && rsize < 0x4000000) {
+                    for (uintptr_t a = rbase; a + 0x20 < rbase + rsize && nseen < kMaxSeenItems; a += 0x10)
+                        consider(a);
+                }
+                if (!rsize) break;
+                addr = rbase + rsize;
+            }
         }
 
         const uint32_t elapsed = GetTickCount() - t0;
@@ -156,7 +167,7 @@ namespace
 
         static bool loggedOnce = false;
         if (!loggedOnce) {
-            spdlog::info("[mapitems] first scan: {} ground items in {}ms", nseen, elapsed);
+            spdlog::info("[mapitems] first scan ({}): {} ground items in {}ms", viaRegistry ? "registry" : "heap-scan", nseen, elapsed);
             loggedOnce = true;
         }
     }
@@ -226,10 +237,36 @@ namespace MapItems
 
     void Invalidate() { g_forceRescan.store(true); }
 
+    // Liveness from the game's own item vector (its sole owner): an item that
+    // was picked up or despawned is gone from it immediately, whereas its bytes
+    // keep passing the shape check until the heap reuses them — which was the
+    // entire ghost-pickup mechanism. One snapshot is shared for 30ms since
+    // this runs per candidate per frame. Without the registry the shape check
+    // alone decides, as before.
     bool IsAlive(const CMapItem* item)
     {
         if (!item)
             return false;
+        static std::mutex             s_snapMutex;
+        static std::vector<CMapItem*> s_snap;
+        static DWORD                  s_snapTick = 0;
+        static bool                   s_snapValid = false;
+        {
+            std::lock_guard<std::mutex> lk(s_snapMutex);
+            const DWORD now = GetTickCount();
+            // Throttle on time only: while the registry is failing this must
+            // NOT retry on every call (entities.cpp's version once did 9M/min).
+            if (s_snapTick == 0 || now - s_snapTick > 30) {
+                s_snapValid = Registries::ReadItems(s_snap);
+                s_snapTick = now ? now : 1;
+            }
+            if (s_snapValid) {
+                bool present = false;
+                for (CMapItem* it : s_snap) if (it == item) { present = true; break; }
+                if (!present)
+                    return false;
+            }
+        }
         MapGrid* grid = GetCurrentMapGrid();
         const int mapW = grid ? grid->GetWidth() : 4096;
         const int mapH = grid ? grid->GetHeight() : 4096;
