@@ -1,4 +1,5 @@
 #include "game.h"
+#include "action_recorder.h"
 #include "jitter.h"
 #include "hunt_intervals.h"
 #include "map_items.h"
@@ -744,6 +745,7 @@ bool HuntLootManager::TryPickupLootItem(CHero* hero, const AutoHuntSettings& set
     // pickup is confirmed (not a ghost) — see PruneLootPickupAttempts.
     const int groundPlus = (int)item->GetPlus();
 
+    RecordAction(RecordedActionType::LootPickup, item->m_id);
     hero->PickupItem(*item);
     m_lastLootTick   = now;
     m_lastLootItemId = item->m_id;

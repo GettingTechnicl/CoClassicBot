@@ -1597,10 +1597,13 @@ constexpr int kIdTrayExit = 4003;
 constexpr int kIdRowActionBase = 5000;
 constexpr int kIdRowRemoveBase = 6000;
 constexpr int kIdRowStatusBase = 7000;
+constexpr int kIdRowUpBase = 8000;
+constexpr int kIdRowDownBase = 9000;
+constexpr int kIdRowEditBase = 10000;
 
 constexpr int kRowHeight = 36;
 constexpr int kRowTopMargin = 10;
-constexpr int kWindowClientWidth = 560;
+constexpr int kWindowClientWidth = 620;
 constexpr int kBottomBarHeight = 46;
 
 std::vector<std::unique_ptr<AccountSession>> g_sessions;  // UI-thread-only, see account_session.h
@@ -1685,20 +1688,36 @@ void RebuildRows(HWND hwnd)
         // (see credentials.h); this is purely the display layer.
         HWND label = CreateWindowA("STATIC", session.profile.label.c_str(),
             WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS,
-            10, y + 8, 260, 20, hwnd, nullptr, hInst, nullptr);
+            10, y + 8, 160, 20, hwnd, nullptr, hInst, nullptr);
         HWND status = CreateWindowA("STATIC", StateLabel(session.state.load()), WS_CHILD | WS_VISIBLE | SS_LEFT,
-            280, y + 8, 140, 20, hwnd,
+            180, y + 8, 110, 20, hwnd,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowStatusBase + static_cast<int>(i))), hInst, nullptr);
         const bool busy = IsSessionBusy(session);
+        // Reordering/renaming only ever touch this vector + the JSON store,
+        // never anything a running worker thread depends on (it captured its
+        // own AccountProfile copy at login time — see HandleLoginClick), so
+        // these three stay enabled even for a busy row.
+        HWND upBtn = CreateWindowA("BUTTON", "^",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | (i == 0 ? WS_DISABLED : 0), 300, y, 26, 28, hwnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowUpBase + static_cast<int>(i))), hInst, nullptr);
+        HWND downBtn = CreateWindowA("BUTTON", "v",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | (i + 1 == g_sessions.size() ? WS_DISABLED : 0), 330, y, 26, 28, hwnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowDownBase + static_cast<int>(i))), hInst, nullptr);
+        HWND editBtn = CreateWindowA("BUTTON", "Edit", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            364, y, 50, 28, hwnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowEditBase + static_cast<int>(i))), hInst, nullptr);
         HWND actionBtn = CreateWindowA("BUTTON", busy ? "Exit" : "Login", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            430, y, 60, 28, hwnd,
+            422, y, 60, 28, hwnd,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowActionBase + static_cast<int>(i))), hInst, nullptr);
         HWND removeBtn = CreateWindowA("BUTTON", "Remove",
-            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | (busy ? WS_DISABLED : 0), 495, y, 60, 28, hwnd,
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | (busy ? WS_DISABLED : 0), 488, y, 60, 28, hwnd,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowRemoveBase + static_cast<int>(i))), hInst, nullptr);
 
         g_rowChildWindows.push_back(label);
         g_rowChildWindows.push_back(status);
+        g_rowChildWindows.push_back(upBtn);
+        g_rowChildWindows.push_back(downBtn);
+        g_rowChildWindows.push_back(editBtn);
         g_rowChildWindows.push_back(actionBtn);
         g_rowChildWindows.push_back(removeBtn);
         y += kRowHeight;
@@ -1919,6 +1938,44 @@ void HandleRemoveClick(HWND hwnd, size_t index)
     RebuildRows(hwnd);
 }
 
+// Swaps a saved account with its neighbor above/below (direction = -1/+1)
+// and persists the new order. Safe regardless of that row's busy state — a
+// running worker thread only ever holds the AccountProfile copy it captured
+// at login time (see HandleLoginClick), never an index or pointer into
+// g_sessions, so moving the account around in the list can't disturb it.
+void HandleMoveClick(HWND hwnd, size_t index, int direction)
+{
+    if (index >= g_sessions.size())
+        return;
+    const size_t other = index + static_cast<size_t>(direction);
+    if (direction < 0 && index == 0)
+        return;
+    if (other >= g_sessions.size())
+        return;
+    std::swap(g_sessions[index], g_sessions[other]);
+    SaveSessionsToCredentials();
+    RebuildRows(hwnd);
+}
+
+// Lets the user rename just the nickname (AccountProfile::label) of an
+// existing saved account, without touching username/password/server. Uses
+// the same InputBox() prefill mechanism the Server field already relies on
+// in HandleAddAccountClick.
+void HandleEditNicknameClick(HWND hwnd, size_t index)
+{
+    if (index >= g_sessions.size())
+        return;
+    AccountSession& session = *g_sessions[index];
+    char label[128];
+    strncpy_s(label, session.profile.label.c_str(), sizeof(label) - 1);
+    if (!InputBox(hwnd, "Edit Account - Nickname", "Nickname (e.g. \"Main\"):",
+            label, sizeof(label), label))
+        return;
+    session.profile.label = label;
+    SaveSessionsToCredentials();
+    RebuildRows(hwnd);
+}
+
 // Mirrors the field-by-field InputBox() sequence the old modal
 // account-picker dialog used for "Add New" — see this file's git history
 // for the version this replaced.
@@ -2028,6 +2085,12 @@ LRESULT CALLBACK ManagerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             RefreshRows(hwnd);
         } else if (id >= kIdRowRemoveBase && id < kIdRowRemoveBase + static_cast<int>(g_sessions.size())) {
             HandleRemoveClick(hwnd, static_cast<size_t>(id - kIdRowRemoveBase));
+        } else if (id >= kIdRowUpBase && id < kIdRowUpBase + static_cast<int>(g_sessions.size())) {
+            HandleMoveClick(hwnd, static_cast<size_t>(id - kIdRowUpBase), -1);
+        } else if (id >= kIdRowDownBase && id < kIdRowDownBase + static_cast<int>(g_sessions.size())) {
+            HandleMoveClick(hwnd, static_cast<size_t>(id - kIdRowDownBase), 1);
+        } else if (id >= kIdRowEditBase && id < kIdRowEditBase + static_cast<int>(g_sessions.size())) {
+            HandleEditNicknameClick(hwnd, static_cast<size_t>(id - kIdRowEditBase));
         }
         return 0;
     }

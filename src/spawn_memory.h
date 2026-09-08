@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace SpawnMemory
@@ -39,12 +40,38 @@ namespace SpawnMemory
     constexpr int kBucketTiles = 8;      // tiles per bucket edge
     constexpr int kMaxBucketsPerMap = 20000;
 
-    // Record every monster currently visible. Call once per entity refresh.
-    void Observe(OBJID mapId, const std::vector<Position>& monsterTiles);
+    // Record monster sightings for one entity refresh. Scores an APPEARANCE —
+    // a monster id newly seen, or seen in a different bucket than last call —
+    // not raw dwell time: an id still sitting in the same bucket as last
+    // batch earns no further credit, so a monster the bot stands and fights
+    // stops dominating the map the moment it's been counted once. Decay still
+    // runs every batch regardless.
+    //
+    // heroPos also marks every bucket within the game's view range as an
+    // OBSERVATION OPPORTUNITY, whether or not a monster was in it — this is
+    // what makes "genuinely searched, nothing here" distinguishable from
+    // "never been here" (see GetDensity).
+    void Observe(OBJID mapId, const Position& heroPos, const std::vector<std::pair<OBJID, Position>>& monsters);
 
     // Score for the bucket containing a tile. 0 = never seen a monster there.
-    // Higher = seen more often / more recently.
+    // Higher = seen more often / more recently. Raw appearance count, NOT
+    // normalised by how often the bucket has been looked at — a bucket on the
+    // bot's usual path accrues a higher raw score than an equally-dense one
+    // it rarely passes, purely from being seen more. Prefer GetDensity for
+    // any decision that compares buckets against each other; this stays
+    // mainly for the overlay/novelty machinery that already keys off it.
     float GetScore(OBJID mapId, const Position& tile);
+
+    // Appearance rate for the bucket containing a tile: spawns / observation-
+    // opportunities, both decayed on the same clock as GetScore. Removes the
+    // "seen more often := scores higher" bias GetScore has. Returns -1.0f
+    // when the bucket hasn't been looked at enough to trust a rate yet —
+    // callers should treat that as "unknown, worth exploring", a state
+    // distinct from a confirmed density of 0 ("looked, nothing spawns here").
+    // Does NOT include the novelty boost GetScore/GetHotBuckets apply — the
+    // two are different scales (a rate vs. a decayed count) and novelty is
+    // being kept as its own separate, unverified mechanism for now.
+    float GetDensity(OBJID mapId, const Position& tile);
 
     // Best-known score anywhere on the map, for normalising weights.
     float GetMaxScore(OBJID mapId);
@@ -74,7 +101,10 @@ namespace SpawnMemory
 
     // Diagnostics for the overlay. novelBuckets = buckets currently carrying a
     // temporary "test it out" novelty boost (see spawn_memory.cpp).
-    struct Stats { int maps; int buckets; int observations; float maxScore; int novelBuckets; };
+    // knownBuckets = buckets with enough observation opportunities for
+    // GetDensity to return a trusted rate rather than "unknown" (see
+    // kMinTimesObservedTrust in spawn_memory.cpp).
+    struct Stats { int maps; int buckets; int observations; float maxScore; int novelBuckets; int knownBuckets; };
     Stats GetStats(OBJID mapId);
 
     void ClearMap(OBJID mapId);

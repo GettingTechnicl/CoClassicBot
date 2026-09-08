@@ -419,14 +419,21 @@ namespace Entities
             // grace window (see above) so a leftover object from the map
             // just vacated can't record a phantom sighting on the new map.
             if (curMapId && GetTickCount() >= g_mapDataSettledTick.load(std::memory_order_relaxed)) {
-                std::vector<Position> monsters;
+                std::vector<std::pair<OBJID, Position>> monsters;
                 monsters.reserve(g_front.size());
                 for (CRole* r : g_front) {
                     if (r && r->IsMonster() && !r->IsDead())
-                        monsters.push_back(r->m_posMap);
+                        monsters.emplace_back(r->GetID(), r->m_posMap);
                 }
-                if (!monsters.empty())
-                    SpawnMemory::Observe(curMapId, monsters);
+                // Called every settled batch, even with zero monsters found —
+                // an empty-handed batch is itself the observation that marks
+                // the hero's surrounding buckets "searched, nothing here"
+                // rather than leaving them "never been here" (see
+                // SpawnMemory::GetDensity). Skipping this call whenever
+                // nothing was visible would mean genuinely empty ground never
+                // earns that distinction.
+                const CHero* hero = Game::GetHero();
+                SpawnMemory::Observe(curMapId, hero ? hero->m_posMap : Position{}, monsters);
             }
         }
         return g_front;

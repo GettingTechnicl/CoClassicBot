@@ -140,3 +140,20 @@ MapGrid* GetCurrentMapGrid();
 // Returns nullptr until a map is loaded. Rebuilt automatically on map change.
 class CGameMap;
 CGameMap* GetFileBackedGameMap();
+
+// Force a single tile to read as blocked for the rest of this map visit —
+// see the implementation's comment for why (a scene-overlay tile that reads
+// walkable but genuinely isn't, live-proven by the pathfinder repeatedly
+// failing to jump onto/through it). No-op if no map is currently built or
+// the coordinates are out of bounds. Resets automatically on the next map
+// (re)load.
+void MarkTileBlockedThisSession(int x, int y);
+
+// The inverse: force a tile that reads blocked to read walkable instead — for
+// when the hero's own live position proves the grid wrong the other way (see
+// the implementation's comment). Safe to call on first detection, no need to
+// wait for a repeat: unlike a failed jump, "the hero is standing right here"
+// is not something lag could fake. No-op if no map is currently built or the
+// coordinates are out of bounds. Resets automatically on the next map
+// (re)load.
+void MarkTileWalkableThisSession(int x, int y);

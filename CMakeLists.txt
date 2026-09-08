@@ -50,6 +50,7 @@ add_library(coclassic SHARED
     src/entities.cpp
     src/mapdata.cpp
     src/map_items.cpp
+    src/action_recorder.cpp
     src/registries.cpp
     src/spawn_memory.cpp
     src/mem_stats.cpp
@@ -74,6 +75,7 @@ add_library(coclassic SHARED
     src/hooks.cpp
     src/itemtype.cpp
     src/packets.cpp
+    src/net_recv_hook.cpp
     src/pathfinder.cpp
     src/plugins/plugin_mgr.cpp
     src/plugins/base_hunt_plugin.cpp
@@ -107,6 +109,7 @@ target_link_libraries(coclassic PRIVATE
     d3dcompiler.lib
     winhttp.lib
     crypt32.lib    # CryptProtectData/CryptUnprotectData — Discord webhook URL at rest (config.cpp)
+    ws2_32.lib     # recv/WSARecv Detour hooks (net_recv_hook.cpp)
 )
 set_target_properties(coclassic PROPERTIES
     OUTPUT_NAME "coclassic"

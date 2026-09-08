@@ -1,4 +1,5 @@
 #include "archer_hunt_plugin.h"
+#include "action_recorder.h"
 #include "jitter.h"
 #include "hunt_intervals.h"
 #include "hunt_targeting.h"
@@ -950,6 +951,8 @@ void ArcherHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Au
                 if (FindBestScatterApproach(hero, map, settings, nearby, scatterRange, minHits,
                         advancePos, advanceCastPos, advanceTarget, advanceHits, /*preferFarTiles=*/true)
                     && StartPathTo(hero, map, advancePos, 0)) {
+                    RecordAction(RecordedActionType::JumpAtMonster,
+                        advanceTarget ? advanceTarget->GetID() : target->GetID());
                     SetState(AutoHuntState::ApproachTarget, "Jumping to scatter clump");
                     return;
                 }
@@ -1005,6 +1008,7 @@ void ArcherHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Au
     if (!IsZeroPos(approachPos)) {
         const bool startedPath = StartPathTo(hero, map, approachPos, 0);
         if (startedPath) {
+            RecordAction(RecordedActionType::JumpAtMonster, target->GetID());
             SetState(AutoHuntState::ApproachTarget, "Jumping to scatter clump");
         } else {
             SetState(AutoHuntState::ApproachTarget, "Unable to reach target");
@@ -1012,6 +1016,7 @@ void ArcherHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Au
     } else {
         const bool startedPath = StartPathNearTarget(hero, map, target->m_posMap, requiredAttackRange);
         if (startedPath) {
+            RecordAction(RecordedActionType::JumpAtMonster, target->GetID());
             SetState(AutoHuntState::ApproachTarget, "Closing distance to target");
         } else {
             SetState(AutoHuntState::ApproachTarget, "Unable to reach target");
@@ -1047,6 +1052,7 @@ void ArcherHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const Auto
         if (CMagic* scatter = FindScatterMagic(hero)) {
             const DWORD scatterDelay = (std::max)(nextAttackDelay, static_cast<DWORD>(350));
             if (!IsZeroPos(attackPos) && now - m_lastAttackTick >= scatterDelay) {
+                RecordAction(RecordedActionType::AttackMonster, target->GetID());
                 hero->MagicAttack(scatter->GetMagicType(), attackPos);
                 m_lastAttackTick = now;
             }
@@ -1064,6 +1070,7 @@ void ArcherHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const Auto
 
     // Regular ranged attack
     if (now - m_lastAttackTick >= nextAttackDelay) {
+        RecordAction(RecordedActionType::AttackMonster, target->GetID());
         hero->ShootTarget(target->GetID());
         m_lastAttackTick = now;
     }

@@ -1,4 +1,5 @@
 #include "CHero.h"
+#include "action_recorder.h"
 #include "CGameMap.h"
 #include "config.h"
 #include "game.h"
@@ -1204,7 +1205,20 @@ int CHero::GetMaxHp() const
 
     if (!GameRva::VERIFIED_V1074) {
         static bool warned = false;
-        if (!warned) { spdlog::error("[safety] CHero::GetMaxHp: fallback RVA unverified on v1074, returning 0 (see game.h GameRva::VERIFIED_V1074)"); warned = true; }
+        if (!warned) {
+            spdlog::error("[safety] CHero::GetMaxHp: fallback RVA unverified on v1074, returning 0 (see game.h GameRva::VERIFIED_V1074)");
+            // [DISCONNECT INVESTIGATION 2026-09-06] m_nMaxHp reading <= 0 for
+            // the FIRST time all session (this branch is otherwise dead —
+            // see the `m_nMaxHp > 0` early-return above) is, across every
+            // disconnect examined so far, the earliest and only universal
+            // teardown marker: it fires in every case, including the ones
+            // where SendPacket() never gets far enough to log its own null-
+            // connection line at all. See action_recorder.h's comment on
+            // DumpFlightRecorder() for why this needs to be self-guarding
+            // rather than the single source of truth.
+            DumpFlightRecorder();
+            warned = true;
+        }
         return 0;
     }
     return GameCall::CHero_GetMaxHp()(this);

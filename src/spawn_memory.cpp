@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <ctime>
 #include <mutex>
+#include <tuple>
 #include <spdlog/spdlog.h>
 
 namespace SpawnMemory
@@ -42,6 +43,31 @@ namespace
     // places worth testing next, arming again as earlier entries expire.
     constexpr int   kMaxNovelBuckets   = 8;
 
+    // Session-2026-09-04 [DENSITY]: raw score conflates "spawns a lot" with
+    // "the bot walks past here a lot" — a bucket on the beaten path racks up
+    // observation opportunities (and therefore appearances) far more than an
+    // equally spawny bucket off to the side. GetDensity divides appearances
+    // by opportunities so both are judged on the same footing. Both counters
+    // decay on the SAME clock (kDecayPerObserve) so density stays a RECENT
+    // rate, not an all-session average that would asymptote toward zero over
+    // a long-running grind — and so a bucket the bot hasn't been near in a
+    // long time reverts to "unknown" rather than staying "confirmed empty"
+    // forever from one old visit.
+    //
+    // "Within view" radius: reuses the game's own AOI range already assumed
+    // elsewhere (kViewTiles in base_hunt_plugin.cpp, ~35 tiles — that's what
+    // bounds which monsters the entity scan can even see) rather than
+    // inventing a second notion of "visible."
+    constexpr float kObservationRadiusTiles = 35.0f;
+    // Below this, too few looks have happened to trust a ratio — 3 fresh
+    // opportunities (little decay yet) is enough to not divide by noise
+    // without delaying "unknown" recognition for long.
+    constexpr float kMinTimesObservedTrust = 3.0f;
+    // How often (in Observe() calls) to dump a density snapshot to the log —
+    // frequent enough that one play session shows whether density-based
+    // exploration is roaming instead of camping, cheap enough not to spam.
+    constexpr int   kDiagnosticLogEveryObserves = 200;
+
     // Session 12: this is the second documented safety rail (header comment,
     // "dropping maps not seen for a long time on load") — it was written
     // (lastTouched updated every Observe()) but never actually read anywhere,
@@ -58,6 +84,17 @@ namespace
         // packed bucket -> observation-count deadline for its novelty boost
         // (see kNoveltyObserves). Session-local, never saved.
         std::unordered_map<uint32_t, int> novelty;
+        // Monster id -> the bucket it was seen in last Observe() batch. Lets
+        // Observe tell an APPEARANCE (new id, or an id that moved buckets)
+        // from continued dwell (same id, same bucket) so standing still, or
+        // being fought, doesn't rack up score every ~0.5s it stays on screen.
+        // Session-local, never saved — ids are only meaningful within a
+        // client session.
+        std::unordered_map<OBJID, uint32_t> presentLastObserve;
+        // packed bucket -> decayed count of Observe() calls this bucket was
+        // within view, whether or not a monster was in it. Denominator for
+        // GetDensity. Session-local, never saved (see kObservationRadiusTiles).
+        std::unordered_map<uint32_t, float> timesObserved;
         int     observations = 0;
         float   maxScore = 0.0f;
         int64_t lastTouched = 0;   // time(nullptr) — see kStaleMapMaxAgeSeconds above
@@ -85,7 +122,7 @@ namespace
     }
 }
 
-void Observe(OBJID mapId, const std::vector<Position>& monsterTiles)
+void Observe(OBJID mapId, const Position& heroPos, const std::vector<std::pair<OBJID, Position>>& monsters)
 {
     if (mapId == 0)
         return;
@@ -109,10 +146,62 @@ void Observe(OBJID mapId, const std::vector<Position>& monsterTiles)
         }
     }
 
-    for (const Position& p : monsterTiles) {
+    // Decay observation-opportunity the same way, same clock — see the
+    // [DENSITY] comment above for why this can't be a monotonic counter.
+    for (auto it = mm.timesObserved.begin(); it != mm.timesObserved.end(); ) {
+        it->second *= kDecayPerObserve;
+        if (it->second < kPruneBelow)
+            it = mm.timesObserved.erase(it);
+        else
+            ++it;
+    }
+
+    // Mark every bucket within view as looked-at this batch, monster or not —
+    // this is what lets GetDensity tell "searched, nothing here" apart from
+    // "never been here."
+    if (heroPos.x > 0 && heroPos.y > 0) {
+        const int hbx = heroPos.x / kBucketTiles;
+        const int hby = heroPos.y / kBucketTiles;
+        const int rBuckets = (int)(kObservationRadiusTiles / kBucketTiles) + 1;
+        for (int dby = -rBuckets; dby <= rBuckets; ++dby) {
+            for (int dbx = -rBuckets; dbx <= rBuckets; ++dbx) {
+                const int bx = hbx + dbx, by = hby + dby;
+                if (bx < 0 || by < 0)
+                    continue;
+                const Position center{ bx * kBucketTiles + kBucketTiles / 2, by * kBucketTiles + kBucketTiles / 2 };
+                if (heroPos.DistanceTo(center) > kObservationRadiusTiles)
+                    continue;
+                const uint32_t key = PackBucket(bx, by);
+                auto [it, inserted] = mm.timesObserved.try_emplace(key, 0.0f);
+                if (inserted && (int)mm.timesObserved.size() > kMaxBucketsPerMap) {
+                    mm.timesObserved.erase(it);   // safety rail, see kMaxBucketsPerMap
+                    continue;
+                }
+                it->second += 1.0f;
+            }
+        }
+    }
+
+    // Appearance-based counting: an id still sitting in the bucket it was in
+    // last batch is dwell, not a new sighting, and scores nothing — otherwise
+    // a monster the bot stands and fights racks up hundreds of points just by
+    // staying on screen while monsters merely walked past score once each.
+    // `stillPresent` becomes the next batch's `presentLastObserve`, so an id
+    // that leaves view is forgotten (a later id reuse — e.g. after a respawn
+    // — is then correctly treated as a fresh appearance).
+    std::unordered_map<OBJID, uint32_t> stillPresent;
+    stillPresent.reserve(monsters.size());
+
+    for (const auto& [id, p] : monsters) {
         if (p.x <= 0 || p.y <= 0)
             continue;
         const uint32_t key = PackBucket(p.x / kBucketTiles, p.y / kBucketTiles);
+        stillPresent[id] = key;
+
+        const auto prevIt = mm.presentLastObserve.find(id);
+        if (prevIt != mm.presentLastObserve.end() && prevIt->second == key)
+            continue;   // same monster, same bucket as last batch — dwell, no credit
+
         auto [it, inserted] = mm.buckets.try_emplace(key, 0.0f);
         if (inserted && (int)mm.buckets.size() > kMaxBucketsPerMap) {
             // Safety rail only — decay should keep us far below this.
@@ -134,6 +223,7 @@ void Observe(OBJID mapId, const std::vector<Position>& monsterTiles)
         if (it->second > newMax) newMax = it->second;
     }
     mm.maxScore = newMax;
+    mm.presentLastObserve.swap(stillPresent);
 
     // Expire novelty boosts whose window has passed. (Kept even if the bucket
     // itself was pruned — the deadline check below makes them inert, and this
@@ -143,6 +233,34 @@ void Observe(OBJID mapId, const std::vector<Position>& monsterTiles)
             it = mm.novelty.erase(it);
         else
             ++it;
+    }
+
+    // [DENSITY diagnostic] one line every kDiagnosticLogEveryObserves calls:
+    // top buckets by density with their raw (spawns, timesObserved) so a
+    // single live session can confirm the counting fix AND that
+    // density-based exploration is actually roaming instead of camping.
+    if (mm.observations % kDiagnosticLogEveryObserves == 0) {
+        std::vector<std::tuple<float, float, float, uint32_t>> rows;  // density, spawns, timesObserved, key
+        rows.reserve(mm.buckets.size());
+        for (const auto& [key, spawns] : mm.buckets) {
+            const auto tot = mm.timesObserved.find(key);
+            const float to = (tot == mm.timesObserved.end()) ? 0.0f : tot->second;
+            const float density = (to >= kMinTimesObservedTrust) ? spawns / to : -1.0f;
+            rows.emplace_back(density, spawns, to, key);
+        }
+        std::sort(rows.begin(), rows.end(),
+            [](const auto& a, const auto& b) { return std::get<0>(a) > std::get<0>(b); });
+        const int n = (std::min)((int)rows.size(), 8);
+        std::string dump;
+        for (int i = 0; i < n; ++i) {
+            const auto& [density, spawns, to, key] = rows[i];
+            char buf[80];
+            snprintf(buf, sizeof(buf), "%s(%d,%d) d=%.2f s=%.1f/%.1f",
+                i ? ", " : "", BucketX(key), BucketY(key), density, spawns, to);
+            dump += buf;
+        }
+        spdlog::info("[spawnmem] map {} density snapshot @obs {} ({} buckets, top {}): {}",
+            mapId, mm.observations, (int)mm.buckets.size(), n, dump);
     }
 }
 
@@ -162,6 +280,22 @@ float GetScore(OBJID mapId, const Position& tile)
     if (nit != mm.novelty.end() && nit->second > mm.observations)
         score = (std::max)(score, mm.maxScore * kNoveltyScoreShare);
     return score;
+}
+
+float GetDensity(OBJID mapId, const Position& tile)
+{
+    std::lock_guard<std::mutex> lk(g_mutex);
+    auto mit = g_maps.find((uint32_t)mapId);
+    if (mit == g_maps.end())
+        return -1.0f;
+    const MapMemory& mm = mit->second;
+    const uint32_t key = PackBucket(tile.x / kBucketTiles, tile.y / kBucketTiles);
+    const auto tot = mm.timesObserved.find(key);
+    if (tot == mm.timesObserved.end() || tot->second < kMinTimesObservedTrust)
+        return -1.0f;   // unknown — hasn't been looked at enough to trust a rate
+    const auto bit = mm.buckets.find(key);
+    const float spawns = (bit == mm.buckets.end()) ? 0.0f : bit->second;
+    return spawns / tot->second;
 }
 
 float GetMaxScore(OBJID mapId)
@@ -237,6 +371,9 @@ Stats GetStats(OBJID mapId)
         s.observations = it->second.observations;
         s.maxScore = it->second.maxScore;
         s.novelBuckets = (int)it->second.novelty.size();
+        for (const auto& [key, to] : it->second.timesObserved)
+            if (to >= kMinTimesObservedTrust)
+                ++s.knownBuckets;
     }
     return s;
 }

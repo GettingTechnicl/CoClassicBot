@@ -2,6 +2,7 @@
 #include "game.h"
 #include "gateway.h"
 #include "log.h"
+#include "mapdata.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -14,6 +15,13 @@ constexpr DWORD kPathPredictedMoveRecoverMs = 250;
 constexpr DWORD kPathStaleMovementCommandMs = 1800;
 constexpr DWORD kMinPathMovementIntervalMs = 100;
 constexpr DWORD kMaxPathMovementIntervalMs = 5000;
+// Live-repro (Twin City bridge, 2026-09-04): a scene-overlay tile that reads
+// walkable but genuinely isn't makes RepathFrom find the identical failing
+// jump every time, since the grid it reads from never changes — the bot
+// ground on the same STUCK timeout for 2.5 minutes before giving up. One
+// STUCK timeout could be a passing entity/lag blip; the SAME target tile
+// doing it twice in a row means the grid itself is wrong there.
+constexpr int kStuckWaypointBlacklistRepeats = 2;
 
 // CHero::Walk issues a real animated walk with CCommand.iType == 15 (verified
 // live — NOT the enum table's _COMMAND_WALK==3; see CHero::Walk's comment). If
@@ -403,6 +411,8 @@ void Pathfinder::Stop()
     m_lastIssuedMoveWasImmediate = false;
     m_movementIntervalProvider = nullptr;
     m_lastProgressTick = 0;
+    m_lastStuckWaypoint = {};
+    m_stuckWaypointRepeatCount = 0;
     m_generation++;
     spdlog::debug("[path] Stop, gen={}", m_generation);
 }
@@ -538,6 +548,22 @@ void Pathfinder::Update()
             CGameMap::GetAltitude(wCell), map->IsWalkable(wp.x, wp.y),
             map->CanJump(hx, hy, wp.x, wp.y, CGameMap::GetHeroAltThreshold()),
             map->CanReach(hx, hy, wp.x, wp.y));
+
+        // Bad-grid-data blacklist: see kStuckWaypointBlacklistRepeats above.
+        // A repath that lands on the exact same target tile as last time's
+        // STUCK timeout means the previous repath didn't actually change
+        // anything — the grid keeps offering this tile as the way through.
+        if (m_lastStuckWaypoint.x == wp.x && m_lastStuckWaypoint.y == wp.y)
+            ++m_stuckWaypointRepeatCount;
+        else {
+            m_lastStuckWaypoint = wp;
+            m_stuckWaypointRepeatCount = 1;
+        }
+        if (m_stuckWaypointRepeatCount >= kStuckWaypointBlacklistRepeats) {
+            MarkTileBlockedThisSession(wp.x, wp.y);
+            m_lastStuckWaypoint = {};
+            m_stuckWaypointRepeatCount = 0;
+        }
 
         if (!RepathFrom(hero, map, m_finalDestination, canIssueMovementNow))
             m_active = false;

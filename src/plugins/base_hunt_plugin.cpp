@@ -1,4 +1,5 @@
 #include "base_hunt_plugin.h"
+#include "action_recorder.h"
 #include "jitter.h"
 #include "hunt_intervals.h"
 #include "hunt_buffs.h"
@@ -233,9 +234,15 @@ static const char* StateName(AutoHuntState state)
 
 void BaseHuntPlugin::SetState(AutoHuntState state, const char* statusText)
 {
-    if (m_state != state)
+    if (m_state != state) {
         spdlog::info("[hunt] State: {} -> {} | {}", GetStateName(), StateName(state),
             statusText ? statusText : "");
+        // See m_lastFailedEnterTick's comment: only a FRESH entry counts, so
+        // repeatedly re-setting Failed (which is exactly the busy-loop this
+        // guards against) doesn't keep pushing the cooldown's start forward.
+        if (state == AutoHuntState::Failed)
+            m_lastFailedEnterTick = GetTickCount();
+    }
     m_state = state;
     snprintf(m_statusText, sizeof(m_statusText), "%s", statusText ? statusText : "");
 }
@@ -423,7 +430,6 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     // loop, targeting or combat.
     const OBJID mapId = Game::GetCurrentMapId();
     const bool useHeatmap = SpawnMemory::HasUsefulData(mapId);
-    const float maxScore = useHeatmap ? SpawnMemory::GetMaxScore(mapId) : 0.0f;
     Position bestScored{};
     float    bestScore = -1.0f;
 
@@ -630,14 +636,22 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
         // genuinely hotter — not merely tied — to justify the trip. The
         // exploration roll below stays on RAW score: deliberately going
         // somewhere far and unknown is that path's entire purpose.
-        const float score = SpawnMemory::GetScore(mapId, candidate);
-        const float travelDiscounted = score / (1.0f + heroPos.DistanceTo(candidate) / 96.0f);
-        if (travelDiscounted > bestScore) {
-            bestScore = travelDiscounted;
-            bestScored = candidate;
+        // Density (spawns / times-observed), not raw score: a candidate near
+        // the bot's usual path shouldn't rank higher purely from being seen
+        // more. GetDensity returns -1.0f for "unknown, not enough looks yet"
+        // — excluded from the exploit pick below (never claim an untested
+        // tile is a confirmed hot spot) but left as-is for the explore pick,
+        // where it naturally sorts lowest and wins the least-known tie-break.
+        const float density = SpawnMemory::GetDensity(mapId, candidate);
+        if (density >= 0.0f) {
+            const float travelDiscounted = density / (1.0f + heroPos.DistanceTo(candidate) / 96.0f);
+            if (travelDiscounted > bestScore) {
+                bestScore = travelDiscounted;
+                bestScored = candidate;
+            }
         }
-        if (score < worstScore) {
-            worstScore = score;
+        if (density < worstScore) {
+            worstScore = density;
             worstScored = candidate;
         }
     }
@@ -696,16 +710,16 @@ bool BaseHuntPlugin::FindZoneExplorePosition(CHero* hero, CGameMap* map,
     if (exploring && worstScore < (std::numeric_limits<float>::max)() && !IsZeroPos(worstScored)) {
         out = JitterDestination(map, worstScored, GetJitterRadius(settings));
         m_recentExploreDests.emplace_back(out, now);
-        spdlog::trace("[hunt] Explore (exploration roll) -> ({},{}) spawnScore={:.1f}/{:.1f}",
-                      out.x, out.y, worstScore, maxScore);
+        spdlog::trace("[hunt] Explore (exploration roll) -> ({},{}) density={:.2f}",
+                      out.x, out.y, worstScore);
         return true;
     }
 
     if (useHeatmap && bestScore >= 0.0f && !IsZeroPos(bestScored)) {
         out = JitterDestination(map, bestScored, GetJitterRadius(settings));
         m_recentExploreDests.emplace_back(out, now);
-        spdlog::trace("[hunt] Explore -> ({},{}) spawnScore={:.1f}/{:.1f}",
-                      out.x, out.y, bestScore, maxScore);
+        spdlog::trace("[hunt] Explore -> ({},{}) density={:.2f}",
+                      out.x, out.y, bestScore);
         return true;
     }
     return false;
@@ -956,7 +970,10 @@ bool BaseHuntPlugin::FindParanoiaRelocateDest(CHero* hero, CGameMap* map,
             continue;
         if (settings.paranoiaEnabled && HuntContest::IsBucketContested(mapId, b, settings))
             continue;
-        const float s = SpawnMemory::GetScore(mapId, b);
+        // Density, not raw score — see FindZoneExplorePosition. Unknown
+        // (-1.0f) never beats the -1.0f init below, so an untested bucket is
+        // correctly never chosen as a "confirmed hot" relocate target.
+        const float s = SpawnMemory::GetDensity(mapId, b);
         if (s > bestScore) {
             bestScore = s;
             best = b;
@@ -1190,7 +1207,9 @@ bool BaseHuntPlugin::FindDynamicRecenterTarget(const AutoHuntSettings& settings,
             continue;
         if (HuntContest::IsBucketContested(mapId, b, settings))
             continue;
-        cands.emplace_back(SpawnMemory::GetScore(mapId, b), b);
+        // Density, not raw score — see FindZoneExplorePosition. Unknown
+        // (-1.0f) candidates simply sort to the bottom of this list.
+        cands.emplace_back(SpawnMemory::GetDensity(mapId, b), b);
     }
     std::sort(cands.begin(), cands.end(),
         [](const auto& a, const auto& b) { return a.first > b.first; });
@@ -2504,6 +2523,19 @@ void BaseHuntPlugin::Update()
         return;
     }
 
+    // Failed has no dedicated handler: whatever caused it just gets retried
+    // unconditionally by the same fall-through logic next tick. If the cause
+    // hasn't cleared (e.g. no gateway route currently exists), that retries
+    // hundreds of times a second with zero backoff — see m_lastFailedEnterTick.
+    // A short cooldown here turns Failed into an actual pause instead of a
+    // busy-loop; genuine one-off failures still recover in well under a
+    // second, same as before this existed.
+    if (m_state == AutoHuntState::Failed) {
+        constexpr DWORD kFailedRetryCooldownMs = 3000;
+        if (GetTickCount() - m_lastFailedEnterTick < kFailedRetryCooldownMs)
+            return;
+    }
+
     // Session 10: independent of the decision throttle below — paced on its
     // own timer so it can be dialed down for testing without being tied to
     // how often the rest of the decision logic runs.
@@ -2633,6 +2665,19 @@ void BaseHuntPlugin::Update()
         return;
     }
 
+    // A town errand (buying arrows, repairing, storing, or traveling to/from
+    // one) runs its own dedicated state machine with its own equip/finish
+    // steps. Hunting-time systems below (potions, arrow top-up) must not act
+    // while one is mid-sequence — see their own comments for the live-repro
+    // each one caused by stomping m_state out from under the errand.
+    const bool inTownErrand = m_state == AutoHuntState::TravelToMarket
+        || m_state == AutoHuntState::TravelToBlacksmith
+        || m_state == AutoHuntState::Repair
+        || m_state == AutoHuntState::BuyArrows
+        || m_state == AutoHuntState::StoreItems
+        || m_state == AutoHuntState::TravelToZone
+        || m_state == AutoHuntState::ReturnToZone;
+
     {
         const HuntBuffCallbacks buffCb = MakeBuffCallbacks(hero, map, settings);
         if (m_buffMgr.TryPreLandingSafety(hero, map, settings, buffCb))
@@ -2673,13 +2718,41 @@ void BaseHuntPlugin::Update()
         // arrived in Market with a meteor to deposit, sat drinking potions in a
         // Recover loop, and never stored it until it was disabled. Potions
         // resume normally the moment it's back in a hunting zone.
+        //
+        // Also skip while genuinely out of arrows: sipping potions with no way
+        // to fight back is a starvation loop with no exit on its own — let the
+        // emergency arrow-restock check further down win instead so it can
+        // actually leave for town. Live-repro: an archer crash-relaunched mid-
+        // fight holding zero arrows and sat in Recover drinking potions for
+        // 7+ minutes straight, because this check fired (and returned) every
+        // single tick before Update() ever reached the town-run dispatch below.
+        //
+        // Also skip during a town errand (see inTownErrand above): this same
+        // check firing mid-purchase is what capped every arrow buy at exactly
+        // 1 quiver regardless of arrowBuyCount — it fires the instant a fresh
+        // low-HP reading clears the threshold (Twin City and other blacksmith
+        // fallback cities aren't MAP_MARKET, so the exclusion above didn't
+        // cover them), flips m_state to Recover, and HandleBuyArrowsState's
+        // own WaitBuy phase never runs again to loop for another purchase.
         if (Game::GetCurrentMapId() != MAP_MARKET
+            && !inTownErrand
+            && !NeedsTownRunArrowsEmergency(hero, settings)
             && m_buffMgr.TryUsePotions(hero, settings, m_lastHp, m_lastMaxHp, m_lastMana, m_lastMaxMana, buffCb))
             return;
     }
 
-    // Subclass combat-item management (arrows, etc.)
-    if (HandleCombatItems(hero, settings))
+    // Subclass combat-item management (arrows, etc.) — hunting-time only.
+    // Running this while a town errand is mid-sequence stomps that errand's
+    // own state machine: TryManageArrows sees the quiver just bought by
+    // HandleBuyArrowsState already sitting in the bag on the very next tick
+    // and equips it via SetState(Recover, "Equipping arrows") — kicking
+    // m_state OUT of BuyArrows before HandleBuyArrowsState's own WaitBuy phase
+    // ever confirms the purchase and loops for another. Live-repro: an archer
+    // configured to keep 3 arrow packs bought exactly 1 and stopped every
+    // time, regardless of arrowBuyCount. Each town errand already
+    // equips/finishes on its own schedule, so hunting's version has nothing
+    // useful to do here anyway.
+    if (!inTownErrand && HandleCombatItems(hero, settings))
         return;
 
     if (m_state == AutoHuntState::TravelToMarket) {
@@ -2964,6 +3037,7 @@ void BaseHuntPlugin::Update()
                 && TrySteerTowardZoneClump(hero, map, settings))
                 return;
             if (StartPathNearTarget(hero, map, loot->m_pos, kLootPathStopRange)) {
+                RecordAction(RecordedActionType::LootJump, loot->m_id);
                 m_targetId = loot->m_id;
                 if (m_lootCommitId != loot->m_id) {
                     m_lootCommitId = loot->m_id;
@@ -3003,6 +3077,41 @@ void BaseHuntPlugin::Update()
             }
             spdlog::warn("[hunt-loot] Failed to path to loot id={} at ({},{}) dist={}",
                 loot->m_id, loot->m_pos.x, loot->m_pos.y, lootDist);
+
+            // [DIST-0 STUCK-LOOT FIX]: dist==0 is deliberately exempt from the
+            // block above (see [PRIORITY-ITEM FALSE-STUCK FIX]) on the
+            // assumption the free-grab check always resolves it within one
+            // settle window — but that leaves a GENUINELY stuck dist==0 item
+            // with no escape hatch at all. Live crash logs: this exact warning
+            // repeating every decision tick for minutes on the same item id,
+            // the hero completely frozen, immediately followed by the game
+            // losing its connection to the server. Track how long THIS item
+            // has been continuously stuck here; once it clearly exceeds every
+            // legitimate settle delay (spawn grace + item pickup delay, both
+            // capped at a few seconds), it's not "still settling" anymore —
+            // feed it into the same attempt-limit/ignore mechanism so the bot
+            // abandons it and moves on instead of freezing indefinitely.
+            if (lootDist == 0) {
+                constexpr DWORD kDist0StuckThresholdMs = 10000;
+                if (m_stuckLootId != loot->m_id) {
+                    m_stuckLootId = loot->m_id;
+                    m_stuckLootSinceTick = now;
+                } else if (now - m_stuckLootSinceTick > kDist0StuckThresholdMs) {
+                    // Past every legitimate settle delay now — record an
+                    // attempt every tick (not a one-shot) so this reaches
+                    // HuntLootManager's own attempt limit and gets
+                    // ignore-listed within a couple more ticks, the same way
+                    // an ordinary dist>0 stuck item already does. Once
+                    // ignored, FindBestLoot stops offering it, so `loot` will
+                    // be a different item (or null) next tick and this
+                    // tracking naturally moves on.
+                    spdlog::warn("[hunt-loot] Item id={} stuck at dist=0 for over {}ms, treating as genuinely stuck",
+                        loot->m_id, kDist0StuckThresholdMs);
+                    m_lootMgr.RecordLootPickupAttempt(loot->m_id, now, settings);
+                }
+            } else {
+                m_stuckLootId = 0;
+            }
         }
     }
 
@@ -3025,6 +3134,22 @@ void BaseHuntPlugin::Update()
 
     const bool approachCommitted = (m_state == AutoHuntState::ApproachTarget || m_state == AutoHuntState::LootNearby)
         && (hero->IsJumping() || hasPendingJump || Pathfinder::Get().IsActive());
+
+    // [LOOT-WALK PROTECTION]: approachCommitted used to be computed and never
+    // read — combat retreat had no way to know a loot walk was already in
+    // flight, so a nearby monster could pull the hero off a genuinely
+    // committed walk to urgent (+1/meteor/DragonBall) loot via a kiting
+    // retreat jump, landing away from the item over and over. Live-observed
+    // on an archer: a +1 StoneCap oscillated between dist=0 and dist=35 for
+    // 66 seconds before it finally landed, while melee (whose
+    // HandleCombatRetreat is a no-op) grabs the same class of item
+    // immediately, because nothing ever yanks it mid-walk. Skip the combat
+    // phase entirely for a tick where a loot walk is already committed and
+    // actually moving — the loot-phase block above re-evaluates every tick
+    // and either completes the pickup or, once movement genuinely ends
+    // without one, naturally falls through to combat again next tick.
+    if (approachCommitted && m_state == AutoHuntState::LootNearby)
+        return;
 
     // Stuck detection
     if (m_state == AutoHuntState::ApproachTarget
@@ -3112,7 +3237,9 @@ void BaseHuntPlugin::Update()
         spdlog::trace("[hunt-loot] No combat target, pathing to loot id={} type={} at ({},{})",
             loot->m_id, loot->m_idType, loot->m_pos.x, loot->m_pos.y);
         const bool startedMove = StartPathNearTarget(hero, map, loot->m_pos, kLootPathStopRange);
-        if (!startedMove)
+        if (startedMove)
+            RecordAction(RecordedActionType::LootJump, loot->m_id);
+        else
             m_lootMgr.RecordLootPickupAttempt(loot->m_id, now, settings);
         m_targetId = loot->m_id;
         SetState(AutoHuntState::LootNearby, startedMove ? "Jumping to loot" : "Settling on nearby loot");
@@ -4280,8 +4407,8 @@ void BaseHuntPlugin::RenderDebugSection()
         const bool useful = SpawnMemory::HasUsefulData(mid);
         ImGui::TextColored(useful ? ImVec4(0.4f, 1, 0.4f, 1)
                                   : ImVec4(0.6f, 0.6f, 0.6f, 1),
-            "spawn memory: %d buckets, %d observations, %d novel%s",
-            sm.buckets, sm.observations, sm.novelBuckets,
+            "spawn memory: %d buckets (%d w/ trusted density), %d observations, %d novel%s",
+            sm.buckets, sm.knownBuckets, sm.observations, sm.novelBuckets,
             useful ? " (steering exploration)" : " (still learning)");
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear map"))

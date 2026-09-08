@@ -467,12 +467,18 @@ bool MapGrid::Load(int mapId)
     return true;
 }
 
+namespace
+{
+    // Backing store for GetFileBackedGameMap()'s view, file-scope so
+    // MarkTileBlockedThisSession can reach the same instance to patch a
+    // single cell after the fact (see its own comment).
+    CGameMap         s_map;
+    std::vector<CellInfo> s_cells;
+    int              s_builtFor = -1;
+}
+
 CGameMap* GetFileBackedGameMap()
 {
-    static CGameMap         s_map;
-    static std::vector<CellInfo> s_cells;
-    static int              s_builtFor = -1;
-
     MapGrid* grid = GetCurrentMapGrid();
     if (!grid || !grid->IsLoaded())
         return nullptr;
@@ -501,6 +507,57 @@ CGameMap* GetFileBackedGameMap()
                      s_builtFor, w, h, (int)s_cells.size());
     }
     return &s_map;
+}
+
+void MarkTileBlockedThisSession(int x, int y)
+{
+    // Live-repro (Twin City bridge, 2026-09-04): the scene-overlay merge in
+    // ParseFile (see its header comment on the unverified mirroring
+    // assumption) can wrongly clear a tile's mask to walkable when the
+    // server actually rejects standing there. The pathfinder then finds the
+    // "shortest" route straight through it every single repath — since
+    // FindPath reads this same grid, nothing ever changes — and grinds on
+    // the identical failing jump for minutes. Rather than guess at fixing
+    // the mirroring logic blind, patch the one cell that live-proved itself
+    // wrong: this directly overrides the in-memory grid IsWalkable/CanJump/
+    // FindPath all read, so every consumer immediately routes around it.
+    // Session-local only (not written back to disk or MapGrid) — deliberately
+    // narrow, since a wrongly-BLOCKED tile would break routing that works
+    // today; naturally clears itself on the next map (re)load, when
+    // GetFileBackedGameMap() rebuilds s_cells from scratch.
+    if (s_builtFor < 0 || x < 0 || y < 0 || x >= s_map.m_sizeMap.iWidth || y >= s_map.m_sizeMap.iHeight)
+        return;
+    CellInfo& cell = s_cells[(size_t)y * (size_t)s_map.m_sizeMap.iWidth + (size_t)x];
+    if (cell.layer.mask == 1)
+        return;   // already blocked, or the grid was rebuilt out from under this
+    cell.layer.mask = 1;
+    spdlog::warn("[mapdata] map {} tile ({},{}) blacklisted this session — repeated stuck jump proved it not actually walkable",
+        s_builtFor, x, y);
+}
+
+void MarkTileWalkableThisSession(int x, int y)
+{
+    // Live-repro (Adventure Islands, 2026-09-05): the opposite failure from
+    // MarkTileBlockedThisSession above — (1017,1294), the map's own entry
+    // portal's landing tile (see gateway.cpp's MAP_ADV_TASK11 -> MAP_ADV_ISLANDS
+    // entry and the "Adventure Islands" named-destination anchor, both this
+    // exact coordinate), reads mask=1 (blocked) in the parsed grid even though
+    // the hero was unquestionably standing there alive. FindPath requires a
+    // walkable ORIGIN, so every route from this map failed at the very first
+    // step regardless of destination — travel to Adventure Islands 2, Backup
+    // City, and the hunt-zone return all failed identically for this one
+    // reason. Unlike the blocked-tile case, there is no ambiguity to wait
+    // out here: the hero's own live position is ground truth, not a jump
+    // outcome that could be lag — so this heals on first detection, not
+    // after a repeat. Session-local, resets on the next map (re)load.
+    if (s_builtFor < 0 || x < 0 || y < 0 || x >= s_map.m_sizeMap.iWidth || y >= s_map.m_sizeMap.iHeight)
+        return;
+    CellInfo& cell = s_cells[(size_t)y * (size_t)s_map.m_sizeMap.iWidth + (size_t)x];
+    if (cell.layer.mask == 0)
+        return;   // already walkable, or the grid was rebuilt out from under this
+    cell.layer.mask = 0;
+    spdlog::warn("[mapdata] map {} tile ({},{}) marked walkable this session — hero was standing there while the grid called it blocked",
+        s_builtFor, x, y);
 }
 
 MapGrid* GetCurrentMapGrid()

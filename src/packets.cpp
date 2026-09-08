@@ -1,4 +1,5 @@
 #include "packets.h"
+#include "action_recorder.h"
 #include "config.h"
 #include "game.h"
 #include "log.h"
@@ -201,6 +202,84 @@ static size_t BuildMsgActionPacket(const MsgActionPacket& packet, uint8_t* buf, 
     return static_cast<size_t>(off);
 }
 
+// =====================================================================
+// [DISCONNECT INVESTIGATION 2026-09-06] Action-rate instrumentation
+//
+// Read-only measurement, changes no behavior: rolling 1-second counters of
+// outgoing packet volume, logged at WARN so it survives the user's normal
+// warning-level operation without needing trace/debug — running this at
+// trace would reintroduce the exact confound the investigation flagged
+// (log.cpp's flush_on(debug) forces a synchronous disk flush on every jump's
+// existing [debug] log line, which measurably throttles the real action
+// cadence; a once-per-second WARN line does not).
+//
+// Hooked here rather than inside SendPacket() because TrackOutgoingPacket()
+// is called from HkSendMsgReal — the Detour on the game's own real SendMsg —
+// so it sees every packet actually placed on the wire regardless of which
+// internal code path produced it (this bot's own SendPacket() callers, or a
+// native game function that sends its own packet internally), giving a true
+// total instead of only what our own jump/walk helpers issue.
+// =====================================================================
+namespace {
+struct ActionRateWindow
+{
+    DWORD windowStartTick = 0;
+    int   totalPackets   = 0;
+    int   jumpPackets    = 0;
+    int   jumpTilesSum   = 0;
+    int   walkPackets    = 0;
+};
+ActionRateWindow g_actionRateWindow;
+constexpr DWORD kActionRateWindowMs = 1000;
+}
+
+static void TickActionRateWindow(uint16_t msgType, const uint8_t* data, size_t size)
+{
+    const DWORD now = GetTickCount();
+    if (g_actionRateWindow.windowStartTick == 0)
+        g_actionRateWindow.windowStartTick = now;
+
+    ++g_actionRateWindow.totalPackets;
+
+    if (msgType == kMsgActionPacketType) {
+        const std::vector<DecodedField> fields = DecodeVarintFields(data, size);
+        uint32_t mode = 0, walkX = 0, walkY = 0, jumpX = 0, jumpY = 0;
+        for (const DecodedField& f : fields) {
+            switch (f.fieldNumber) {
+                case 1:  mode  = f.value; break;   // packet.mode
+                case 4:  walkX = f.value; break;   // packet.data1 (walk destX)
+                case 5:  walkY = f.value; break;   // packet.data2 (walk destY)
+                case 10: jumpX = f.value; break;   // packet.data3 (jump destX)
+                case 11: jumpY = f.value; break;   // packet.data4 (jump destY)
+                default: break;
+            }
+        }
+        if (mode == kMsgActionModeJump) {
+            ++g_actionRateWindow.jumpPackets;
+            if (CHero* hero = Game::GetHero()) {
+                g_actionRateWindow.jumpTilesSum += CGameMap::TileDist(
+                    hero->m_posMap.x, hero->m_posMap.y, (int)jumpX, (int)jumpY);
+            }
+        } else if (mode == kMsgActionModeWalk) {
+            ++g_actionRateWindow.walkPackets;
+            (void)walkX; (void)walkY;
+        }
+    }
+
+    if (now - g_actionRateWindow.windowStartTick >= kActionRateWindowMs) {
+        void* conn = GameCall::ResolveConnectionObject();
+        // See action_recorder.h: this is a fresh re-query done at each
+        // RecordAction() call, not a value cached from earlier in a tick.
+        const int phantomActions = ConsumePhantomActionCountThisSecond();
+        spdlog::warn("[actionrate] packets/s={} jumps/s={} jumpTiles/s={} walks/s={} phantomActions/s={} conn=0x{:X}",
+            g_actionRateWindow.totalPackets, g_actionRateWindow.jumpPackets,
+            g_actionRateWindow.jumpTilesSum, g_actionRateWindow.walkPackets,
+            phantomActions, (uintptr_t)conn);
+        g_actionRateWindow = ActionRateWindow{};
+        g_actionRateWindow.windowStartTick = now;
+    }
+}
+
 static void TrackOutgoingPacket(const uint8_t* data, size_t size)
 {
     if (!data || size < 4)
@@ -211,6 +290,15 @@ static void TrackOutgoingPacket(const uint8_t* data, size_t size)
         g_lastVipTeleportTick = GetTickCount();
         spdlog::debug("[packets] VIP teleport packet sent");
     }
+
+    // [DISCONNECT INVESTIGATION 2026-09-07] feeds action_recorder's outbound
+    // ring (last few packets actually sent) — see action_recorder.h. This
+    // hook already sees every real outbound send regardless of origin, so
+    // it's the true "what did we send right before" answer, not just what
+    // our own jump/walk helpers issued.
+    RecordOutboundPacket(msgType, (uint16_t)size);
+
+    TickActionRateWindow(msgType, data, size);
 
     if (g_packetLog.enabled) {
         PacketEntry entry;
@@ -311,7 +399,11 @@ bool SendPacket(const uint8_t* data, size_t size)
     void* conn = GameCall::ResolveConnectionObject();
     if (!conn) {
         static bool warned = false;
-        if (!warned) { spdlog::error("[packets] SendPacket: failed to resolve connection object"); warned = true; }
+        if (!warned) {
+            spdlog::error("[packets] SendPacket: failed to resolve connection object");
+            DumpFlightRecorder();
+            warned = true;
+        }
         return false;
     }
 

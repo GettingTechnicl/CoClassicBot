@@ -5,6 +5,7 @@
 #include "hwid_spoof.h"
 #include "hooks.h"
 #include "packets.h"
+#include "net_recv_hook.h"
 #include "game.h"
 #include "config.h"
 #include "plugin_mgr.h"
@@ -163,6 +164,7 @@ static DWORD WINAPI InitThread(LPVOID)
         SendDiscordNotification(buf);
     });
     InitPacketHook();
+    InitNetRecvHook();
 
     // Small extra delay ensures the game's D3D10 swapchain is stable
     Sleep(1000);
@@ -195,6 +197,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         SaveConfig();
         ShutdownOverlay();
         CleanupPacketHook();
+        CleanupNetRecvHook();
         CleanupHooks();
         HwidSpoof::Shutdown();
         spdlog::info("[shutdown] Cleanup complete");

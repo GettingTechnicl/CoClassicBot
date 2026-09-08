@@ -316,6 +316,18 @@ protected:
     // settings.decisionThrottleMs. See RenderAdvancedSection / Update().
     DWORD m_lastDecisionTick = 0;
 
+    // Live-repro (Twin City, 2026-09-04): AutoHuntState::Failed has no
+    // dedicated handler — whatever the SAME tick's fall-through logic would
+    // normally do (e.g. NeedTownRun -> BeginTravelToMarket) just runs again
+    // unconditionally, with nothing that changed since the last failure. When
+    // the underlying cause doesn't clear itself instantly (no gateway route
+    // found, in this case), that reproduces the identical failure hundreds of
+    // times a second — 2013 to 2867 in one log is the SAME "Travel To Market
+    // <-> Failed" flip inside 1.5 seconds. Sets on every fresh entry into
+    // Failed (see SetState); Update() checks it to enforce a cooldown before
+    // letting anything retry.
+    DWORD m_lastFailedEnterTick = 0;
+
     // Session 10: last time TryRandomWalk() fired (or gave up trying), for
     // settings.randomWalkIntervalMs pacing.
     DWORD m_lastRandomWalkTick = 0;
@@ -387,6 +399,17 @@ protected:
     // progress — see the comment at its use site in the loot-priority block.
     OBJID m_lootCommitId = 0;
     DWORD m_lootCommitUntilTick = 0;
+
+    // Live-repro (Kinux, 2026-09-06): tracks how long the CURRENT best-loot
+    // item has sat at dist==0 without ever completing pickup — see the
+    // [DIST-0 STUCK-LOOT FIX] comment at its use site. dist==0 failures were
+    // deliberately exempted from the attempt-limit/ignore mechanism (Session
+    // 13's false-stuck fix), but that left a genuinely-stuck dist==0 item
+    // with NO escape hatch at all: crash logs showed it busy-looping
+    // "Failed to path to loot" every decision tick for minutes, the hero
+    // completely frozen, right up until the game disconnected.
+    OBJID m_stuckLootId = 0;
+    DWORD m_stuckLootSinceTick = 0;
 
     Position m_pendingJumpDest = {};
     DWORD m_pendingJumpTick = 0;

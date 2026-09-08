@@ -1,4 +1,5 @@
 #include "travel_plugin.h"
+#include "action_recorder.h"
 #include "pathfinder.h"
 #include "game.h"
 #include "CItem.h"
@@ -8,6 +9,7 @@
 #include "hunt_settings.h"
 #include "hunt_intervals.h"
 #include "log.h"
+#include "mapdata.h"
 #include "imgui.h"
 #include <algorithm>
 #include <cstdio>
@@ -168,6 +170,15 @@ void TravelPlugin::BeginFinalPathfind(CHero* hero, CGameMap* map)
     }
 
     auto tilePath = map->FindPath(hx, hy, tx, ty, 1000000);
+    if (tilePath.empty()) {
+        // See the identical check in the PathfindToGateway handler: the
+        // hero's own live position reading as unwalkable is grid data being
+        // wrong, not a race worth waiting out — heal it and retry once.
+        if (!map->IsWalkable(hx, hy)) {
+            MarkTileWalkableThisSession(hx, hy);
+            tilePath = map->FindPath(hx, hy, tx, ty, 1000000);
+        }
+    }
     if (tilePath.empty()) {
         snprintf(m_statusText, sizeof(m_statusText), "No path to destination (%d,%d)", tx, ty);
         SetState(TravelState::Failed);
@@ -487,12 +498,29 @@ void TravelPlugin::Update()
 
         auto tilePath = map->FindPath(hx, hy, tx, ty, 1000000);
         if (tilePath.empty()) {
+            const bool heroWalkable = map->IsWalkable(hx, hy);
             spdlog::error("[travel] FindPath returned empty! walkable(hero)={} walkable(target)={}",
-                   map->IsWalkable(hx, hy), map->IsWalkable(tx, ty));
-            snprintf(m_statusText, sizeof(m_statusText), "No path to gateway (%d,%d)->(%d,%d)",
-                     hx, hy, tx, ty);
-            SetState(TravelState::Failed);
-            return;
+                   heroWalkable, map->IsWalkable(tx, ty));
+
+            // Live-repro (Adventure Islands, 2026-09-05): the hero's own live
+            // position reading as unwalkable is not something a jump-timing
+            // race could cause — it means the parsed grid is simply wrong at
+            // this exact tile (the map's own entry-portal landing spot, in
+            // that case), and every route from here fails at the first step
+            // no matter the destination. Ground truth wins immediately, no
+            // need to see it twice: heal the one cell and retry once before
+            // giving up.
+            if (!heroWalkable) {
+                MarkTileWalkableThisSession(hx, hy);
+                tilePath = map->FindPath(hx, hy, tx, ty, 1000000);
+            }
+
+            if (tilePath.empty()) {
+                snprintf(m_statusText, sizeof(m_statusText), "No path to gateway (%d,%d)->(%d,%d)",
+                         hx, hy, tx, ty);
+                SetState(TravelState::Failed);
+                return;
+            }
         }
 
         auto waypoints = map->SimplifyPath(tilePath);
@@ -633,6 +661,7 @@ void TravelPlugin::Update()
 
         spdlog::info("[travel] Activating NPC entity {} at ({},{})",
                npc->GetID(), npc->m_posMap.x, npc->m_posMap.y);
+        RecordAction(RecordedActionType::NpcInteract, npc->GetID());
         hero->ActivateNpc(npc->GetID());
 
         m_answerIndex = 0;

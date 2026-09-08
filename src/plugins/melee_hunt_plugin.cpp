@@ -1,4 +1,5 @@
 #include "melee_hunt_plugin.h"
+#include "action_recorder.h"
 #include "hunt_intervals.h"
 #include "hunt_targeting.h"
 #include "game.h"
@@ -468,6 +469,8 @@ void MeleeHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Aut
             m_committedTargetId, m_hitsOnCommittedTarget, (std::max)(1, settings.meleeMinHitsPerTarget),
             approachPos.x, approachPos.y, hero->m_posMap.x, hero->m_posMap.y,
             moveDist, approachDist, clumpSize, startedWalk ? "walk" : "jump");
+        if (startedPath)
+            RecordAction(RecordedActionType::JumpAtMonster, target->GetID());
         if (startedPath) {
             SetState(AutoHuntState::ApproachTarget,
                 startedWalk
@@ -501,6 +504,7 @@ void MeleeHuntPlugin::HandleCombatApproach(CHero* hero, CGameMap* map, const Aut
             m_committedTargetId, m_hitsOnCommittedTarget, (std::max)(1, settings.meleeMinHitsPerTarget),
             hero->m_posMap.x, hero->m_posMap.y, moveDist, clumpSize, startedWalk ? "walk" : "path");
         if (startedPath) {
+            RecordAction(RecordedActionType::JumpAtMonster, target->GetID());
             SetState(AutoHuntState::ApproachTarget,
                 startedWalk ? "Walking to target" : "Closing distance to target");
         } else {
@@ -547,6 +551,7 @@ void MeleeHuntPlugin::HandleCombatAttack(CHero* hero, CGameMap* map, const AutoH
         Pathfinder::Get().Stop();
 
     if (now - m_lastAttackTick >= nextAttackDelay) {
+        RecordAction(RecordedActionType::AttackMonster, target->GetID());
         hero->AttackTarget(target->GetID(), target->m_posMap);
         m_lastAttackTick = now;
         NoteMeleeAttackAttempt(target->GetID());

@@ -82,4 +82,13 @@ private:
     std::function<int()> m_jumpDistanceCapProvider;
     DWORD m_lastProgressTick = 0;
     uint32_t m_generation = 0;
+
+    // STUCK-timeout repeat tracking (see the STUCK block in Update()): a
+    // scene-overlay tile that reads walkable but genuinely isn't makes every
+    // repath find the identical failing jump again, since the underlying
+    // grid never changes. Two STUCK timeouts in a row targeting the EXACT
+    // same tile is treated as proof the grid is wrong there, not bad luck —
+    // see MarkTileBlockedThisSession.
+    Position m_lastStuckWaypoint = {};
+    int m_stuckWaypointRepeatCount = 0;
 };
