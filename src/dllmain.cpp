@@ -128,11 +128,42 @@ static DWORD WINAPI InitThread(LPVOID)
     // Poll for login completion - hero pointer exists early, but UID
     // is only assigned once the server confirms the login.
     spdlog::info("[init] Waiting for login...");
-    while (true) {
+    // Distinct exit code so injector/main.cpp can tell "gave up waiting for
+    // login" apart from any other process exit (crash, kill, etc.) and give
+    // it its own backoff/retry handling -- see consecutiveStuckLogins there.
+    // Must match injector/main.cpp's kStuckLoginExitCode.
+    constexpr UINT kStuckLoginExitCode = 77;
+    // Bounded escape hatch: live-observed (2026-09-08) that on some fast
+    // reconnects shortly after a disconnect, the hero's UID never gets
+    // assigned even though Entities::Start() above is already showing a
+    // live, populated game world -- the login handshake itself appears to
+    // stall or get rejected for this specific account/timing, independent
+    // of general world-state delivery. Before this fix, this loop spun
+    // forever: the process sat alive but stuck, and the ONLY thing that
+    // ever noticed was the launcher's own 60s marker-confirmation timeout
+    // followed by a window-title-based reconnect check up to 5s later --
+    // slow and indirect, and it never engaged RunAccountSupervisionLoop's
+    // fast-crash give-up counter since the process technically never
+    // exited. 60s matches that same existing launcher-side timeout rather
+    // than introducing a tighter bound -- a genuinely slow but successful
+    // login has been observed taking as long as ~45s, so anything much
+    // shorter risks killing a login that would have succeeded.
+    constexpr DWORD kHeroWaitTimeoutMs = 60000;
+    const DWORD heroWaitStart = GetTickCount();
+    bool heroReady = false;
+    while (GetTickCount() - heroWaitStart < kHeroWaitTimeoutMs) {
         CHero* hero = Game::GetHero();
-        if (hero && hero->GetID() > 0)
+        if (hero && hero->GetID() > 0) {
+            heroReady = true;
             break;
+        }
         Sleep(500);
+    }
+    if (!heroReady) {
+        spdlog::error("[init] Hero UID never assigned within {}ms -- login handshake appears "
+            "stuck/rejected. Terminating so the launcher can relaunch.", kHeroWaitTimeoutMs);
+        TerminateProcess(GetCurrentProcess(), kStuckLoginExitCode);
+        return 0;  // unreachable in practice -- TerminateProcess tears down this thread too
     }
     WriteLoggedInMarker();
     spdlog::info("[init] Wrote login-confirmed marker: {}", LoggedInMarkerPath());

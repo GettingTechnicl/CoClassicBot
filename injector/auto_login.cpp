@@ -132,6 +132,30 @@ HWND FindLoginWindow(DWORD targetPid, uint32_t timeoutMs)
     return nullptr;
 }
 
+// Fix: minimize-on-launch. Same PID-filtered EnumWindows pattern as
+// FindLoginWindowOnce above, but without the title filter -- once logged
+// in, the game's top-level window no longer carries kLoginWindowTitle, so
+// matching on PID + IsWindowVisible + "not owned by another window" (skips
+// tooltips/child popups) is the general way to find it.
+struct FindMainWindowContext
+{
+    DWORD targetPid = 0;
+    HWND  found = nullptr;
+};
+
+BOOL CALLBACK EnumMainWindowProc(HWND hwnd, LPARAM lParam)
+{
+    auto* ctx = reinterpret_cast<FindMainWindowContext*>(lParam);
+    DWORD windowPid = 0;
+    GetWindowThreadProcessId(hwnd, &windowPid);
+    if (windowPid != ctx->targetPid)
+        return TRUE;
+    if (!IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) != nullptr)
+        return TRUE;  // skip invisible/owned windows
+    ctx->found = hwnd;
+    return FALSE;  // stop -- found it
+}
+
 // OpenInputDesktop fails outright when the session is on a secure desktop
 // (Winlogon lock screen, UAC prompt, Ctrl+Alt+Del screen) rather than the
 // normal interactive one — and even when it succeeds, the returned desktop's
@@ -377,6 +401,19 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t targetPid, uint32_t 
 bool IsAtLoginScreen(uint32_t targetPid)
 {
     return FindLoginWindowOnce(static_cast<DWORD>(targetPid)) != nullptr;
+}
+
+bool MinimizeGameWindow(uint32_t targetPid)
+{
+    FindMainWindowContext ctx{static_cast<DWORD>(targetPid), nullptr};
+    EnumWindows(EnumMainWindowProc, reinterpret_cast<LPARAM>(&ctx));
+    if (!ctx.found)
+        return false;
+    // ShowWindow's return value reflects the window's PRIOR visibility
+    // state, not whether the minimize succeeded -- not a success check,
+    // just calling it. We already confirmed the window exists above.
+    ShowWindow(ctx.found, SW_MINIMIZE);
+    return true;
 }
 
 }  // namespace AutoLogin

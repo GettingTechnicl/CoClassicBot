@@ -85,6 +85,7 @@
     <ClCompile Include="src\itemtype.cpp" />
     <ClCompile Include="src\CEntitySet.cpp" />
     <ClCompile Include="src\packets.cpp" />
+    <ClCompile Include="src\net_recv_hook.cpp" />
     <ClCompile Include="src\hunt_settings.cpp" />
     <ClCompile Include="src\hunt_targeting.cpp" />
     <ClCompile Include="src\hunt_town.cpp" />
@@ -110,6 +111,8 @@
     <ClCompile Include="src\entities.cpp" />
     <ClCompile Include="src\mapdata.cpp" />
     <ClCompile Include="src\map_items.cpp" />
+    <ClCompile Include="src\action_recorder.cpp" />
+    <ClCompile Include="src\registries.cpp" />
     <ClCompile Include="src\spawn_memory.cpp" />
     <ClCompile Include="src\mem_stats.cpp" />
     <ClCompile Include="src\map_probe.cpp" />
@@ -170,6 +173,7 @@
     <ClInclude Include="src\pathfinder.h" />
     <ClInclude Include="src\overlay.h" />
     <ClInclude Include="src\packets.h" />
+    <ClInclude Include="src\net_recv_hook.h" />
     <ClInclude Include="src\plugins\plugin.h" />
     <ClInclude Include="src\plugins\plugin_mgr.h" />
     <ClInclude Include="src\plugins\base_hunt_plugin.h" />
@@ -187,6 +191,8 @@
     <ClInclude Include="src\entities.h" />
     <ClInclude Include="src\mapdata.h" />
     <ClInclude Include="src\map_items.h" />
+    <ClInclude Include="src\action_recorder.h" />
+    <ClInclude Include="src\registries.h" />
     <ClInclude Include="src\spawn_memory.h" />
     <ClInclude Include="src\mem_stats.h" />
     <ClInclude Include="src\map_probe.h" />

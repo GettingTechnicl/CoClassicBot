@@ -1368,7 +1368,7 @@ static void LoadSharedSections(const char* file)
     char miscMentionBuf[4096] = {};
     ReadString(file, "Misc", "mentionItemIds", "", miscMentionBuf, sizeof(miscMentionBuf));
     ParseU32List(miscMentionBuf, misc.mentionItemIds);
-    misc.logLevel = ReadInt(file, "Misc", "logLevel", 0);
+    misc.logLevel = ReadInt(file, "Misc", "logLevel", 3);
     Log::SetLevel(misc.logLevel);
 
     char activeHuntProfile[128] = {};

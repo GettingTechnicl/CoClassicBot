@@ -1319,6 +1319,22 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
     constexpr int kMaxFastCrashes = 3;
     constexpr DWORD kFastCrashThresholdMs = 30000;
 
+    // Must match src/dllmain.cpp's kStuckLoginExitCode.
+    constexpr UINT kStuckLoginExitCode = 77;
+    // Stuck-login handling is retry-FOREVER-with-backoff, deliberately NOT
+    // give-up: live-observed (overnight 2026-09-08/09) that a stuck login is
+    // usually transient/environmental (e.g. wrong-window input), so a later
+    // attempt succeeds -- permanently sidelining an account over this would
+    // be wrong. The first few attempts relaunch immediately, same as any
+    // other crash; from the 4th consecutive stuck-login onward, back off to
+    // a flat 5-minute wait before each retry so a persistently-stuck account
+    // doesn't churn indefinitely at full speed. This is the same
+    // bounded-escape-hatch lesson as the 325-attempt overnight login storm --
+    // that incident's problem was retrying with NO backoff, not that it
+    // kept retrying at all.
+    constexpr int kStuckLoginBackoffThreshold = 3;
+    constexpr DWORD kStuckLoginBackoffMs = 300000;
+
     // Session 10: wraps the original single-shot launch+inject sequence in a
     // supervise-and-relaunch loop. Only actually loops when an account was
     // selected (params.haveProfile) — with no saved account this behaves
@@ -1361,6 +1377,18 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
         const DWORD pid = pi.dwProcessId;
         session->gamePid = pid;
         printf("[+] Started %s (PID %lu)\n", GAME_EXE, pid);
+
+        // Fix B (race 2): replace the tracked liveness handle for THIS
+        // account before this iteration's pi.hProcess gets closed later in
+        // the loop -- see lastGameHandle's own comment in account_session.h.
+        {
+            HANDLE prevHandle = session->lastGameHandle.exchange(nullptr);
+            if (prevHandle) CloseHandle(prevHandle);
+            HANDLE dup = nullptr;
+            if (DuplicateHandle(GetCurrentProcess(), pi.hProcess, GetCurrentProcess(),
+                                 &dup, SYNCHRONIZE, FALSE, 0))
+                session->lastGameHandle = dup;
+        }
 
         // Write the deferred resume_hunt marker (see AccountSession::
         // pendingResumeMarker) now that this relaunch's real PID exists.
@@ -1411,7 +1439,17 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
         // game keeps running and the user can finish logging in by hand.
         if (params.haveProfile) {
             session->state = SessionState::LoggingIn;
-            PerformLoginAndWaitForConfirmation(session, params, pid, /*isReconnect=*/false);
+            const bool loginConfirmed =
+                PerformLoginAndWaitForConfirmation(session, params, pid, /*isReconnect=*/false);
+            // Minimize only on a CONFIRMED login -- a failed/slow login
+            // deliberately stays visible so the user can finish it by hand
+            // (see the comment above). Runs on every loop iteration, so
+            // this covers auto-reconnect relaunches the same as the very
+            // first launch. Helps this VM specifically -- no GPU, and a
+            // visible D3D window appears to cost far more to render than a
+            // minimized one.
+            if (loginConfirmed && !AutoLogin::MinimizeGameWindow(pid))
+                printf("[*] Could not find the game window to minimize (pid=%lu).\n", pid);
         }
 
         // Original single-shot proxy flow (no saved account): restore
@@ -1467,7 +1505,20 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
                     session->state = SessionState::Crashed;
                     session->SetStatus("Disconnected — relaunching");
                     TerminateProcess(pi.hProcess, 0);
-                    WaitForSingleObject(pi.hProcess, 10000);
+                    // Fix B (race 1): wait long enough to actually confirm the OS
+                    // killed this process before looping back to CreateProcessA for
+                    // the same account -- a Themida-heavy client mid-autohunt can
+                    // take 30-60s+ to tear down (see the Exit path's own comment
+                    // below), and the old bounded 10s wait let the loop relaunch
+                    // while the prior process might still be alive. Bounded (not
+                    // INFINITE) so a genuinely stuck process can't hang supervision
+                    // forever -- logged loudly and relaunches anyway if it happens.
+                    constexpr DWORD kTerminateWaitMs = 90000;
+                    if (WaitForSingleObject(pi.hProcess, kTerminateWaitMs) == WAIT_TIMEOUT) {
+                        printf("[!] WARNING: previous game process (PID %lu) did not exit "
+                               "within %lus of TerminateProcess -- relaunching anyway; a "
+                               "duplicate process may still be alive.\n", pid, kTerminateWaitMs / 1000);
+                    }
                     break;  // falls through to the relaunch path below
                 }
             }
@@ -1504,6 +1555,9 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
             TerminateProcess(pi.hProcess, 0);
         }
 
+        DWORD exitCode = 0;
+        GetExitCodeProcess(pi.hProcess, &exitCode);
+
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
 
@@ -1530,6 +1584,27 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
         }
 
         session->state = SessionState::Crashed;
+
+        if (exitCode == kStuckLoginExitCode) {
+            ++session->consecutiveStuckLogins;
+            if (session->consecutiveStuckLogins > kStuckLoginBackoffThreshold) {
+                printf("[!] Login handshake stuck %d times in a row — backing off %lu minute(s) "
+                    "before the next attempt (retrying indefinitely, not giving up).\n",
+                    session->consecutiveStuckLogins, kStuckLoginBackoffMs / 60000);
+                session->SetStatus("Login stuck — retrying in 5 min");
+                if (WaitForSingleObject(session->stopEvent, kStuckLoginBackoffMs) == WAIT_OBJECT_0) {
+                    printf("[*] Stop requested during stuck-login backoff — ending supervision.\n");
+                    session->state = SessionState::Idle;
+                    break;
+                }
+            } else {
+                printf("[!] Login handshake stuck (stuck-login %d) — relaunching.\n",
+                    session->consecutiveStuckLogins);
+            }
+        } else {
+            session->consecutiveStuckLogins = 0;
+        }
+
         const DWORD uptimeMs = GetTickCount() - launchTick;
         if (uptimeMs < kFastCrashThresholdMs) {
             ++session->consecutiveFastCrashes;
@@ -1801,12 +1876,32 @@ void HandleLoginClick(AccountSession* session)
     if (IsSessionBusy(*session))
         return;  // shouldn't be reachable (button would read "Exit"), guard anyway
 
+    // Fix B (race 2): the row can already read "Login" again (IsSessionBusy
+    // false) while the PREVIOUS run's game process is still alive -- Exit
+    // intentionally does NOT wait for the OS to confirm teardown (see the
+    // Exit path's own comment in RunAccountSupervisionLoop), and
+    // ReapFinishedSession only waits for the worker THREAD, not the game
+    // process itself. Starting a second live process for the same account
+    // here is exactly the "two processes for one account" bug -- a server
+    // single-session kick and torn .ini reads. Not blocking the click (ship
+    // small, watch the log first) -- just making the overlap loudly visible.
+    // Safe to read lastGameHandle here without additional synchronization
+    // ONLY because we're past the IsSessionBusy guard above: that guard is
+    // what guarantees the worker thread (the sole writer) isn't concurrently
+    // mutating it. Don't remove/weaken that guard without reconsidering this.
+    HANDLE prevHandle = session->lastGameHandle.load();
+    if (prevHandle && WaitForSingleObject(prevHandle, 0) == WAIT_TIMEOUT) {
+        printf("[!] WARNING: login proceeding for an account whose previous game "
+               "process (PID %lu) still appears to be running.\n", session->gamePid.load());
+    }
+
     if (!session->stopEvent)
         session->stopEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
     ResetEvent(session->stopEvent);
     session->killGameOnStop = false;
     session->finished = false;
     session->consecutiveFastCrashes = 0;
+    session->consecutiveStuckLogins = 0;
     session->pendingResumeMarker = false;
     session->state = SessionState::Launching;
     // Clears any error message left over from a previous failed run (e.g.
@@ -1933,6 +2028,8 @@ void HandleRemoveClick(HWND hwnd, size_t index)
 
     if (session.stopEvent)
         CloseHandle(session.stopEvent);
+    if (HANDLE h = session.lastGameHandle.load())
+        CloseHandle(h);
     g_sessions.erase(g_sessions.begin() + static_cast<long>(index));
     SaveSessionsToCredentials();
     RebuildRows(hwnd);

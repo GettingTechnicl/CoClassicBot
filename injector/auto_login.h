@@ -75,4 +75,11 @@ bool PerformLogin(const AutoLoginRequest& request, uint32_t targetPid, uint32_t 
 // See RunAccountSupervisionLoop's use of this in injector/main.cpp.
 bool IsAtLoginScreen(uint32_t targetPid);
 
+// Finds the (single, expected) top-level visible window belonging to
+// targetPid and minimizes it. Unlike PerformLogin/IsAtLoginScreen, this is
+// NOT scoped to the login-screen title -- once logged in, the window's
+// title is no longer kLoginWindowTitle, so this matches on PID + visibility
+// alone. Returns false if no such window could be found (nothing to do).
+bool MinimizeGameWindow(uint32_t targetPid);
+
 }  // namespace AutoLogin

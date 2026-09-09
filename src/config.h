@@ -24,10 +24,11 @@ struct MiscSettings
     std::vector<uint32_t> notifyItemIds;
     std::vector<uint32_t> mentionItemIds;  // subset of notifyItemIds that also @mention
 
-    // spdlog::level::level_enum value (trace=0 .. off=6). Defaults to trace to
-    // match the previous hardcoded behavior; most users should turn this down
-    // — trace generates tens of thousands of lines in a few minutes of play.
-    int logLevel = 0;
+    // spdlog::level::level_enum value (trace=0 .. off=6). Defaults to warn (3)
+    // so a config read failure fails toward a quiet, disk-safe setting instead
+    // of trace, which throttles I/O and has silently invalidated whole
+    // disconnect-investigation sessions (see docs/investigation/00_HANDOFF_STATE.md §2).
+    int logLevel = 3;
 };
 
 struct TravelSettings

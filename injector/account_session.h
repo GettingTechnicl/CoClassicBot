@@ -49,6 +49,18 @@ struct AccountSession
     std::atomic<SessionState> state{SessionState::Idle};
     std::atomic<DWORD> gamePid{0};
 
+    // Fix B (race 2): a duplicated, SYNCHRONIZE-only handle to the most
+    // recently launched game process for this account. Kept specifically so
+    // a later Login click can probe genuine liveness of the PRIOR run's
+    // process. gamePid alone isn't enough for this: RunAccountSupervisionLoop
+    // closes its own pi.hProcess every iteration, and re-opening by bare PID
+    // afterward risks Windows having recycled that PID onto some unrelated
+    // process by the time we check -- a duplicated HANDLE refers to the exact
+    // kernel object and can't be confused by PID reuse. Only ever
+    // written/replaced by this session's own worker thread; the UI thread
+    // only ever reads it via a non-mutating WaitForSingleObject(..., 0) probe.
+    std::atomic<HANDLE> lastGameHandle{nullptr};
+
     // Manual-reset. Signaled to ask the worker thread to stop supervising.
     HANDLE stopEvent = nullptr;
 
@@ -66,6 +78,14 @@ struct AccountSession
     // session's own worker thread, never the UI thread, so plain (not
     // atomic) storage is correct here.
     int  consecutiveFastCrashes = 0;
+    // Separate from consecutiveFastCrashes on purpose: a stuck-login exit
+    // (src/dllmain.cpp's kHeroWaitTimeoutMs) always has uptime well above
+    // kFastCrashThresholdMs, so it would never trip the fast-crash counter --
+    // this one is keyed on the exit CODE, not uptime. Uncapped by design:
+    // retries forever with backoff after a few fast attempts rather than
+    // giving up, since these failures are usually transient/environmental.
+    // See its use in main.cpp.
+    int  consecutiveStuckLogins = 0;
     bool pendingResumeMarker = false;
 
     mutable std::mutex statusMutex;
