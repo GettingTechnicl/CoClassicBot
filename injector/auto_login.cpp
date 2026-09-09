@@ -307,12 +307,44 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
         // function.
         std::lock_guard<std::mutex> lock(g_sendInputMutex);
 
-        if (ForceForegroundWindow(loginWnd))
-            printf("[auto-login] Login window confirmed foreground.\n");
-        else
-            printf("[auto-login] WARNING: login window did NOT become foreground — "
-                "keystrokes will likely go to the wrong window.\n");
+        // Credential-leak fix (2026-09-09, live-observed): a failure here
+        // used to just warn and fall through to typing anyway -- refusing
+        // instead, since a silent failure means every keystroke below goes
+        // to the wrong window. Left as an unconditional call (not routed
+        // through EnsureForeground below) on purpose: this is the
+        // well-tested happy-path structure, and re-forcing an
+        // already-foreground window is harmless, so there's no reason to
+        // skip it here the way EnsureForeground's early-return does for the
+        // two NEW gates below.
+        if (!ForceForegroundWindow(loginWnd)) {
+            printf("[auto-login] ABORTED: login window did not become foreground -- refusing to "
+                "type credentials into an unconfirmed window.\n");
+            return false;
+        }
+        printf("[auto-login] Login window confirmed foreground.\n");
         Sleep(200);
+
+        // Foreground was previously checked ONCE here, then two SendText
+        // calls fired ~1.5s later (below) with no re-check -- if focus got
+        // stolen in between (RDP quirks, the user clicking another window),
+        // the credentials went wherever WAS focused instead. This gates
+        // each sensitive SendText on a fresh check, with exactly one
+        // bounded re-assertion attempt (not an unbounded retry) so a
+        // one-frame focus blip doesn't burn a full relaunch/backoff cycle.
+        // Tab/Enter stay unguarded -- not sensitive if mistargeted.
+        auto EnsureForeground = [&](const char* stage) -> bool {
+            if (GetForegroundWindow() == loginWnd)
+                return true;
+            printf("[auto-login] Focus lost before %s -- re-asserting foreground once...\n", stage);
+            if (ForceForegroundWindow(loginWnd)) {
+                Sleep(100);
+                if (GetForegroundWindow() == loginWnd)
+                    return true;
+            }
+            printf("[auto-login] ABORTED: could not confirm foreground before %s -- refusing "
+                "to send credentials to the wrong window.\n", stage);
+            return false;
+        };
 
         // Multi-account manager support: reconnecting after an in-game
         // disconnect shows an "Error: Connection with the server is
@@ -341,11 +373,15 @@ bool PerformLoginViaSendInput(HWND loginWnd, const AutoLoginRequest& request, ui
         // post-Tab delays well past the ~100ms that was dropped, with margin.
         SendKey(VK_TAB);
         Sleep(1000);
+        if (!EnsureForeground("the username could be typed"))
+            return false;
         SendText(request.username);
         printf("[auto-login] Username typed.\n");
 
         SendKey(VK_TAB);
         Sleep(500);
+        if (!EnsureForeground("the password could be typed"))
+            return false;
         SendText(request.password);
         printf("[auto-login] Password typed.\n");
 
