@@ -26,6 +26,7 @@
 #include "credentials.h"
 #include "auto_login.h"
 #include "account_session.h"
+#include "../src/msg_types.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -297,7 +298,28 @@ public:
             return;
 
         std::ostringstream entry;
-        entry << FormatPrefix(connectionId) << direction << " " << size << " bytes\n";
+        entry << FormatPrefix(connectionId) << direction << " " << size << " bytes";
+
+        // Best-effort label: if this chunk starts with a plausible TQ
+        // [u16 size][u16 type] header, name the type. This project's own
+        // kMsgActionPacketType (packets.cpp, 0x3F2=1010) matches the CO
+        // Development Wiki's "MsgAction" exactly, so the header shape and
+        // ID space are trusted here even though the crypto layer is NOT
+        // confirmed to match stock TQ protocol -- see
+        // docs/investigation/CONNECTION_DECIPHER_PREP.md. A raw TCP chunk
+        // can start mid-packet or span several packets, so a match is a
+        // hint for whoever's reading the log, not a guarantee this chunk
+        // IS that one packet.
+        if (size >= 4) {
+            const uint16_t declaredSize = static_cast<uint16_t>(data[0] | (data[1] << 8));
+            const uint16_t msgType = static_cast<uint16_t>(data[2] | (data[3] << 8));
+            if (const char* name = MsgTypeName(msgType)) {
+                entry << "  [hdr: size=" << declaredSize << " type=0x"
+                      << std::hex << std::setw(4) << std::setfill('0') << msgType << std::dec
+                      << " (" << name << ")]";
+            }
+        }
+        entry << "\n";
 
         for (size_t offset = 0; offset < size; offset += 16) {
             entry << "  " << std::setw(6) << std::setfill('0') << std::hex << offset << "  ";
@@ -1059,8 +1081,13 @@ private:
             m_logger->LogEvent(connectionId, "SOCKS5 tunnel established");
         m_establishedTunnel.store(true);
 
+        // [CONNECTION-DECIPHER 2026-09-18] Was `nullptr` here -- only the
+        // outbound direction was ever logged. The server->client direction
+        // carries the handshake response (DH params, server public key per
+        // Comet's MsgHandshake shape), which is exactly what this capture
+        // needs -- log both directions.
         std::thread forward(PumpTraffic, client, upstream, m_logger, connectionId, "client->target");
-        std::thread backward(PumpTraffic, upstream, client, nullptr, connectionId, "target->client");
+        std::thread backward(PumpTraffic, upstream, client, m_logger, connectionId, "target->client");
 
         forward.join();
         backward.join();
@@ -1936,7 +1963,21 @@ void HandleLoginClick(AccountSession* session)
     params.gamePathStr = gamePathStr;
     params.gameDir = gameDir;
     params.dllStr = dllPath.string();
-    params.options.m_killSwitch = true;
+    // [CONNECTION-DECIPHER 2026-09-18] Disarmed for now -- Socks5Relay's
+    // fail-closed trigger fires on ANY established-tunnel closing
+    // (HandleClient's `if (m_establishedTunnel.load()) TriggerFailClosed(...)`),
+    // with no way to distinguish a genuine mid-game proxy failure from the
+    // account server's own normal disconnect-after-handoff (the client
+    // authenticates against the account server, gets told the real game
+    // server's address, then disconnects and reconnects there separately --
+    // completely standard, not a failure). Since the game server's address is
+    // handed over dynamically (never in servers.json), the relay currently
+    // only ever proxies the account/login leg -- which always closes quickly
+    // by design -- so this kill-switch was misfiring on every successful
+    // login, not just real failures. Needs the relay to actually distinguish
+    // connection legs (or parse+re-route the dynamic game-server handoff)
+    // before this can be safely re-armed.
+    params.options.m_killSwitch = false;
 
     AccountProfile profileCopy = session->profile;
 
@@ -1945,6 +1986,18 @@ void HandleLoginClick(AccountSession* session)
         // holds pointers into these for as long as proxy mode is active.
         ServerConfigPatch patch(fs::path(params.gameDir) / SERVER_CONFIG_NAME);
         Socks5Relay relay;
+        // [CONNECTION-DECIPHER 2026-09-18] RelayLogger was fully implemented
+        // (both-direction hex dump, see PumpTraffic's fix above) but never
+        // actually instantiated anywhere in this file -- relay.Start() was
+        // always called with a null logger, so relay_packets.log never got
+        // written despite the class existing and being documented. Wire it
+        // up for real.
+        RelayLogger relayLogger;
+        const fs::path relayLogPath = fs::path(params.exePath).parent_path() / RELAY_LOG_NAME;
+        const bool relayLoggerOk = relayLogger.Start(relayLogPath);
+        if (!relayLoggerOk)
+            printf("[proxy] Failed to open %s for packet logging (proxy will still run without it)\n",
+                   relayLogPath.string().c_str());
         std::unique_lock<std::mutex> configLock(g_serverConfigMutex, std::defer_lock);
 
         if (profileCopy.useProxy) {
@@ -1970,7 +2023,8 @@ void HandleLoginClick(AccountSession* session)
                 Endpoint listen{LOCAL_RELAY_HOST, target ? target->port : static_cast<uint16_t>(0)};
                 if (proxyOk) {
                     proxyOk = relay.Start(listen, proxyEndpoint, *target,
-                        profileCopy.proxyUser, profileCopy.proxyPassword, nullptr);
+                        profileCopy.proxyUser, profileCopy.proxyPassword,
+                        relayLoggerOk ? &relayLogger : nullptr);
                 }
                 if (proxyOk && !patch.Apply(listen.host, relay.GetListenPort())) {
                     relay.Stop();
@@ -1988,6 +2042,7 @@ void HandleLoginClick(AccountSession* session)
                 params.proxyMode = true;
                 params.serverPatch = &patch;
                 params.relay = &relay;
+                params.activeLogger = relayLoggerOk ? &relayLogger : nullptr;
             }
         }
 
