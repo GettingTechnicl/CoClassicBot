@@ -48,6 +48,26 @@ Standing practice (per the user, 2026-09-18): the PC-side instance posts anythin
 as it happens, so the user doesn't have to manually relay it. Newest entries on top. Each entry
 should be skimmable — point to the real detail (a commit, a doc) rather than duplicating it.
 
+### 2026-09-18 (later still) — current-HP-always-0 bug: FIXED and live-confirmed, `usePotions` is safe again
+
+Follow-up to the entry below: the HP-potion-spam bug is fixed. `CHero::GetCurrentHp()` now
+reads a real value (two pointer hops off `m_pStatTable`, SEH-guarded, with a plausibility
+check), live-confirmed tracking on-screen HP continuously through normal play. **Important for
+how it fails**: any bad/failed read now returns `-1` ("unknown"), never `0` — and
+`TryUsePotions()` treats a negative HP as "skip this tick," not as empty health. So even if you
+ever see a transient "HP: unknown (read failed)" (new readout in overlay's **Automation →
+Hunting → Debug** tab), that's the safety net working as designed, not a regression — it fails
+to "do nothing this tick," not back to the original spam behavior. One caveat: a dedicated
+relog + map-transition check wasn't separately isolated before this shipped (see the doc's
+"Status" section for why that was an acceptable tradeoff given the fail-safe design). If you
+ever see a *sustained* stretch of "unknown" (not just an occasional blip), that's worth a
+fresh look, not just user error. Full detail: `docs/investigation/CURRENT_HP_READ_INVESTIGATION.md`.
+
+**`usePotions` no longer needs to stay disabled** for this reason. Separate, NOT yet fixed:
+mana almost certainly has the identical bug (`GetCurrentMana()` uses the same dead-accessor
+shape) — if mana-potion settings are enabled, treat those the same way HP was treated (assume
+broken until this gets the same fix) until a follow-up lands.
+
 ### 2026-09-18 (later) — current-HP always reads 0 (root cause confirmed, offset search not done yet)
 
 If you ever see a bot spamming HP potions nonstop even at full health, that's a real, confirmed
@@ -55,13 +75,12 @@ bug, not user error or a config issue: `CHero::GetCurrentHp()` always returns 0 
 native accessor path is dead on v1074 (`GameRva::VERIFIED_V1074 = false` unconditionally zeroes
 `CStatTable::GetValue()`). Max HP is unaffected (it's a direct field, not a native call), so
 `hpPercent` computes as 0/maxHp = 0% every tick, which is always below the potion threshold.
-**Not fixed yet** — the fix needs a live memory-correlation session (someone watching on-screen
-HP while damage/heal/regen happens) to find current HP's direct-field offset, the same way
-`m_nMaxHp` was found. Full detail, the tooling already built for it (an extended "Dump Stat
-BYTES" overlay button + a temporary throttled `[hp-diag]` log line), and the exact next steps
-are in `docs/investigation/CURRENT_HP_READ_INVESTIGATION.md` — read that before re-diagnosing
-this from scratch if it comes up on your side. **Do not enable `usePotions` for unattended runs
-until this is actually fixed** — right now it will burn potions constantly for no reason.
+**[SUPERSEDED — see the entry above, this is now fixed]** the fix needed a live
+memory-correlation session (someone watching on-screen HP while damage/heal/regen happens) to
+find current HP's direct-field offset, the same way `m_nMaxHp` was found. Full detail, the
+tooling already built for it (an extended "Dump Stat BYTES" overlay button + a temporary
+throttled `[hp-diag]` log line), and the exact next steps are in
+`docs/investigation/CURRENT_HP_READ_INVESTIGATION.md`.
 
 ### 2026-09-18 — proxy-mode kill-switch + relay logging bugs, both fixed
 

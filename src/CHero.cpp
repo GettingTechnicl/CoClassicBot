@@ -1212,9 +1212,53 @@ OBJID CHero::GetActiveNpc() const
     return m_idActiveNpc;
 }
 
+// [HP RE 2026-09-18]: the native CStatTable::GetValue() path is confirmed dead
+// on v1074 (see CStatTable.cpp / GameRva::VERIFIED_V1074, always returns 0).
+// Live memory-correlation across 18 samples across two play sessions found
+// the real value two pointer hops out: m_pStatTable+0x10 holds a pointer to a
+// small object whose +0x0 int32 tracked on-screen HP exactly (7/9 exact
+// matches, the other 2 explained by timing skew between reading the screen
+// and clicking the capture button — corroborated by that same target's +0x1C
+// being exactly 128x its +0x0 in every sample, a same-instant structural
+// relationship, not a correlation coincidence). See
+// docs/investigation/CURRENT_HP_READ_INVESTIGATION.md for the full writeup.
+//
+// Returns -1 ("unknown"), never 0, on any failed/implausible read — the bug
+// this replaces was exactly "bad read -> 0 -> TryUsePotions treats 0% HP as
+// real -> spams potions forever." A 0 return here would silently reintroduce
+// that failure mode. Callers must treat a negative return as "skip this
+// tick's HP-based decision," not as empty health.
 int CHero::GetCurrentHp() const
 {
-    return m_pStatTable ? m_pStatTable->GetValue(1) : 0;
+    if (!m_pStatTable)
+        return -1;
+
+    uintptr_t sub = 0;
+    __try {
+        sub = *reinterpret_cast<const uintptr_t*>(reinterpret_cast<uintptr_t>(m_pStatTable) + 0x10);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+    if (sub < 0x10000)
+        return -1;
+
+    int32_t hp = 0;
+    __try {
+        hp = *reinterpret_cast<const int32_t*>(sub);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+
+    // Plausibility guard: a transient bad read (mid-teardown, stale pointer
+    // during a relog/map change) should fail to "unknown," not hand back a
+    // number that merely looks legal. Small margin above max HP tolerates
+    // temporary buffs.
+    constexpr int kHpPlausibilityMargin = 50;
+    const int maxHp = GetMaxHp();
+    if (hp < 0 || (maxHp > 0 && hp > maxHp + kHpPlausibilityMargin))
+        return -1;
+
+    return hp;
 }
 
 int CHero::GetGameKillCount() const

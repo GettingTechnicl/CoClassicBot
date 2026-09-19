@@ -360,6 +360,14 @@ bool HuntBuffManager::TryUsePotions(CHero* hero, const AutoHuntSettings& setting
     if (now - m_lastPotionTick < GetItemActionIntervalMs(settings))
         return false;
 
+    // [HP RE 2026-09-18] GetCurrentHp() returns -1 ("unknown") on a failed or
+    // implausible read rather than 0 -- treat that as "skip this tick's
+    // potion decision," not as empty health. Without this guard a transient
+    // read failure would compute hpPercent=0 and spam HP potions forever,
+    // which is the exact bug this whole change exists to fix.
+    if (lastHp < 0)
+        return false;
+
     const int hpPercent = lastMaxHp > 0 ? (lastHp * 100) / lastMaxHp : 100;
     const int mpPercent = lastMaxMana > 0 ? (lastMana * 100) / lastMaxMana : 100;
 

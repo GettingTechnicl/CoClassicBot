@@ -219,6 +219,10 @@ public:
     }
 
     // ── State queries ──
+    // Returns -1 ("unknown") on a failed/implausible read -- NEVER 0. Callers
+    // must treat a negative return as "skip this tick's HP-based decision,"
+    // not as empty health. See CHero.cpp's definition and
+    // docs/investigation/CURRENT_HP_READ_INVESTIGATION.md.
     int GetCurrentHp() const;
     int GetMaxHp() const;
     int GetCurrentMana() const;

@@ -1,9 +1,43 @@
-# Current-HP read investigation (2026-09-18)
+# Current-HP read investigation (2026-09-18) — RESOLVED, fix shipped
 
-## The bug
+## Status: fixed and live-confirmed
 
-The bot spams HP potions constantly with `usePotions` enabled, even at full health,
-because `CHero::GetCurrentHp()` always returns `0`.
+`CHero::GetCurrentHp()` now reads the real value (see "The fix" below). Live-verified against
+on-screen HP continuously during play, including through normal combat/regen — not just a
+one-shot check. **Caveat for full rigor**: a dedicated relog + map-transition check (does the
+pointer chain survive a fresh login / map change, not just staying alive within one session)
+was not separately isolated before shipping; the fix's own hardening (SEH guards + a
+plausibility check + a `-1`/"unknown" sentinel instead of `0` on any failed read, see below)
+is exactly what makes that an acceptable risk to ship ahead of that specific test rather than
+something that could quietly reintroduce the original spam bug — a bad read now fails safe.
+If a relog/map-change ever produces a visible "HP: unknown (read failed)" in the Debug tab,
+that's expected-and-handled, not a regression; a sustained stretch of it would be worth a
+fresh look.
+
+## The fix
+
+`CHero::GetCurrentHp()` ([CHero.cpp](../../src/CHero.cpp)) reads a **direct value two pointer
+hops from `m_pStatTable`**: `*(int32*)(*(uintptr_t*)((char*)m_pStatTable + 0x10))`. Found via
+live rank-correlation across 18 samples spanning two play sessions (see "How it was found"
+below). Every hop is SEH-guarded; a null/invalid pointer, a failed read, or an implausible
+result (negative, or more than `GetMaxHp() + 50` — see `kHpPlausibilityMargin`) all return
+**`-1` ("unknown"), never `0`**. `HuntBuffManager::TryUsePotions()`
+([hunt_buffs.cpp](../../src/hunt_buffs.cpp)) treats a negative HP as "skip this tick's potion
+decision" — this is the load-bearing part of the fix: the original bug was exactly "bad read
+→ 0 → treated as real → spam," so a naive fix that still defaulted to 0 on failure would have
+reintroduced the same bug under different conditions (a transient bad read instead of an
+always-bad one). A live HP readout (`HP: current / max (pct%)`, or "unknown (read failed)" in
+orange) was added to the overlay's **Automation → Hunting → Debug** tab for at-a-glance
+verification, superseding the temporary throttled log line this investigation used earlier.
+
+Mana is a known, separate follow-on: `GetCurrentMana()` almost certainly has the identical bug
+(same dead native-accessor shape, same potion-spam risk via `mpPercent`), not yet
+investigated or fixed — see "Next steps" below.
+
+## The bug (original symptom)
+
+The bot spammed HP potions constantly with `usePotions` enabled, even at full health,
+because `CHero::GetCurrentHp()` always returned `0`.
 
 ## Confirmed facts (static code reading, no live test needed for this part)
 
@@ -71,35 +105,42 @@ investigation**: since it goes through the gated `CStatTable::GetValue()`, every
 prints will be `0` regardless of `i`, per the confirmed-dead native path above. Don't read
 anything into its output until/unless `VERIFIED_V1074` changes.
 
-## Also added: a throttled live diagnostic log line
+## How it was found
 
-`BaseHuntPlugin::RefreshRuntimeState` ([base_hunt_plugin.cpp](../../src/plugins/base_hunt_plugin.cpp),
-tagged `[hp-diag]`, 2s-throttled) now logs `GetCurrentHp()`, the raw `m_pStatTable` pointer,
-`GetValue(1)`'s raw return, `GetMaxHp()`, and the computed `hpPercent` every ~2 seconds while
-a hero is loaded. This is a **temporary confirmation aid, marked `[HP RE 2026-09-18, TEMP]`
-in the code** — remove it once the real fix lands and is verified. It exists purely to give a
-plain before/after log trail matching on-screen HP without needing a separate debug build.
+1. Widened the "Dump Stat BYTES" dumps (`CHero+0x290..+0x720`, `CHero+0x800..+0xD00`, and the
+   raw `CStatTable` object) and, across 9 live HP states (960 down to 241), ran an exact-match
+   search (int32/float32/packed-uint16) — clean negative everywhere. Current HP is not stored
+   inline as a plain value in either window or in the first 0x800 bytes of the `CStatTable`
+   object.
+2. Re-ran as a scale/skew-tolerant rank correlation (Spearman) instead of exact match, to catch
+   a percentage/fraction encoding or a few points of timing skew — still no credible signal in
+   the direct windows (a handful of `|rho|>=0.85` hits all landed in a region that changes
+   completely between samples in unstructured ways, consistent with reading adjacent
+   heap noise rather than a real object field; discounted as multiple-comparisons false
+   positives, not chased further).
+3. Disassembling the native `GetValue()` to read its real logic was considered but ruled out:
+   `game.h` (GameRva section) already documents `CSTATTABLE_GET_VALUE`'s RVA as **confirmed
+   stale** ("resolves to misaligned garbage" post-v1074) — disassembling at that address
+   wouldn't show the real function, it'd show unrelated shifted code.
+4. Pivoted to following pointers: the raw `CStatTable` dump showed a repeating
+   `[tag1][tag2][ptr]`-shaped record pattern (the two tags constant across every HP state —
+   type/flag fields, not the value). Extended the dump tool to dereference every plausible
+   pointer found in a widened (0x800-byte) `CStatTable` dump and log ~0x40 bytes at each
+   target, bounded to 64 dereferences per click (per the project's standing
+   bounded-injected-search rule).
+5. Re-ran the same rank-correlation method against the dereferenced target dumps (11 more HP
+   states, 19 up to 960). One record stood out: the pointer at `CStatTable+0x10` points to an
+   object whose `+0x0` int32 matched on-screen HP exactly in 7 of 9 aligned samples, with the
+   other 2 explained by timing skew (reading the screen, then clicking, a moment apart). That
+   same target's `+0x1C` field is **exactly 128× its `+0x0` value in every single sample** —
+   a same-instant structural relationship (not two independently noisy readings), which is
+   what elevated this from "a correlation hit" to "trust it."
 
-## Next steps (not yet done)
+## Follow-on: mana likely has the same bug (not yet done)
 
-1. Live: with the on-screen HP visible, click "Dump Stat BYTES" at a few different HP states
-   — full HP, after taking damage, after a potion/regen tick — and diff the two CHero windows
-   above for the dword that tracks the on-screen value in both directions. This is the same
-   correlation technique that found the level field (see CRole.h's +0x6E8 comment) and
-   stamina.
-2. Once a candidate offset is found, validate it across several more damage/heal/regen
-   cycles before trusting it (per the standing "verify test target before trusting a
-   negative/positive" lesson — a single lucky-looking match isn't enough, see
-   coclassicbot-workflow-feedback memory).
-3. Only then: propose swapping `CHero::GetCurrentHp()` to read the new direct field (mirroring
-   how `GetMaxHp()` reads `m_nMaxHp`), and get explicit go-ahead before implementing — this
-   project's standing rule is propose-then-wait, not fix-on-confirmation
-   (coclassicbot-confirm-before-fixing memory).
-4. After the real fix ships and is confirmed, remove the temporary `[hp-diag]` log line.
-
-## Status
-
-**Diagnosis confirmed** (current HP always reads 0, root cause identified, no live test
-needed to establish this much). **Offset search not yet done** — needs a live session with
-someone watching on-screen HP. Do not re-derive the diagnosis above from scratch next
-session; pick up at "Next steps" step 1.
+`CHero::GetCurrentMana()` uses the same dead-native-accessor shape as the old `GetCurrentHp()`
+did, and the mana-potion branch in `TryUsePotions()` mirrors the HP branch — same spam risk if
+`autoMpPotion`/mana thresholds are enabled. The dereference tooling built for this
+investigation (`DumpDereferencedRecords` in `base_hunt_plugin.cpp`) applies directly: dump/
+correlate for the mana record the same way, then ship as its own separate change (not bundled
+with the HP fix).

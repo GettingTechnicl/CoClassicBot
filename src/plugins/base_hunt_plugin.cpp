@@ -332,26 +332,14 @@ void BaseHuntPlugin::RefreshRuntimeState(CHero* hero, CGameMap* map)
     if (currentMapId != m_lastMapId)
         m_lootMgr.ResetLootPickupAttempts();
     m_lastMapId = currentMapId;
-    m_lastHp = hero ? hero->GetCurrentHp() : 0;
+    // [HP RE 2026-09-18] GetCurrentHp() can return -1 ("unknown") -- callers
+    // (TryUsePotions) treat a negative m_lastHp as "skip this tick," never as
+    // empty health. See CHero.cpp's definition and
+    // docs/investigation/CURRENT_HP_READ_INVESTIGATION.md.
+    m_lastHp = hero ? hero->GetCurrentHp() : -1;
     m_lastMaxHp = hero ? hero->GetMaxHp() : 0;
     m_lastMana = hero ? hero->GetCurrentMana() : 0;
     m_lastMaxMana = hero ? hero->GetMaxMana() : 0;
-    // [HP RE 2026-09-18, TEMP] confirm the current-HP-reads-0 diagnosis live and
-    // compare against on-screen HP; remove once the fix lands. Throttled (this
-    // runs every RefreshRuntimeState tick) per the established hot-path-logging
-    // rule -- see coclassicbot-workflow-feedback memory.
-    {
-        static DWORD lastHpDiagLog = 0;
-        const DWORD nowHpDiag = GetTickCount();
-        if (hero && nowHpDiag - lastHpDiagLog > 2000) {
-            lastHpDiagLog = nowHpDiag;
-            const int hpPercentDiag = m_lastMaxHp > 0 ? (m_lastHp * 100) / m_lastMaxHp : 100;
-            spdlog::info("[hp-diag] GetCurrentHp={} statTablePtr=0x{:X} GetValue(1)={} GetMaxHp={} hpPercent={}",
-                m_lastHp, reinterpret_cast<uintptr_t>(hero->m_pStatTable),
-                hero->m_pStatTable ? hero->m_pStatTable->GetValue(1) : -1,
-                m_lastMaxHp, hpPercentDiag);
-        }
-    }
     m_lastBagCount = hero ? hero->m_deqItem.size() : 0;
     m_buffMgr.RefreshBuffState(hero);
     if (m_buffMgr.IsPreLandingRetreat() && m_buffMgr.CanRecastAnyFly(hero, GetAutoHuntSettings())) {
@@ -1166,6 +1154,37 @@ void DumpInts(const char* label, uintptr_t addr, int count)
         else
             spdlog::info("[statbytes] {} +0x{:X} (idx {}) = <unreadable>", label, i * 4, i);
     }
+}
+
+// [HP RE 2026-09-18]: the raw CStatTable dump showed a repeating
+// [tag1][tag2][ptr]-shaped record pattern (tag1/tag2 constant across every
+// HP state -- likely per-stat type/flag fields, not the value itself). This
+// walks `count` consecutive dwords starting at `base`, and for every one that
+// looks like a plausible heap pointer, dereferences it and dumps a small
+// window at the target -- logging the two PRECEDING dwords as "tag" context
+// so a later pass can match a dereferenced value back to which record it
+// came from (and cross-check against statType=1 if the tags turn out to
+// encode a stat index). Bounded (maxDerefs) per the project's standing rule
+// that any injected-DLL search must have an explicit cap, even read-only.
+void DumpDereferencedRecords(const char* label, uintptr_t base, int count, int targetInts, int maxDerefs)
+{
+    int derefs = 0;
+    for (int i = 0; i < count && derefs < maxDerefs; ++i) {
+        int32_t v = 0;
+        if (!SafeReadBlock(base + (size_t)i * 4, &v, 4))
+            continue;
+        const uint32_t uv = static_cast<uint32_t>(v);
+        if (uv < 0x10000 || uv > 0x7FFFFFFF)
+            continue;
+        int32_t tag2 = 0, tag1 = 0;
+        SafeReadBlock(base + (size_t)i * 4 - 4, &tag2, 4);
+        SafeReadBlock(base + (size_t)i * 4 - 8, &tag1, 4);
+        spdlog::info("[statbytes] {} +0x{:X} (idx {}) ptr=0x{:X}  tag1(-8)={} tag2(-4)={}",
+            label, i * 4, i, uv, tag1, tag2);
+        DumpInts("  ->deref", uv, targetInts);
+        ++derefs;
+    }
+    spdlog::info("[statbytes] {} dereferenced {} pointer-looking candidates (cap={})", label, derefs, maxDerefs);
 }
 }
 
@@ -4443,6 +4462,21 @@ void BaseHuntPlugin::RenderDebugSection()
             ImGui::TextDisabled("dyn-zone: seeding...");
         }
     }
+    // [HP RE 2026-09-18] live readout so the fixed GetCurrentHp() can be
+    // eyeballed directly against on-screen HP (take damage, heal, regen) --
+    // no need to stage a low-health potion-spam test to verify it.
+    if (hero) {
+        const int curHp = hero->GetCurrentHp();
+        const int maxHp = hero->GetMaxHp();
+        if (curHp < 0) {
+            ImGui::TextColored(ImVec4(1, 0.6f, 0.2f, 1), "HP: unknown (read failed) / max=%d", maxHp);
+        } else {
+            const int pct = maxHp > 0 ? (curHp * 100) / maxHp : -1;
+            ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1), "HP: %d / %d (%d%%)", curHp, maxHp, pct);
+        }
+    } else {
+        ImGui::TextDisabled("HP: no hero");
+    }
     // Session 15 [KILL-SIGNAL RE]: dump the game's own indexed stat table so we
     // can find a client-side kill-counter index (GetValue(1)=HP is the only one
     // read so far). Stand in-game, note your kill count, click, then match it to
@@ -4461,7 +4495,15 @@ void BaseHuntPlugin::RenderDebugSection()
     // so read the real memory. Dumps (1) a wide CHero int window around the stat
     // pointer (HP/kills may be a direct CHero field), and (2) the objects the
     // stat pointer at +0x968 and the v1074-shifted +0x9B8 point to, as int32s.
-    // Note your HP and kill count, click, then match them in the [statbytes] log.
+    // [HP RE 2026-09-18] (2) is now widened to 0x800 bytes and every
+    // pointer-looking dword inside it gets dereferenced one level deep (see
+    // DumpDereferencedRecords) -- the raw dump showed a repeating
+    // [tag1][tag2][ptr] record shape, and the exact-match + rank-correlation
+    // passes on the direct windows both came back clean negatives, so the
+    // live value is hypothesized to sit behind one of these pointers, not
+    // inline. Note your HP and kill count, click, then match them in the
+    // [statbytes] log (or run scratchpad/hp_offset_corr.py-style analysis
+    // against a multi-click sweep).
     if (ImGui::Button("Dump Stat BYTES (find HP/kills offset)")) {
         if (hero) {
             const uintptr_t base = reinterpret_cast<uintptr_t>(hero);
@@ -4482,8 +4524,14 @@ void BaseHuntPlugin::RenderDebugSection()
             SafeReadBlock(base + 0x968, &p968, sizeof(p968));
             SafeReadBlock(base + 0x9B8, &p9B8, sizeof(p9B8));
             spdlog::info("[statbytes] statPtr@+0x968=0x{:X}  statPtr@+0x9B8=0x{:X}", p968, p9B8);
-            if (p968 > 0x10000)
-                DumpInts("*statPtr(0x968)", p968, 64);   // 0x100 bytes as int32s
+            if (p968 > 0x10000) {
+                // [HP RE 2026-09-18] widened past the original 0x100 bytes --
+                // the record array this object holds (see DumpDereferencedRecords
+                // above) may extend further than the first 64 entries.
+                constexpr int kStatTableInts = 512;   // 0x800 bytes
+                DumpInts("*statPtr(0x968)", p968, kStatTableInts);
+                DumpDereferencedRecords("*statPtr(0x968)", p968, kStatTableInts, /*targetInts=*/16, /*maxDerefs=*/64);
+            }
             if (p9B8 > 0x10000 && p9B8 != p968)
                 DumpInts("*statPtr(0x9B8)", p9B8, 64);
         } else {
