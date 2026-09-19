@@ -277,8 +277,9 @@ set_target_properties(flushfinder3 PROPERTIES
 add_executable(map_tests
     tests/map_tests.cpp
     src/CGameMap.cpp
+    src/mapdata.cpp        # real .DMap/.scene parsing, off-game (COCLASSIC_GAME_ROOT)
 )
-target_include_directories(map_tests PRIVATE src)
+target_include_directories(map_tests PRIVATE src vendor/spdlog/include)
 set_target_properties(map_tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )

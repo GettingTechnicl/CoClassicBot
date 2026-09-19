@@ -251,6 +251,17 @@ std::string MapGrid::GetGameRoot()
     if (!cached.empty())
         return cached;
 
+    // Off-game override so tests/tools can parse the real .DMap/.scene files
+    // without running inside the client (map_tests uses it).
+    {
+        char env[MAX_PATH] = {};
+        const DWORD n = GetEnvironmentVariableA("COCLASSIC_GAME_ROOT", env, MAX_PATH);
+        if (n > 0 && n < MAX_PATH) {
+            cached = env;
+            return cached;
+        }
+    }
+
     // The client lives at <root>\bin\64\ImConquer.exe, so the install root is
     // two directories above the executable.
     char path[MAX_PATH] = {};
@@ -380,14 +391,43 @@ bool MapGrid::ParseFile(const std::string& path, int* w, int* h, std::vector<Cel
     // per-cell mask, so this is a direct copy of the game's own data — no
     // dilation, no gap filling, no heuristics.
     //
-    // Only mask==0 (walkable) cells are applied. A part's mask==1 cells are
-    // rails/edges; they are deliberately NOT used to block base-walkable land.
-    // The game does treat the overlay as authoritative, but the one piece of
-    // this format still unverified live is whether a part's cell pattern can be
-    // MIRRORED within its footprint (which corner a rail sits on). Until that
-    // is confirmed on an asymmetric part, wrongly opening a tile costs a step
-    // the server refuses, while wrongly blocking one would break routing over
-    // land that works today. Revisit once mirroring is checked in-game.
+    // THE OVERLAY IS AUTHORITATIVE IN BOTH DIRECTIONS, like the game's own
+    // layer chain (IsWalkable trusts the TOP layer): a part's mask==0 cells
+    // OPEN base-blocked tiles (the deck over a river), and its mask==1 cells
+    // BLOCK base-walkable tiles (the rail / end-cap edge sitting on bank land).
+    // An earlier version applied only the opens, deliberately, on the grounds
+    // that the part-cell orientation (could a part be mirrored within its
+    // footprint?) was unverified and a wrongly blocked tile would break routing
+    // that works today. That caution is retired:
+    //  * Live evidence: on Twin City the server REFUSED jumps onto rail tiles
+    //    that sit on walkable bank — (601,682) on 2026-09-04 and (604,674) on
+    //    2026-09-18 — and the bot ground on the identical failing jump because
+    //    the grid it repathed from still called them walkable.
+    //  * Orientation: scored offline against every scene part on every shipped
+    //    map, the un-mirrored reading (cell (i,j) -> (x+dx-w+1+i, y+dy-h+1+j))
+    //    beats each mirrored alternative on how often a blocking part cell
+    //    coincides with base-blocked terrain — p ~ 1e-10 vs flipY, ~ 1e-34 vs
+    //    flipX (per-part sign test). The two refused tiles are blocked under
+    //    every orientation, so they never depended on it anyway.
+    //  * Reachability: a full pre/post diff of every map that has a scene
+    //    overlay (8-neighbour, |dAlt|<=200 — FindPath's own model) found no
+    //    connected component split or erased, every file portal still walkable,
+    //    and the area reachable from a fixed anchor drops by exactly the number
+    //    of newly blocked tiles (Twin City: 48 tiles, 340844 -> 340796). The
+    //    one exception is a 135-tile pocket on the skymaze event maps that holds
+    //    no portal. Scripts + results: docs/investigation/scripts/reach_diff.py,
+    //    docs/investigation/TWIN_CITY_BRIDGE_REBUTTAL.md.
+    // This completes what TWIN_CITY_BRIDGE_REBUTTAL.md originally specified.
+    // Do not restore the walkable-only merge; if a specific tile proves wrong
+    // live, MarkTileBlockedThisSession / MarkTileWalkableThisSession heal that
+    // one cell for the session.
+    //
+    // ORDER-INDEPENDENT: a tile covered by a walkable cell of one part and a
+    // rail cell of an overlapping part must end WALKABLE whichever part is
+    // visited first, so opens are collected in a first pass and rails are
+    // applied in a second, skipping every tile the first pass opened. (Overlaps
+    // only occur on the special maps — sky, skymaze, faction-black — not on any
+    // city.)
     //
     // Terrain and altitude stay as the base cell's: a deck reads flat, and
     // CanReach's altitude stepping should keep working off the ground beneath.
@@ -396,24 +436,50 @@ bool MapGrid::ParseFile(const std::string& path, int* w, int* h, std::vector<Cel
         ParseTailScenes(data, needed, (int)width, (int)height, &layerCount, portals);
     const std::string gameRoot = MapGrid::GetGameRoot();
 
-    int partsApplied = 0, tilesOpened = 0;
-    for (const SceneRef& sr : scenes) {
-        for (const ScenePart& sp : LoadSceneParts(gameRoot, sr.path)) {
-            ++partsApplied;
-            const int baseX = sr.x + sp.dx - sp.w + 1;
-            const int baseY = sr.y + sp.dy - sp.h + 1;
+    struct PlacedPart { int baseX, baseY; const ScenePart* part; };
+    std::vector<PlacedPart> placed;
+    for (const SceneRef& sr : scenes)
+        for (const ScenePart& sp : LoadSceneParts(gameRoot, sr.path))
+            placed.push_back({sr.x + sp.dx - sp.w + 1, sr.y + sp.dy - sp.h + 1, &sp});
+
+    int tilesOpened = 0, tilesBlocked = 0;
+    if (!placed.empty()) {
+        std::vector<uint8_t> opened((size_t)width * (size_t)height, 0);
+        // Pass 1: walkable cells open tiles.
+        for (const PlacedPart& pp : placed) {
+            const ScenePart& sp = *pp.part;
             for (int j = 0; j < sp.h; ++j) {
                 for (int i = 0; i < sp.w; ++i) {
                     if (!sp.walkable[(size_t)j * sp.w + i])
                         continue;
-                    const int tx = baseX + i;
-                    const int ty = baseY + j;
+                    const int tx = pp.baseX + i;
+                    const int ty = pp.baseY + j;
                     if (tx < 0 || ty < 0 || tx >= (int)width || ty >= (int)height)
                         continue;
-                    Cell& cell = (*out)[(size_t)ty * width + (size_t)tx];
-                    if (cell.mask == 1) {
-                        cell.mask = 0;
+                    const size_t idx = (size_t)ty * width + (size_t)tx;
+                    opened[idx] = 1;
+                    if ((*out)[idx].mask == 1) {
+                        (*out)[idx].mask = 0;
                         ++tilesOpened;
+                    }
+                }
+            }
+        }
+        // Pass 2: rail cells block base-walkable tiles that no part opened.
+        for (const PlacedPart& pp : placed) {
+            const ScenePart& sp = *pp.part;
+            for (int j = 0; j < sp.h; ++j) {
+                for (int i = 0; i < sp.w; ++i) {
+                    if (sp.walkable[(size_t)j * sp.w + i])
+                        continue;
+                    const int tx = pp.baseX + i;
+                    const int ty = pp.baseY + j;
+                    if (tx < 0 || ty < 0 || tx >= (int)width || ty >= (int)height)
+                        continue;
+                    const size_t idx = (size_t)ty * width + (size_t)tx;
+                    if (!opened[idx] && (*out)[idx].mask != 1) {
+                        (*out)[idx].mask = 1;
+                        ++tilesBlocked;
                     }
                 }
             }
@@ -421,8 +487,9 @@ bool MapGrid::ParseFile(const std::string& path, int* w, int* h, std::vector<Cel
     }
     if (!scenes.empty()) {
         spdlog::info("[mapdata] scene overlay: {} layer records, {} scenes, "
-                     "{} parts, {} tiles opened",
-                     layerCount, (int)scenes.size(), partsApplied, tilesOpened);
+                     "{} parts, {} tiles opened, {} tiles blocked",
+                     layerCount, (int)scenes.size(), (int)placed.size(),
+                     tilesOpened, tilesBlocked);
     }
 
     *w = (int)width;

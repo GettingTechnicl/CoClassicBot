@@ -35,10 +35,13 @@
 // mask=1 terrain=0 altitude=0 — live-verified by hovering the hero standing
 // mid-bridge on map 1010). What makes the bridge walkable is a scene-object
 // placement in the post-grid section naming a .scene file whose footprint
-// covers those tiles. ParseFile parses those placements and clears their
-// masks; mapdata.cpp documents the record layout and the anchoring/padding
-// evidence. Without it the two landmasses of map 1010 are disconnected and
-// A* simply cannot route between them.
+// covers those tiles. ParseFile parses those placements and folds them into
+// the masks in both directions — the part's walkable cells open tiles, its
+// rail cells block the base-walkable land under them; mapdata.cpp documents
+// the record layout, the anchoring/orientation evidence, and why blocking is
+// safe. Without it the two landmasses of map 1010 are disconnected and A*
+// simply cannot route between them, and Twin City's bridge ends read as
+// walkable tiles the server refuses.
 // =====================================================================
 #include "base.h"
 #include <cstdint>

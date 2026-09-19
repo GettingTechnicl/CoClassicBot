@@ -48,6 +48,29 @@ Standing practice (per the user, 2026-09-18): the PC-side instance posts anythin
 as it happens, so the user doesn't have to manually relay it. Newest entries on top. Each entry
 should be skimmable — point to the real detail (a commit, a doc) rather than duplicating it.
 
+### 2026-09-19 — Twin City bridge "walkable tile the server refuses": rail cells now block (walkable grid CHANGED)
+
+If you've seen the bot repeat the same failing jump onto a Twin City bridge end-cap
+(`Predicted move stale` / `STUCK timeout`, e.g. `(588,695)->(601,682)` or `(588,665)->(604,674)`),
+that was this. The overlay merge in `MapGrid::ParseFile` (`src/mapdata.cpp`) only ever *opened*
+tiles from the `.scene` parts; it skipped their rail cells, so 48 rail tiles sitting on walkable
+bank land stayed "walkable" and A* routed onto them. Rail cells now **block** base-walkable tiles
+(walkable still wins where parts overlap, order-independent). **This changes the walkable grid on
+Twin City (48 tiles) and a few special maps** — expect `[mapdata] scene overlay: ... N tiles
+blocked` in the log. It completes what `TWIN_CITY_BRIDGE_REBUTTAL.md` originally specified; the
+old "orientation unverified, don't block" caution in that code comment is gone on purpose.
+
+Why it's safe without in-game testing (all offline, in the repo): a full pre/post reachability
+diff over every map with a scene overlay found no region split or erased, every file portal still
+walkable, reachable area down by exactly the newly-blocked tile count; the part orientation was
+scored against every scene part on every map (p ~ 1e-10 to 1e-34). Details, scripts and results:
+`docs/investigation/TWIN_CITY_BRIDGE_REBUTTAL.md` (Addendum), `docs/investigation/scripts/`
+(`reach_diff.py`, `orient_vote.py`, `signtest.py`). `tests/map_tests.cpp` gained six `overlay_*`
+tests that parse the real game files (skip if not installed; `COCLASSIC_GAME_ROOT` overrides the
+path) — run `map_tests.exe` after any `mapdata.cpp`/game patch. If a tile still looks wrong live,
+`MarkTileBlockedThisSession`/`MarkTileWalkableThisSession` heal one cell per session; a *pattern*
+of wrong tiles means re-run the scripts before touching the merge.
+
 ### 2026-09-18 (later still) — current-HP-always-0 bug: FIXED and live-confirmed, `usePotions` is safe again
 
 Follow-up to the entry below: the HP-potion-spam bug is fixed. `CHero::GetCurrentHp()` now

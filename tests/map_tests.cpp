@@ -1,4 +1,5 @@
 #include "CGameMap.h"
+#include "mapdata.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -99,10 +100,18 @@ private:
 static int g_testsPassed = 0;
 static int g_testsFailed = 0;
 
+static int g_testsSkipped = 0;
+
+// Thrown by tests that need the real game files (see RealMap below) when the
+// install isn't present, so a machine without the client skips them instead of
+// failing.
+struct TestSkip {};
+
 #define TEST(name) static void test_##name()
 #define RUN(name) do { \
     printf("  %-50s", #name); \
     try { test_##name(); printf("PASS\n"); g_testsPassed++; } \
+    catch (const TestSkip&) { printf("SKIP (game files not found)\n"); g_testsSkipped++; } \
     catch (...) { printf("FAIL\n"); g_testsFailed++; } \
 } while(0)
 
@@ -482,6 +491,160 @@ TEST(dump_and_reload) {
 }
 
 // =====================================================================
+// Scene-overlay tests — parse the client's REAL .DMap/.scene files, off-game.
+//
+// mapdata.cpp folds the .DMap tail's scene overlays into the cell masks in
+// both directions: a part's walkable cells OPEN deck tiles, its rail cells
+// BLOCK the base-walkable bank land under them (walkable wins where parts
+// overlap). See mapdata.cpp's scene-overlay block and
+// docs/investigation/TWIN_CITY_BRIDGE_REBUTTAL.md for the evidence.
+//
+// The expected reachable-area counts below come from the offline pre/post
+// reachability diff (docs/investigation/scripts/reach_diff.py): each equals
+// the pre-change area MINUS exactly the newly blocked tiles inside that
+// component, i.e. rail blocking cut nothing off. If one of these changes,
+// either a parser edit changed walkability (investigate!) or the game files
+// were patched (re-run reach_diff.py and update).
+// =====================================================================
+struct RealMap {
+    int w = 0, h = 0;
+    std::vector<MapGrid::Cell> cells;
+    std::vector<MapPortal> portals;
+    bool Walkable(int x, int y) const {
+        return x >= 0 && y >= 0 && x < w && y < h && cells[(size_t)y * w + x].mask != 1;
+    }
+};
+
+static std::string GameRootForTests() {
+    static std::string root;
+    if (!root.empty()) return root;
+    char env[MAX_PATH] = {};
+    if (GetEnvironmentVariableA("COCLASSIC_GAME_ROOT", env, MAX_PATH) > 0)
+        root = env;
+    else
+        root = "F:\\Games\\Classic Conquer 2.0";
+    // MapGrid::GetGameRoot() reads the same variable (cached on first use).
+    SetEnvironmentVariableA("COCLASSIC_GAME_ROOT", root.c_str());
+    return root;
+}
+
+static RealMap LoadRealMap(const char* dmapName) {
+    const std::string root = GameRootForTests();
+    const std::string path = root + "\\map\\map\\" + dmapName + ".DMap";
+    if (GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES)
+        throw TestSkip{};
+    RealMap m;
+    if (!MapGrid::ParseFile(path, &m.w, &m.h, &m.cells, &m.portals)) {
+        fprintf(stderr, "    ParseFile failed: %s\n", path.c_str());
+        throw 0;
+    }
+    return m;
+}
+
+static void FillTestMap(TestMap& tm, const RealMap& rm) {
+    for (int y = 0; y < rm.h; ++y)
+        for (int x = 0; x < rm.w; ++x) {
+            const MapGrid::Cell& c = rm.cells[(size_t)y * rm.w + x];
+            tm.SetCell(x, y, c.mask, c.altitude);
+        }
+}
+
+static int CountReachable(TestMap& tm, int x, int y) {
+    auto seen = tm.Get()->FloodReachable(x, y, 100000000);
+    int n = 0;
+    for (uint8_t v : seen) n += v ? 1 : 0;
+    return n;
+}
+
+TEST(overlay_twincity_rails_block_walkable_land) {
+    RealMap m = LoadRealMap("newplain");
+    // Rail cells that sit on base-walkable bank land — the server refuses these.
+    EXPECT(!m.Walkable(601, 682));   // 2026-09-04 live refusal (bridgeA SW cap)
+    EXPECT(!m.Walkable(604, 674));   // 2026-09-18 live refusal (bridgeA NW cap)
+    EXPECT(!m.Walkable(600, 674));
+    EXPECT(!m.Walkable(603, 682));
+    EXPECT(!m.Walkable(644, 674));   // bridgeA east cap rail
+    EXPECT(!m.Walkable(141, 540));   // bridgeB-L west cap rail
+    EXPECT(!m.Walkable(147, 541));   // 2026-09-18 log: jump destination on a rail tile
+    EXPECT(!m.Walkable(144, 547));
+}
+
+TEST(overlay_twincity_deck_and_banks_stay_walkable) {
+    RealMap m = LoadRealMap("newplain");
+    EXPECT(m.Walkable(167, 543));    // hero stood mid-bridge here
+    EXPECT(m.Walkable(150, 543));
+    EXPECT(m.Walkable(624, 678));    // bridgeA deck
+    EXPECT(m.Walkable(617, 676));    // landings the bot has actually used
+    EXPECT(m.Walkable(635, 676));
+    EXPECT(m.Walkable(620, 676));
+    EXPECT(!m.Walkable(167, 540));   // rail over river
+    EXPECT(!m.Walkable(167, 536));   // river
+    EXPECT(!m.Walkable(624, 672));   // river
+    EXPECT(m.Walkable(599, 679));    // bank, untouched by any rail
+    EXPECT(m.Walkable(649, 679));
+}
+
+TEST(overlay_twincity_bridges_still_route) {
+    RealMap m = LoadRealMap("newplain");
+    TestMap tm(m.w, m.h);
+    FillTestMap(tm, m);
+    auto* g = tm.Get();
+    EXPECT(!g->FindPath(590, 679, 655, 679, 3000000).empty());   // bridgeA W -> E
+    EXPECT(!g->FindPath(655, 679, 590, 679, 3000000).empty());   // and back
+    EXPECT(!g->FindPath(135, 544, 205, 544, 3000000).empty());   // bridgeB-L W -> E
+    EXPECT(!g->FindPath(205, 544, 135, 544, 3000000).empty());
+    // The route must not step on a rail tile the server refuses.
+    for (auto& p : g->FindPath(590, 679, 655, 679, 3000000))
+        EXPECT(m.Walkable(p.x, p.y));
+}
+
+TEST(overlay_reach_invariant_twincity) {
+    RealMap m = LoadRealMap("newplain");
+    TestMap tm(m.w, m.h);
+    FillTestMap(tm, m);
+    // Pre-change area 340844, minus the 48 newly blocked tiles, nothing cut off.
+    EXPECT(CountReachable(tm, 401, 387) == 340796);
+    // Every file portal is walkable and lives in that one component.
+    auto seen = tm.Get()->FloodReachable(401, 387, 100000000);
+    EXPECT(m.portals.size() == 6);
+    for (const MapPortal& p : m.portals) {
+        EXPECT(m.Walkable(p.x, p.y));
+        EXPECT(seen[(size_t)p.y * m.w + p.x] != 0);
+    }
+}
+
+TEST(overlay_reach_invariant_special_maps) {
+    struct Case { const char* name; int px, py, expect; };
+    static const Case cases[] = {
+        {"task07",        260,   4, 441288},   // pre 441322, 34 blocked
+        {"task08",          3, 500, 470174},   // pre 470206, 32 blocked
+        {"p-arena",       251, 166,  14171},   // pre  14245, 74 blocked
+        {"faction-black", 333, 342,  25222},   // pre  25246, 24 blocked in this component
+    };
+    for (const Case& c : cases) {
+        RealMap m = LoadRealMap(c.name);
+        TestMap tm(m.w, m.h);
+        FillTestMap(tm, m);
+        EXPECT(m.Walkable(c.px, c.py));
+        const int got = CountReachable(tm, c.px, c.py);
+        if (got != c.expect)
+            fprintf(stderr, "    %s: reachable from (%d,%d) = %d, expected %d\n",
+                    c.name, c.px, c.py, got, c.expect);
+        EXPECT(got == c.expect);
+    }
+}
+
+TEST(overlay_map1010_bridge_intact) {
+    RealMap m = LoadRealMap("newbie");
+    EXPECT(m.Walkable(88, 85));      // user-confirmed bridge tile
+    EXPECT(!m.Walkable(43, 71));     // genuine void
+    EXPECT(m.Walkable(62, 109));
+    TestMap tm(m.w, m.h);
+    FillTestMap(tm, m);
+    EXPECT(!tm.Get()->FindPath(67, 106, 91, 74, 3000000).empty());
+}
+
+// =====================================================================
 // Dump file integration tests — run only when a dump is provided
 // =====================================================================
 
@@ -627,10 +790,18 @@ int main(int argc, char** argv)
     // Dump roundtrip
     RUN(dump_and_reload);
 
+    // Real .DMap/.scene overlays (skipped when the client install isn't present)
+    RUN(overlay_twincity_rails_block_walkable_land);
+    RUN(overlay_twincity_deck_and_banks_stay_walkable);
+    RUN(overlay_twincity_bridges_still_route);
+    RUN(overlay_reach_invariant_twincity);
+    RUN(overlay_reach_invariant_special_maps);
+    RUN(overlay_map1010_bridge_intact);
+
     // Dump integration tests (if dump files provided as args)
     for (int i = 1; i < argc; ++i)
         RunDumpTests(argv[i]);
 
-    printf("\n=== Results: %d passed, %d failed ===\n", g_testsPassed, g_testsFailed);
+    printf("\n=== Results: %d passed, %d failed, %d skipped ===\n", g_testsPassed, g_testsFailed, g_testsSkipped);
     return g_testsFailed > 0 ? 1 : 0;
 }

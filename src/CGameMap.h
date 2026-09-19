@@ -163,8 +163,10 @@ public:
     // Bridges and other standable structures are NOT in the base terrain
     // grid — they arrive via the .DMap's scene-placement section, which
     // MapGrid::ParseFile now parses and folds into the cell masks before
-    // this ever runs (see mapdata.cpp's scene-overlay block). So a plain
-    // mask test is correct again; there is no override table.
+    // this ever runs (see mapdata.cpp's scene-overlay block) — in BOTH
+    // directions: overlay-walkable cells open deck tiles, overlay rail cells
+    // block the base-walkable bank land they sit on. So a plain mask test is
+    // correct; there is no override table.
     bool IsWalkable(int x, int y) const {
         return GetMask(GetCell(x, y)) != 1;
     }

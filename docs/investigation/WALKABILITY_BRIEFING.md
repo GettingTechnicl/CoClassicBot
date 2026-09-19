@@ -122,6 +122,8 @@ Cell[0,3], Cell[3,3]) — walk onto it and see which corner tiles refuse.
    `CanJump`/`FindPath` all pick it up with **zero changes** to the decision code. (Overlay `mask==1`
    rail cells over base-blocked tiles change nothing; over base-walkable tiles they should probably
    block — that's what the game does with a rail. Either way, the overlay layer is authoritative.)
+   **[Resolved 2026-09-18: rail cells DO block base-walkable tiles — the server refuses them. See the
+   addendum in `TWIN_CITY_BRIDGE_REBUTTAL.md` for the evidence and the reachability diff.]**
 4. Keep `MapGrid::Cell` single-value if preferred by also OR-ing into a `walkableOverride` bit —
    but attaching the real second layer is what makes the `layer[N]` tooltip finally show the truth.
 5. Delete `walkability_overrides.{h,cpp}` and the fallback branch in `IsWalkable`.

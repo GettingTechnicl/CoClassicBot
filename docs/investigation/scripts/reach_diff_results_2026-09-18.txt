@@ -1,0 +1,40 @@
+2009-7x          flipped=0  (no rail-over-walkable) -> unchanged
+CelestialChest   616x616 flipped=   48  splits=0  erased_components=0 (sizes [])  anchor-reach PRE=63728 POST=63680 (flipped inside it: 48, delta=0)
+bp-flag          564x564 flipped=  206  splits=0  erased_components=0 (sizes [])  anchor-reach PRE=88137 POST=87931 (flipped inside it: 206, delta=0)
+faction-black    404x404 flipped=  104  splits=0  erased_components=0 (sizes [])  anchor-reach PRE=25246 POST=25222 (flipped inside it: 24, delta=0)
+     portals walkable pre/post: [(0, True, True)]
+newbie           flipped=0  (no rail-over-walkable) -> unchanged
+newplain         972x972 flipped=   48  splits=0  erased_components=0 (sizes [])  anchor-reach PRE=340844 POST=340796 (flipped inside it: 48, delta=0)
+     portals walkable pre/post: [(2, True, True), (3, True, True), (1, True, True), (7, True, True), (8, True, True), (9, True, True)]
+p-arena          256x256 flipped=   74  splits=0  erased_components=0 (sizes [])  anchor-reach PRE=14245 POST=14171 (flipped inside it: 74, delta=0)
+     portals walkable pre/post: [(0, True, True)]
+pk               104x104 flipped=   63  splits=0  erased_components=0 (sizes [])  anchor-reach PRE=2633 POST=2570 (flipped inside it: 63, delta=0)
+sky              flipped=0  (no rail-over-walkable) -> unchanged
+skycut           flipped=0  (no rail-over-walkable) -> unchanged
+skymaze          680x680 flipped= 1250  splits=1  erased_components=0 (sizes [])  anchor-reach PRE=2727 POST=2721 (flipped inside it: 6, delta=0)
+     SPLIT component#123 size=135: surviving pieces [97, 31]
+     portals walkable pre/post: [(0, True, True), (1, True, True), (2, True, True), (3, True, True)]
+skymaze1         680x680 flipped= 1198  splits=1  erased_components=0 (sizes [])  anchor-reach PRE=2729 POST=2723 (flipped inside it: 6, delta=0)
+     SPLIT component#118 size=133: surviving pieces [97, 29]
+     portals walkable pre/post: [(2, True, True), (1, True, True), (0, True, True), (3, True, True), (4, True, True), (5, True, True)]
+skymaze2         680x680 flipped= 1194  splits=1  erased_components=0 (sizes [])  anchor-reach PRE=2730 POST=2724 (flipped inside it: 6, delta=0)
+     SPLIT component#114 size=133: surviving pieces [97, 29]
+     portals walkable pre/post: [(1, True, True), (0, True, True), (2, True, True), (3, True, True), (4, True, True), (5, True, True)]
+skymaze3         680x680 flipped= 1155  splits=1  erased_components=0 (sizes [])  anchor-reach PRE=2730 POST=2724 (flipped inside it: 6, delta=0)
+     SPLIT component#119 size=133: surviving pieces [97, 29]
+     portals walkable pre/post: [(3, True, True), (0, True, True), (2, True, True), (1, True, True), (4, True, True), (5, True, True)]
+star             flipped=0  (no rail-over-walkable) -> unchanged
+star01           flipped=0  (no rail-over-walkable) -> unchanged
+star02           flipped=0  (no rail-over-walkable) -> unchanged
+star03           flipped=0  (no rail-over-walkable) -> unchanged
+star04           flipped=0  (no rail-over-walkable) -> unchanged
+star05           flipped=0  (no rail-over-walkable) -> unchanged
+star06           flipped=0  (no rail-over-walkable) -> unchanged
+star07           flipped=0  (no rail-over-walkable) -> unchanged
+star08           flipped=0  (no rail-over-walkable) -> unchanged
+star09           flipped=0  (no rail-over-walkable) -> unchanged
+star10           flipped=0  (no rail-over-walkable) -> unchanged
+task07           1220x1220 flipped=   34  splits=0  erased_components=0 (sizes [])  anchor-reach PRE=441322 POST=441288 (flipped inside it: 34, delta=0)
+     portals walkable pre/post: [(0, True, True), (1, True, True)]
+task08           1020x1020 flipped=   32  splits=0  erased_components=0 (sizes [])  anchor-reach PRE=470206 POST=470174 (flipped inside it: 32, delta=0)
+     portals walkable pre/post: [(0, True, True)]

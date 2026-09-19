@@ -81,3 +81,62 @@ override to do. Keeping it "just in case" is keeping a bug-shaped hole open.
 
 Scripts used: `dmap_check_167_543.py` (this check), `dmap_deep5.py`/`dmap_deep6.py` (anchor +
 cell-ordering proofs) in the session scratchpad — all read-only.
+
+---
+
+## Addendum 2026-09-18 — rails now block; this completes the plan above
+
+The formula and test assertions above always specified that the overlay is authoritative
+(`(167,540)` "NOT (rail)" is a rail cell over river, `mask=1`). The first implementation
+(`mapdata.cpp`, 2026-09-02) applied only the overlay's *walkable* cells and deliberately skipped
+its rail cells, pending a live check of part-cell **orientation** (can a part be mirrored within
+its footprint?). That deferral is now closed, and rail cells block. **Do not restore the
+walkable-only merge, and do not re-litigate the orientation caution — the evidence is below.**
+
+### What forced it: the server refuses rail tiles that sit on walkable bank land
+
+Twin City has 48 tiles the base grid calls walkable but an overlay rail cell covers
+(`bridgeA`: 31, `bridgeB-L`: 17). The walkable-only merge left them walkable, so A* happily
+routed onto them and the server refused the jump:
+
+| when | jump | tile refused | what it is |
+|---|---|---|---|
+| 2026-09-04 | `(588,695) -> (601,682)` | `(601,682)` | bridgeA SW end-cap rail (part `bridge05` row 8) |
+| 2026-09-18 | `(588,665) -> (604,674)` | `(604,674)` | bridgeA NW end-cap rail (part `bridge05` row 0) |
+
+Both repeated the identical failing jump for seconds to minutes (`Predicted move stale` /
+`STUCK timeout`), because every repath read the same wrong grid. `MarkTileBlockedThisSession`
+(pathfinder stuck-waypoint blacklist) treated the symptom; this fixes the cause. Nothing in any
+log shows the hero standing on any of the 48 tiles.
+
+### Why blocking is safe without an in-game test
+
+1. **Orientation** (`scripts/orient_vote.py`, `scripts/signtest.py`). Scored the four
+   candidate orientations (identity / flipX / flipY / flipBoth) over every scene part on every
+   shipped `.DMap`: the un-mirrored reading `cell(i,j) -> (x+dx-w+1+i, y+dy-h+1+j)` has the
+   highest rate of blocking part cells landing on base-blocked terrain. Per-part sign test over
+   asymmetric parts: identity beats flipY 77-17 (p ~ 3e-10), flipX 124-2 (p ~ 2e-34), flipBoth
+   109-18 (p ~ 5e-17). (Caveat: most of the statistical weight is the `skymaze` maps; the
+   bridges themselves can't discriminate, since their base terrain is uniform river. The two
+   refused tiles are blocked under *every* orientation, so the fix never rested on this.)
+2. **Full pre/post reachability diff** (`scripts/reach_diff.py`, results in
+   `scripts/reach_diff_results_2026-09-18.txt`). For every map with a scene overlay, computed
+   the walkable set current-vs-proposed and compared connected components under FindPath's own
+   movement model (8-neighbour, |dAlt| <= 200): **no component was split or erased on any city or
+   event map, every file portal is still walkable, and the area reachable from a fixed anchor
+   dropped by exactly the number of newly blocked tiles** (Twin City 340844 -> 340796; task07
+   441322 -> 441288; task08 470206 -> 470174; p-arena 14245 -> 14171; faction-black 25246 ->
+   25222). The single exception: the four `skymaze*` event maps each have one 133-135-tile
+   pocket that splits in two; it holds no portal and isn't connected to any portal's region.
+3. **Order-independent**: opens are collected first, rails applied second, skipping opened tiles,
+   so overlapping parts (only on sky/skymaze/faction-black) end walkable regardless of order.
+
+Locked in by `tests/map_tests.cpp` (`overlay_*`; parse the real files, skip if the install is
+absent; set `COCLASSIC_GAME_ROOT` to point at a different install).
+
+### If it ever looks wrong live
+
+One specific tile: `MarkTileBlockedThisSession` / `MarkTileWalkableThisSession` heal it for the
+session. A *pattern* of wrong tiles: re-run `scripts/reach_diff.py` and the orientation scripts
+(edit `ROOT` in `rail_scan.py`), and check the game files weren't patched, before touching the
+merge.
