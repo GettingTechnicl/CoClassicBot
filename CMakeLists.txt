@@ -219,6 +219,60 @@ set_target_properties(netfinder PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ── Recv finder (standalone; Detour-hooks Winsock recv/WSARecv -- inbound
+#    counterpart to netfinder, checking whether server->client traffic is
+#    plaintext-framed the way outbound turned out to be) ──
+add_library(recvfinder SHARED
+    src/recvfinder.cpp
+    ${DETOURS_SOURCES}
+)
+target_include_directories(recvfinder PRIVATE vendor/Detours/src)
+target_link_libraries(recvfinder PRIVATE ws2_32 psapi)
+set_target_properties(recvfinder PROPERTIES
+    OUTPUT_NAME "recvfinder"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── Flush finder (standalone; Detour-hooks the confirmed-non-hook-resistant
+#    per-tick flush poller at 0x1DD860 to read the pending-send buffer
+#    BEFORE it reaches send() -- finds which pipeline stage transforms a
+#    message, without touching the anti-tamper-protected 0xE9960/0xBF920
+#    region at all) ──
+add_library(flushfinder SHARED
+    src/flushfinder.cpp
+    ${DETOURS_SOURCES}
+)
+target_include_directories(flushfinder PRIVATE vendor/Detours/src)
+set_target_properties(flushfinder PROPERTIES
+    OUTPUT_NAME "flushfinder"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# Iteration 2 of flushfinder (heartbeat diagnostic added) -- separate
+# target/output name so it can inject alongside an already-loaded instance
+# without needing a relaunch.
+add_library(flushfinder2 SHARED
+    src/flushfinder.cpp
+    ${DETOURS_SOURCES}
+)
+target_include_directories(flushfinder2 PRIVATE vendor/Detours/src)
+set_target_properties(flushfinder2 PROPERTIES
+    OUTPUT_NAME "flushfinder2"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# Iteration 3 -- reads the message bytes from connPtr+0x00 (proven location)
+# instead of dereferencing the bogus +0x2008 "pointer".
+add_library(flushfinder3 SHARED
+    src/flushfinder.cpp
+    ${DETOURS_SOURCES}
+)
+target_include_directories(flushfinder3 PRIVATE vendor/Detours/src)
+set_target_properties(flushfinder3 PROPERTIES
+    OUTPUT_NAME "flushfinder3"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ── Map tests ──────────────────────────────────────────────────────
 add_executable(map_tests
     tests/map_tests.cpp
