@@ -27,6 +27,7 @@
 #include "auto_login.h"
 #include "account_session.h"
 #include "../src/msg_types.h"
+#include "log_stamp.h"  // must stay LAST: redefines printf to add timestamps
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -1403,7 +1404,7 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
 
         const DWORD pid = pi.dwProcessId;
         session->gamePid = pid;
-        printf("[+] Started %s (PID %lu)\n", GAME_EXE, pid);
+        printf("[+] Started %s (PID %lu) account=\"%s\"\n", GAME_EXE, pid, session->profile.label.c_str());
 
         // Fix B (race 2): replace the tracked liveness handle for THIS
         // account before this iteration's pi.hProcess gets closed later in
@@ -1499,6 +1500,7 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
             waitHandles[2] = params.relay->GetFailClosedEvent();
             handleCount = 3;
         }
+        bool launcherKilledAtLoginScreen = false;
         DWORD wait;
         if (params.haveProfile) {
             // Multi-account manager support: a network hiccup or manual
@@ -1531,6 +1533,7 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
                     printf("[*] Detected a disconnect (login screen reappeared) — closing the game and relaunching a fresh one...\n");
                     session->state = SessionState::Crashed;
                     session->SetStatus("Disconnected — relaunching");
+                    launcherKilledAtLoginScreen = true;
                     TerminateProcess(pi.hProcess, 0);
                     // Fix B (race 1): wait long enough to actually confirm the OS
                     // killed this process before looping back to CreateProcessA for
@@ -1584,6 +1587,21 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
 
         DWORD exitCode = 0;
         GetExitCodeProcess(pi.hProcess, &exitCode);
+
+        // Disconnect investigation: record WHY the game process ended. A NTSTATUS-shaped
+        // code (0xC0000005, 0xC0000409...) is a crash; a small code from a process we did
+        // not terminate is the game/Themida exiting itself; 259 = still alive (the 90s
+        // post-TerminateProcess wait timed out).
+        {
+            const char* cause = "game process ended on its own (not launcher-terminated)";
+            if (killSwitchFired) cause = "proxy kill-switch";
+            else if (stoppedByUser) cause = "user Exit";
+            else if (launcherKilledAtLoginScreen) cause = "launcher-terminated after login screen reappeared (server-side disconnect)";
+            else if (exitCode == kStuckLoginExitCode) cause = "DLL self-exit: login handshake stuck";
+            printf("[exit] account=\"%s\" pid=%lu uptime=%lus exitCode=0x%08lX (%lu)%s cause=%s\n",
+                   session->profile.label.c_str(), pid, (GetTickCount() - launchTick) / 1000,
+                   exitCode, exitCode, exitCode == STILL_ACTIVE ? " [STILL_ACTIVE]" : "", cause);
+        }
 
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);

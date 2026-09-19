@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "log_stamp.h"  // must stay LAST: redefines printf to add timestamps
+
 namespace {
 
 // Multi-account manager support: SendInput() and SetForegroundWindow() are
