@@ -48,6 +48,21 @@ Standing practice (per the user, 2026-09-18): the PC-side instance posts anythin
 as it happens, so the user doesn't have to manually relay it. Newest entries on top. Each entry
 should be skimmable — point to the real detail (a commit, a doc) rather than duplicating it.
 
+### 2026-09-18 (later) — current-HP always reads 0 (root cause confirmed, offset search not done yet)
+
+If you ever see a bot spamming HP potions nonstop even at full health, that's a real, confirmed
+bug, not user error or a config issue: `CHero::GetCurrentHp()` always returns 0 because its
+native accessor path is dead on v1074 (`GameRva::VERIFIED_V1074 = false` unconditionally zeroes
+`CStatTable::GetValue()`). Max HP is unaffected (it's a direct field, not a native call), so
+`hpPercent` computes as 0/maxHp = 0% every tick, which is always below the potion threshold.
+**Not fixed yet** — the fix needs a live memory-correlation session (someone watching on-screen
+HP while damage/heal/regen happens) to find current HP's direct-field offset, the same way
+`m_nMaxHp` was found. Full detail, the tooling already built for it (an extended "Dump Stat
+BYTES" overlay button + a temporary throttled `[hp-diag]` log line), and the exact next steps
+are in `docs/investigation/CURRENT_HP_READ_INVESTIGATION.md` — read that before re-diagnosing
+this from scratch if it comes up on your side. **Do not enable `usePotions` for unattended runs
+until this is actually fixed** — right now it will burn potions constantly for no reason.
+
 ### 2026-09-18 — proxy-mode kill-switch + relay logging bugs, both fixed
 
 If you ever see (or have seen) a proxied account launch report "failed" in the account manager

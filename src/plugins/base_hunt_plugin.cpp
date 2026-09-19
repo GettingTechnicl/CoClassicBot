@@ -336,6 +336,22 @@ void BaseHuntPlugin::RefreshRuntimeState(CHero* hero, CGameMap* map)
     m_lastMaxHp = hero ? hero->GetMaxHp() : 0;
     m_lastMana = hero ? hero->GetCurrentMana() : 0;
     m_lastMaxMana = hero ? hero->GetMaxMana() : 0;
+    // [HP RE 2026-09-18, TEMP] confirm the current-HP-reads-0 diagnosis live and
+    // compare against on-screen HP; remove once the fix lands. Throttled (this
+    // runs every RefreshRuntimeState tick) per the established hot-path-logging
+    // rule -- see coclassicbot-workflow-feedback memory.
+    {
+        static DWORD lastHpDiagLog = 0;
+        const DWORD nowHpDiag = GetTickCount();
+        if (hero && nowHpDiag - lastHpDiagLog > 2000) {
+            lastHpDiagLog = nowHpDiag;
+            const int hpPercentDiag = m_lastMaxHp > 0 ? (m_lastHp * 100) / m_lastMaxHp : 100;
+            spdlog::info("[hp-diag] GetCurrentHp={} statTablePtr=0x{:X} GetValue(1)={} GetMaxHp={} hpPercent={}",
+                m_lastHp, reinterpret_cast<uintptr_t>(hero->m_pStatTable),
+                hero->m_pStatTable ? hero->m_pStatTable->GetValue(1) : -1,
+                m_lastMaxHp, hpPercentDiag);
+        }
+    }
     m_lastBagCount = hero ? hero->m_deqItem.size() : 0;
     m_buffMgr.RefreshBuffState(hero);
     if (m_buffMgr.IsPreLandingRetreat() && m_buffMgr.CanRecastAnyFly(hero, GetAutoHuntSettings())) {
@@ -4449,6 +4465,17 @@ void BaseHuntPlugin::RenderDebugSection()
     if (ImGui::Button("Dump Stat BYTES (find HP/kills offset)")) {
         if (hero) {
             const uintptr_t base = reinterpret_cast<uintptr_t>(hero);
+            // [HP RE 2026-09-18]: current HP is confirmed dead via the native
+            // CStatTable::GetValue path (see CStatTable.cpp / GameRva::VERIFIED_V1074
+            // = false, which unconditionally zeroes it). m_nMaxHp works as a direct
+            // CHero field at +0x3D0 (CRole.h) -- current HP is hypothesized to live
+            // nearby as another direct field, same pattern. This window brackets
+            // +0x3D0 (maxHp) through +0x6E8 (just past stamina/maxStamina) so a
+            // live diff across damage/heal/regen can spot the dword that moves.
+            // Printed offsets are relative to +0x290, not to CHero -- add 0x290 to
+            // get the true CHero offset (e.g. printed "+0x140" = CHero+0x3D0).
+            spdlog::info("[statbytes] === hero=0x{:X} : CHero ints +0x290..+0x720 (near maxHp@0x3D0, stamina@0x6E0/0x6E4) ===", base);
+            DumpInts("CHero+0x290", base + 0x290, 292);   // 0x490 bytes as int32s
             spdlog::info("[statbytes] === hero=0x{:X} : CHero ints +0x800..+0xD00 (kills are at +0xA30) ===", base);
             DumpInts("CHero", base + 0x800, 320);   // 0x500 bytes as int32s (widened to hunt HP)
             uintptr_t p968 = 0, p9B8 = 0;
