@@ -161,7 +161,15 @@ static void LogSend(const uint8_t* data, size_t len, const char* api)
                 api, len,
                 liveE9960[0], liveE9960[1], liveE9960[2], liveE9960[3], liveE9960[4], liveE9960[5], liveE9960[6], liveE9960[7],
                 liveBF920[0], liveBF920[1], liveBF920[2], liveBF920[3], liveBF920[4], liveBF920[5], liveBF920[6], liveBF920[7]);
-        size_t previewLen = len < 16 ? len : 16;
+        // [CONNECTION-DECIPHER 2026-09-18] Bumped from 16 -> 128: a 36-sample
+        // capture at the 16-byte cap found 7 exact-repeat prefixes among 36
+        // len=39 game packets (statistically ~impossible for real per-message
+        // stream-cipher output -- see docs/investigation/CONNECTION_DECIPHER_PREP.md),
+        // meaning there's real structure to find, but the 16-byte cap cuts off
+        // more than half of every 39-byte packet. 128 covers every real game
+        // packet size seen so far (max 39) plus headroom, while still bounding
+        // the unrelated TLS/HTTP traffic already seen mixed into captures.
+        size_t previewLen = len < 128 ? len : 128;
         for (size_t i = 0; i < previewLen; ++i)
             fprintf(f, "%u%s", data ? data[i] : 0, (i + 1 < previewLen) ? "," : "");
         fprintf(f, "], \"frames\":[");
