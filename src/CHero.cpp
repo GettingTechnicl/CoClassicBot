@@ -12,6 +12,7 @@
 #include "plugins/travel_plugin.h"
 #include "log.h"
 #include <cstring>
+#include <cstdio>
 
 namespace {
 constexpr uint16_t kMsgActionPacketType = 0x03F2;
@@ -586,6 +587,21 @@ static bool SendPickupItemPacket(const CMapItem& item)
 
     *(uint16_t*)buf = (uint16_t)off;
     *(uint16_t*)(buf + 2) = kMsgMapItemPacketType;
+
+    // [CONNECTION-DECIPHER 2026-09-18] Known-plaintext reference for the
+    // wire-capture experiment (docs/investigation/CONNECTION_DECIPHER_PREP.md):
+    // log the EXACT bytes handed to SendPacket() so a netfinder capture of
+    // this same send can be diffed against real, not reconstructed, plaintext.
+    {
+        std::string hex;
+        for (int i = 0; i < off; ++i) {
+            char b[4];
+            snprintf(b, sizeof(b), "%02X", buf[i]);
+            hex += b;
+        }
+        spdlog::warn("[debug] SendPickupItemPacket plaintext ({} bytes): {}", off, hex);
+    }
+
     return SendPacket(buf, off);
 }
 
@@ -604,12 +620,24 @@ static bool SendPickupItemPacket(const CMapItem& item)
 // (coclassicbot-live-offsets memory, session 8): item picked up successfully
 // once the hero was actually standing on it (the server enforces pickup
 // range; sending the packet from elsewhere is correctly rejected).
-bool DebugTestNativePickup(const CMapItem& item)
+bool DebugTestNativePickup(const CMapItem& item, bool skipJump)
 {
     CHero* hero = CHero::GetSingletonPtr();
     if (!hero) {
         spdlog::error("[debug] DebugTestNativePickup: no hero singleton");
         return false;
+    }
+
+    if (skipJump) {
+        // [CONNECTION-DECIPHER 2026-09-18] Isolated-send mode: no jump, no
+        // Sleep -- just the pickup packet alone, for a byte-aligned
+        // known-plaintext capture. Caller is responsible for standing
+        // somewhere the server will accept the pickup from (no movement
+        // happens here).
+        spdlog::info("[debug] DebugTestNativePickup: skipJump=true, sending pickup only");
+        const bool ok = SendPickupItemPacket(item);
+        spdlog::info("[debug] DebugTestNativePickup: pickup packet sent, ok={}", ok);
+        return ok;
     }
 
     spdlog::info("[debug] DebugTestNativePickup: moving to item position ({},{}) before pickup",

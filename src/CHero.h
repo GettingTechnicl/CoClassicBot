@@ -29,7 +29,15 @@ const char* GetEquipSlotName(int slot);
 // this is deliberately NOT part of CHero::PickupItem(). Only call this from
 // an explicit, manual test action (e.g. the overlay debug button), never from
 // automated bot logic.
-bool DebugTestNativePickup(const CMapItem& item);
+//
+// [CONNECTION-DECIPHER 2026-09-18] `skipJump` (default false, preserves prior
+// behavior): the normal jump-then-pickup sequence produces two enqueued
+// messages close together, which a netfinder capture showed merging into one
+// wire write (docs/investigation/CONNECTION_DECIPHER_PREP.md) -- useless for
+// getting a byte-aligned known-plaintext<->ciphertext pair. Skipping the jump
+// yields an isolated pickup send, cleanly aligned for black-box cipher
+// characterization against the wire capture.
+bool DebugTestNativePickup(const CMapItem& item, bool skipJump = false);
 
 // Session 9: manual test hook for SendJumpPacket(), separate from any hunt/
 // travel logic. `applyLocalPrediction` lets the debug button test both modes

@@ -5,6 +5,7 @@
 #include "hooks.h"
 #include "itemtype.h"
 #include "packets.h"
+#include "msg_types.h"
 #include "config.h"
 #include "map_probe.h"
 #include "monster_scan.h"
@@ -556,10 +557,16 @@ static void RenderPacketsTab()
                 }
 
                 // Header label: click to expand, right-click to copy
-                char label[128];
-                snprintf(label, sizeof(label),
-                         "[%zu] Type=0x%04X  Size=%u##pkt%zu",
-                         i, pkt.msgType, pkt.rawSize, i);
+                const char* typeName = MsgTypeName(pkt.msgType);
+                char label[160];
+                if (typeName)
+                    snprintf(label, sizeof(label),
+                             "[%zu] Type=0x%04X (%s)  Size=%u##pkt%zu",
+                             i, pkt.msgType, typeName, pkt.rawSize, i);
+                else
+                    snprintf(label, sizeof(label),
+                             "[%zu] Type=0x%04X  Size=%u##pkt%zu",
+                             i, pkt.msgType, pkt.rawSize, i);
 
                 bool open = ImGui::TreeNode(label);
 
@@ -687,26 +694,42 @@ static void RenderDevToolsLoggingDiagnosticsSection(CHero* /*hero*/)
     }
 }
 
+// File-scope so the Map tab's ground-item rows can populate these directly
+// (see SendItemToPickupTest below) instead of the user hand-transcribing
+// item ID/X/Y from a screenshot.
+static int g_pickupTestItemId = 0;
+static int g_pickupTestX = 0;
+static int g_pickupTestY = 0;
+
+static void SendItemToPickupTest(OBJID itemId, int x, int y)
+{
+    g_pickupTestItemId = static_cast<int>(itemId);
+    g_pickupTestX = x;
+    g_pickupTestY = y;
+}
+
 static void RenderDevToolsNativePickupTestSection(CHero* /*hero*/)
 {
     constexpr ImGuiTreeNodeFlags kSectionFlags = ImGuiTreeNodeFlags_DefaultOpen;
     if (ImGui::CollapsingHeader("Debug: Native Pickup Test", kSectionFlags)) {
-        static int testItemId = 0;
-        static int testX = 0;
-        static int testY = 0;
+        int& testItemId = g_pickupTestItemId;
+        int& testX = g_pickupTestX;
+        int& testY = g_pickupTestY;
+        static bool testSkipJump = false;
         ImGui::TextDisabled("Session 5: tests CHero::PickupItem's new native call path");
         ImGui::TextDisabled("(GameRva::CNETCLIENT_SEND_MAPITEM_MSG). SEH-guarded.");
         ImGui::InputInt("Item ID", &testItemId);
         ImGui::InputInt("X", &testX);
         ImGui::InputInt("Y", &testY);
+        ImGui::Checkbox("Skip jump (isolated pickup send, for wire-capture alignment)", &testSkipJump);
         if (ImGui::Button("Test Native Pickup") && testItemId != 0) {
             CMapItem testItem = {};
             testItem.m_id = static_cast<OBJID>(testItemId);
             testItem.m_idType = 1000000; // Stancher, only used if plus lookup needed
             testItem.m_pos = Position(testX, testY);
             testItem.m_pInfo = nullptr; // GetPlus() safely returns 0 when null
-            spdlog::info("[debug] Test Native Pickup: id={} x={} y={}", testItemId, testX, testY);
-            DebugTestNativePickup(testItem);
+            spdlog::info("[debug] Test Native Pickup: id={} x={} y={} skipJump={}", testItemId, testX, testY, testSkipJump);
+            DebugTestNativePickup(testItem, testSkipJump);
         }
     }
 }
@@ -1963,7 +1986,7 @@ static void RenderEntitiesTableSection(CHero* hero,
                         if (noData) {
                             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
                                 "No entities nearby.");
-                        } else if (ImGui::BeginTable("##ent", 8,
+                        } else if (ImGui::BeginTable("##ent", 9,
                                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                 ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
                                 ImVec2(0, 200.0f))) {
@@ -1987,6 +2010,7 @@ static void RenderEntitiesTableSection(CHero* hero,
                             ImGui::TableSetupColumn("PK?##pkstatus", ImGuiTableColumnFlags_WidthFixed, 60.0f);
                             ImGui::TableSetupColumn("Pos",   ImGuiTableColumnFlags_WidthFixed, 100.0f);
                             ImGui::TableSetupColumn("Dist",  ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 110.0f);
                             ImGui::TableHeadersRow();
 
                             // Roles (NPCs, players, monsters)
@@ -2101,6 +2125,9 @@ static void RenderEntitiesTableSection(CHero* hero,
                                     ImGui::Text("(%d, %d)", item->m_pos.x, item->m_pos.y);
                                     ImGui::TableNextColumn();
                                     ImGui::Text("%.0f", dist);
+                                    ImGui::TableNextColumn();
+                                    if (ImGui::SmallButton("-> Pickup Test"))
+                                        SendItemToPickupTest(item->m_id, item->m_pos.x, item->m_pos.y);
                                     ImGui::PopID();
                                 }
                             }
