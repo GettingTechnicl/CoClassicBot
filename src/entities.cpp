@@ -372,6 +372,24 @@ namespace Entities
         return g_refreshIntervalMs.load(std::memory_order_relaxed);
     }
 
+    // Roles come from the scan thread and are published here later, so a CRole*
+    // can be freed in between; touching one directly faults the whole game
+    // (sentry crashes 2026-09-18 23:02 and 2026-09-19 11:56, both AVs in this
+    // function). No C++ objects with destructors here so __try is legal.
+    static bool ReadMonsterForSpawnFeed(const CRole* r, OBJID* id, Position* pos)
+    {
+        __try {
+            if (!r->IsMonster() || r->IsDead())
+                return false;
+            *id = r->GetID();
+            *pos = r->m_posMap;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
     // Session 10 [CRASH HARDENING]: used to return `const vector&` aliasing
     // g_front directly. Every caller iterates the result with NO lock held
     // (by design — the lock only needs to protect the swap itself), but that
@@ -422,8 +440,10 @@ namespace Entities
                 std::vector<std::pair<OBJID, Position>> monsters;
                 monsters.reserve(g_front.size());
                 for (CRole* r : g_front) {
-                    if (r && r->IsMonster() && !r->IsDead())
-                        monsters.emplace_back(r->GetID(), r->m_posMap);
+                    OBJID id = 0;
+                    Position pos{};
+                    if (r && ReadMonsterForSpawnFeed(r, &id, &pos))
+                        monsters.emplace_back(id, pos);
                 }
                 // Called every settled batch, even with zero monsters found —
                 // an empty-handed batch is itself the observation that marks
