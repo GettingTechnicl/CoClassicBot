@@ -140,3 +140,49 @@ One specific tile: `MarkTileBlockedThisSession` / `MarkTileWalkableThisSession` 
 session. A *pattern* of wrong tiles: re-run `scripts/reach_diff.py` and the orientation scripts
 (edit `ROOT` in `rail_scan.py`), and check the game files weren't patched, before touching the
 merge.
+
+### Follow-up 2026-09-20 — does the bot actually use the affected maps? (closes the skymaze pocket)
+
+The reachability diff cleared the maps by *portal* connectivity, which is the right test for a
+crossing-driven map (Twin City) but not for a traversal-driven one, and the one region that split
+(a 133-135-tile pocket on each `skymaze*` map) shares its risk with the orientation question (that
+is where a wrong orientation would show up first). So: does any bot route touch those maps?
+
+- **`skymaze` (1041), `skymaze1` (1060), `skymaze2` (1061), `skymaze3` (1062): the bot never
+  uses them. The pocket split is moot.** None of the ids is a `MAP_*` constant, a gateway edge, or
+  a `ResolveMapFile` alias, and no saved zone/route/profile (`coclassic*.ini`,
+  `coclassic_profiles.ini`) names them (the only `1041` in `src/` is a *y-coordinate* in the
+  Adventure Islands portal rows). They are event/instance maps the travel graph can't reach.
+  (If someone ever adds them, re-check the pocket then: 135 tiles, x227-246/y289-324 on `skymaze`.)
+- **Correction to the earlier "special maps" wording: two of the maps in the blast radius ARE
+  used** — `task07` (1207) and `task08` (1208) are the Adventure Zone (`MAP_ADV_TASK07/08`
+  gateway edges; a saved profile hunts `zoneMapId=1207` map-wide). They are covered by the same
+  diff (34 / 32 newly blocked tiles, no split, reach down by exactly that count), and every
+  gateway coordinate and the saved zone centre is still walkable and in the same component,
+  261+ tiles from any newly blocked tile. The tiles come from the same assets as Twin City:
+  `bridgeA` (all 32 on task08, x390-438/y348-356), `bridgeB-L` (18 on task07,
+  x340-395/y208-216), plus `wbridge1` (16 on task07, x907-916/y918-967 — a *different* asset that
+  Twin City doesn't exercise). Twin City's saved hunt zone (circle at (105,455), r=12) is 121
+  tiles from the nearest newly blocked tile.
+- Other special maps in the radius (`p-arena`, `faction-black`, `pk`, `bp-flag`,
+  `CelestialChest`) aren't in the travel graph either.
+
+### Live-confirmation watch list (what would falsify this)
+
+1. **Twin City, both bridges** (crossing W->E and back): the log shows
+   `[mapdata] scene overlay: ... N tiles blocked`; **any repeat refusal onto `(601,682)` /
+   `(604,674)` falsifies the change.** A refusal onto one of the ~38 cap-corner tiles that only
+   differ under an x-flip (`bridgeA`: (600,675) (600,681) (601,681) (603,681) (604,675) (604,681)
+   (640,675) (640,682) (641,675) (641,682) (642,682) (643,682) (645,682) (646,682) (647,675)
+   (647,682) (648,675) (648,682); `bridgeB-L`: (141,541) (141,547) (142,541) (142,547) (144,541)
+   (144,547) (145,541) (145,547) (188,541) (188,548) (189,541) (189,548) (190,548) (191,548)
+   (193,548) (194,548) (195,541) (195,548) (196,541) (196,548)) means the part orientation is
+   mirrored in x.
+2. **Adventure Zone traversal**: one Twin City `bridgeA` crossing also validates `task08`'s 32
+   tiles (same asset, same orientation question). Separately watch a `task07` run for the
+   `wbridge1` bridge near (907-916, 918-967) — the one asset Twin City can't confirm — and the
+   `bridgeB-L` near (340-395, 208-216). Signal: bot stuck/repeating a jump beside those spans.
+3. **Recovery if any of the above trips**: the merge is centralized in `MapGrid::ParseFile`, so
+   scoping rail-blocking down (e.g. to the maps/scenes where it's been confirmed) or flipping the
+   orientation is a one-place change; the `overlay_*` tests in `tests/map_tests.cpp` pin the
+   current behaviour and would need the matching update.

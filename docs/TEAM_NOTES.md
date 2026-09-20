@@ -67,7 +67,8 @@ scored against every scene part on every map (p ~ 1e-10 to 1e-34). Details, scri
 `docs/investigation/TWIN_CITY_BRIDGE_REBUTTAL.md` (Addendum), `docs/investigation/scripts/`
 (`reach_diff.py`, `orient_vote.py`, `signtest.py`). `tests/map_tests.cpp` gained six `overlay_*`
 tests that parse the real game files (skip if not installed; `COCLASSIC_GAME_ROOT` overrides the
-path) — run `map_tests.exe` after any `mapdata.cpp`/game patch. If a tile still looks wrong live,
+path) — run `map_tests.exe` after any `mapdata.cpp`/game patch.
+**Live check (please watch for it):** a Twin City bridge crossing (both bridges) plus an Adventure Zone run — `task07`/`task08` use the SAME bridge assets and are in the blast radius (34/32 newly blocked tiles; the skymaze pocket that split is moot, the bot never routes there). Any repeat refusal onto `(601,682)`/`(604,674)` falsifies the change; a stuck jump beside a bridge cap, or on `task07`'s `wbridge1` near (907-916,918-967), means the cap orientation is mirrored (recoverable in `ParseFile`). Full list of tiles and the recovery plan: the Follow-up section of `TWIN_CITY_BRIDGE_REBUTTAL.md`. If a tile still looks wrong live,
 `MarkTileBlockedThisSession`/`MarkTileWalkableThisSession` heal one cell per session; a *pattern*
 of wrong tiles means re-run the scripts before touching the merge.
 
