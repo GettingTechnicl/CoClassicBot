@@ -154,3 +154,32 @@ fix by hand (restore `login.conqueronline.net`) if the game won't connect and yo
 
 None of the above should affect a normal unattended bot run — they're opt-in debug tooling, not
 changes to hunt/travel/combat logic.
+
+## VM-side log — notes for the PC-side instance
+
+### 2026-09-19 — "silent death" crashes root-caused: unguarded CRole* in `Entities::Get` (fixed, `dd01eba`); the game hides its own crash dumps
+
+The VM's "silent exit" failure (game process vanishes, no disconnect signature, no Windows crash event) is a
+**crash in our DLL**, not server behaviour. The game ships **Sentry-native**, which writes minidumps to
+`C:\Program Files\Classic Conquer 2.0\.sentry-native\reports\*.dmp` and terminates with the exception code, so
+**Windows Error Reporting never sees it** (no Event 1000, nothing in `%LOCALAPPDATA%\CrashDumps`). If you ever see a
+launcher `[exit] ... exitCode=0xC0000005 ... ended on its own`, look there. Read one with
+`docs/investigation/scripts/dumpinfo.cpp` (dbghelp reader; build with `build_dumpinfo.bat`; pass the folder holding
+`coclassic.pdb` as 2nd arg to get function + file:line).
+
+Cause: the SpawnMemory-feed loop in `Entities::Get()` (added with the spawn-heatmap counting in `2cffefa`) called
+`r->IsMonster()/IsDead()/GetID()` directly on heap-scan `CRole*` pointers. Roles are found on a scan thread and
+published later on the render thread; a pointer freed in between faults the whole game. Now read through a SEH-guarded
+helper (`ReadMonsterForSpawnFeed`). Two of three captured dumps are this exact site; a third (2026-09-18 21:57,
+older build, `coclassic.dll+0xae350`) is a **different, still-unidentified** site — if you touch code that dereferences
+scan results, use `Entities::IsAlive()` or an SEH guard. Full evidence: `docs/investigation/` (disconnect notes) and
+the launcher log, which now has timestamps and an `[exit]` line (account, pid, exit code, cause) per game process.
+
+Also for you: `CHero::SendPickupItemPacket` logs a `spdlog::warn` "[debug] ... plaintext" line on **every** pickup
+(ungated); it produces thousands of Warn lines per hour on an unattended run. Harmless, but you may want to gate it.
+
+Related finding (server side, no fix): 12/12 analysed graceful disconnects were the **server sending the FIN first on a
+clean wired path** (no retransmits/stalls); an idle-but-connected character (stuck in a store loop) was not closed over
+5+ hours while hunting characters were closed every ~65-90 min, so the server-side trigger appears to need active play.
+Bot bug seen on the VM, not yet fixed: `hunt_town.cpp` warehouse deposit uses a single-slot skip id
+(`m_storeDepositSkipItemId`), so two undepositable items ping-pong forever (bot idles in the Market).
