@@ -34,6 +34,9 @@ JCC = {"ja", "jae", "jb", "jbe", "jc", "je", "jz", "jg", "jge", "jl", "jle", "jn
 
 
 # --------------------------------------------------------------------------------------- images
+PACKER_SECTIONS = {".themida", ".boot", ".winlice", ".vmp0", ".vmp1", ".vmp2", ".enigma1", ".enigma2"}
+
+
 class Image:
     def __init__(self, data, sections, stamp=0, size_of_image=None, base=0x140000000, name=""):
         self.d = data
@@ -42,7 +45,10 @@ class Image:
         self.size_of_image = size_of_image or len(data)
         self.base = base
         self.name = name
-        self.code = [s for s in sections if (s["chars"] & 0x20) and s["rva"] < len(data)]
+        # The packer's own runtime sections are executable but are not the game's code: they are ciphertext / VM stubs, huge
+        # (v1078: 21 MB), and absent from the v1074 dump. Sweeping them wastes minutes and would make the encrypted-page
+        # guard fire falsely, so they are excluded from code analysis (found on the first v1078 capture).
+        self.code = [s for s in sections if (s["chars"] & 0x20) and s["rva"] < len(data) and s["name"].lower() not in PACKER_SECTIONS]
 
     @staticmethod
     def _parse_headers(b):

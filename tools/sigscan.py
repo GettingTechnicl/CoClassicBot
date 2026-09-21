@@ -190,7 +190,25 @@ def main():
         lines.append("| `%s` | %s | 0x%X | %s | %s | %s | %s |" % (e["name"], k, e["rva"], res[0], res[1], res[2], res[3] + ("  <-- differs from old" if a.identity and not ok else "")))
     print("\n".join(lines))
 
-    # ---- cross-entry consistency: a relocation should be (piecewise) monotonic and its deltas should cluster
+    # ---- ordering check: a linker keeps the relative order of code it did not reorder, so a proposal that lands OUTSIDE the
+    # interval set by its nearest exact-matched neighbours (by old address) is suspect however good its own score looks.
+    # (The first v1078 capture caught CNETCLIENT_SEND_MSG_REAL this way: shape-exact at delta -0x16390 while every neighbour moved +0x9000..+0x17000.)
+    anchors = sorted((e["rva"], r["rva"], e["name"]) for (e, k, r) in rows
+                     if k == "code" and r and r["method"] == "exact32")
+    violations = []
+    for (e, k, r) in rows:
+        if k != "code" or not r or r.get("low") or r["method"] == "exact32":
+            continue
+        lo = [x for x in anchors if x[0] < e["rva"]]
+        hi = [x for x in anchors if x[0] > e["rva"]]
+        lo_n = lo[-1][1] if lo else 0
+        hi_n = hi[0][1] if hi else 1 << 40
+        if not (lo_n < r["rva"] < hi_n):
+            violations.append(e["name"])
+            print("ORDER VIOLATION: %s proposed 0x%X but exact-matched neighbours bound it to (0x%X, %s) -> treat as WRONG/unproven" %
+                  (e["name"], r["rva"], lo_n, ("0x%X" % hi_n) if hi else "end"))
+    if violations:
+        print("%d order violation(s): those proposals are not to be used" % len(violations))
     moved.sort()
     inv = [(moved[i][2], moved[i + 1][2]) for i in range(len(moved) - 1) if moved[i][1] > moved[i + 1][1]]
     print("\nconsistency: %d relocated entries; order inversions (old order != new order): %d %s" % (len(moved), len(inv), inv[:6]))
