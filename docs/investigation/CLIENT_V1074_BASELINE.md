@@ -99,7 +99,7 @@ both the PC and the VM move to the new version (the earlier "stagger the update"
 - [ ] V2  If it reaches the login screen: `imgdump` checkpoints there (and after opening every login-screen UI: server list,
       settings, etc.) to add whatever Themida decrypts beyond the existing 17% `image_dump.bin`. Report coverage with
       `imgdump_report.py`.
-- [ ] V3  **The real v1074 diff baseline (already preserved):** generate the offset registry (masked signature per verified RVA
+- [x] V3  (DONE 2026-09-20; identity check 19/19 verified entries resolve to their own address) **The real v1074 diff baseline (already preserved):** generate the offset registry (masked signature per verified RVA
       + xref signatures for every verified global) from `game.h` (`Offsets::`/`GameRva::`) + `image_dump.bin`/`code_dump.bin`
       + the struct headers -> `V1074_OFFSET_REGISTRY.md` / `v1074_offset_registry.json`, plus a signature matcher
       (`tools/sigscan.py`) validated on the identity pair (v1074 vs itself: every signature must hit its own RVA).
@@ -121,3 +121,16 @@ both the PC and the VM move to the new version (the earlier "stagger the update"
 ### Still deprioritised (old-client concerns): Twin City live-check, mana offset, warehouse-deposit loop, warn-log spam
 None can be live-tested until the bot runs on the new version anyway; the mana/HP method (dereference the stat-table record,
 rank-correlate, sentinel-on-failure) is the template when it is picked up again.
+
+### Registry facts worth knowing (V3)
+- `docs/investigation/V1074_OFFSET_REGISTRY.md` / `v1074_offset_registry.json`: 45 RVA entries (19 verified: 11 code + 8 data) + 177
+  struct-field offsets scraped from the headers. Verdicts come from a reviewed `OVERRIDES` table (cited reasons); an early
+  tag-scrape mis-read several entries (e.g. `CNETCLIENT_CONNECTION_SINGLETON` -> "garbage", `CURRENT_MAP_ID` -> "wrong"), which is why.
+- Tooling: `tools/build_offset_registry.py` (generate), `tools/sigscan.py` (locate in another image; `--identity` self-check).
+  Globals are relocated through code cross-references; MSVC magic-static accessors are byte-identical templates, so those use the
+  enclosing function's own start signature + the site's offset (a local window matched sibling globals and gave wrong answers —
+  the identity check caught it: 16/19 -> 17/19 -> 19/19).
+- Limits: the source image is the existing `image_dump.bin` (17% of the image; code section fully present). Only ~19 items are
+  byte-locatable; struct-field offsets (CHero+0x3D0 etc.) are NOT signature-locatable and must be re-verified at runtime on the new build.
+  `code_section` coverage of Themida-lazily-decrypted functions in the old dump is unknown (a function still encrypted at dump time
+  would have no usable signature) — all 11 verified code entries did decode, so the ones we depend on are fine.

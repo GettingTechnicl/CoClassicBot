@@ -1,0 +1,2840 @@
+{
+ "generated_by": "tools/build_offset_registry.py",
+ "image": {
+  "path": "image_dump.bin",
+  "sha256": "5cc3deb24435cfed7acc4c3d187ac988037800d1714412b6626a63115552d27a",
+  "bytes": 7454720,
+  "pe_timedatestamp": "0x6A51CFB9",
+  "size_of_image": "0x28C5000",
+  "sections": [
+   {
+    "name": "        ",
+    "rva": "0x1000",
+    "vsize": "0x5501df",
+    "chars": "0x60000020"
+   },
+   {
+    "name": "        ",
+    "rva": "0x552000",
+    "vsize": "0xeefe4",
+    "chars": "0x40000040"
+   },
+   {
+    "name": "        ",
+    "rva": "0x641000",
+    "vsize": "0x6bedc",
+    "chars": "0xc0000040"
+   },
+   {
+    "name": "        ",
+    "rva": "0x6ad000",
+    "vsize": "0x3d59c",
+    "chars": "0x40000040"
+   },
+   {
+    "name": "        ",
+    "rva": "0x6eb000",
+    "vsize": "0x38",
+    "chars": "0xc0000040"
+   },
+   {
+    "name": "        ",
+    "rva": "0x6ec000",
+    "vsize": "0x608",
+    "chars": "0x40000040"
+   },
+   {
+    "name": "        ",
+    "rva": "0x6ed000",
+    "vsize": "0x100",
+    "chars": "0xc0000040"
+   },
+   {
+    "name": "        ",
+    "rva": "0x6ee000",
+    "vsize": "0x2d958",
+    "chars": "0x40000040"
+   },
+   {
+    "name": "        ",
+    "rva": "0x71c000",
+    "vsize": "0x82c0",
+    "chars": "0x40000040"
+   },
+   {
+    "name": ".debug",
+    "rva": "0x725000",
+    "vsize": "0x1000",
+    "chars": "0x40000040"
+   },
+   {
+    "name": ".idata",
+    "rva": "0x726000",
+    "vsize": "0x1000",
+    "chars": "0xc0000040"
+   },
+   {
+    "name": ".tls",
+    "rva": "0x727000",
+    "vsize": "0x1000",
+    "chars": "0xc0000000"
+   },
+   {
+    "name": ".rsrc",
+    "rva": "0x728000",
+    "vsize": "0x2da00",
+    "chars": "0x40000040"
+   },
+   {
+    "name": ".themida",
+    "rva": "0x756000",
+    "vsize": "0x1388000",
+    "chars": "0xe0000060"
+   },
+   {
+    "name": ".boot",
+    "rva": "0x1ade000",
+    "vsize": "0xde5800",
+    "chars": "0x60000060"
+   },
+   {
+    "name": ".reloc",
+    "rva": "0x28c4000",
+    "vsize": "0x1000",
+    "chars": "0x40000000"
+   }
+  ]
+ },
+ "client_build": "v1074 (exe SHA-256 C2B53437EF68D687A1EF0F70C74BCF2DF6027BF82B558E93330C839EB5E1C396)",
+ "entries": [
+  {
+   "name": "ROLE_MGR_PTR",
+   "kind": "data",
+   "rva": 6932272,
+   "status": "verified",
+   "source": "game.h:20",
+   "namespace": "Offsets",
+   "evidence": "v1074 (live-verified): the role manager is heap-allocated and reached via a STATIC pointer in the image. roleMgr = *(base + ROLE_MGR_PTR); hero = *roleMgr. // [LIVE-VERIFIED] pointer-to-CRoleMgr",
+   "status_source": "override",
+   "status_reason": "game.h:20 [LIVE-VERIFIED]; roleMgr = *(base+0x69C730), hero = *roleMgr",
+   "xref_count_seen": 2,
+   "xref_sigs": [
+    {
+     "site_rva": "0x181c52",
+     "sig": "48 8B CB FF 50 08 90 48 89 35 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ??",
+     "matches_in_code": 1,
+     "disp_off": 10,
+     "next_ip_off": 14,
+     "radius": 3,
+     "mnemonic": "mov qword ptr [rip + 0x51aad7], rsi",
+     "func_rel": {
+      "func_rva": "0x181b30",
+      "func_sig": "48 89 5C 24 18 48 89 74 24 20 57 48 83 EC 20 BA 40 00 00 00 65 48 8B 04 25 58 00 00 00 48 8B 08",
+      "func_matches": 1,
+      "site_off": 290,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x181c65",
+     "sig": "48 89 35 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 8B 00 48 8B 5C 24 40 48 8B 74 24 48",
+     "matches_in_code": 1,
+     "disp_off": 22,
+     "next_ip_off": 26,
+     "radius": 3,
+     "mnemonic": "mov rax, qword ptr [rip + 0x51aac4]",
+     "func_rel": {
+      "func_rva": "0x181b30",
+      "func_sig": "48 89 5C 24 18 48 89 74 24 20 57 48 83 EC 20 BA 40 00 00 00 65 48 8B 04 25 58 00 00 00 48 8B 08",
+      "func_matches": 1,
+      "site_off": 309,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "ROLE_MGR",
+   "kind": "code",
+   "rva": 5109128,
+   "status": "stale",
+   "source": "game.h:21",
+   "namespace": "Offsets",
+   "evidence": "// [STALE on v1074 \u2014 was static object; now code]",
+   "status_source": "override",
+   "status_reason": "game.h:21 code now lives where the old static object was",
+   "at_function_start": false,
+   "sig": "09 E8 D2 6D EB FF 48 89 7B ?? 48 8B 8B 80 00 00 00 48 85 C9 74 ?? E8 ?? ?? ?? ??",
+   "sig_len": 27,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x4df588"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "ENTITY_INFO",
+   "kind": "code",
+   "rva": 5109136,
+   "status": "unverified",
+   "source": "game.h:23",
+   "namespace": "Offsets",
+   "evidence": "WARNING: the three below are NOT re-verified for v1074 and are likely stale too. // [UNVERIFIED v1074]",
+   "status_tagscrape": "stale",
+   "status_source": "override",
+   "status_reason": "game.h:23 [UNVERIFIED v1074]",
+   "at_function_start": true,
+   "sig": "7B ?? 48 8B 8B 80 00 00 00 48 85 C9 74 ?? E8 ?? ?? ?? ?? 48 89 BB 80 00 00 00 48 8B 83 90 00 00 00 48 85 C0 74 ?? 48 8B 08 48 85 C9 74 ?? E8 ?? ?? ?? ?? 48 8B 83 90 00 00 00 48 89 38 48 8B 8B 90 00 00 00 E8 ?? ?? ?? ?? 48 89 BB 90 00 00 00 48 8B 83 98 00 00 00 48 85 C0 0F 84 ?? ?? ?? ?? 48 8B 48 18 48 85 C9 74 ?? E8 ?? ?? ?? ?? 48 8B 83 98 00 00 00 48 89 78 18 48 8B 83 98 00 00 00",
+   "sig_len": 128,
+   "sig_matches": 2,
+   "sig_hit_rvas": [
+    "0x4df590",
+    "0x4dfa95"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "ENTITY_SET",
+   "kind": "code",
+   "rva": 5109232,
+   "status": "unverified",
+   "source": "game.h:24",
+   "namespace": "Offsets",
+   "evidence": "// [UNVERIFIED v1074]",
+   "status_source": "override",
+   "status_reason": "game.h:24 [UNVERIFIED v1074]",
+   "at_function_start": true,
+   "sig": "48 8B 48 18 48 85 C9 74 ?? E8 ?? ?? ?? ?? 48 8B 83 98 00 00 00 48 89 78 18 48 8B 83 98 00 00 00 48 8B 48 08 48 85 C9 74 ?? E8 ?? ?? ?? ?? 48 8B 83 98 00 00 00 48 89 78 08 48 8B 83 98 00 00 00 48 8B 48 10 48 85 C9 74 ?? E8 ?? ?? ?? ?? 48 8B 83 98 00 00 00 48 89 78 10 48 8B 83 98 00 00 00 48 8B 08 48 85 C9 74 ?? E8 ?? ?? ?? ?? 48 8B 83 98 00 00 00 48 89 38 48 8B 8B 98 00 00 00",
+   "sig_len": 126,
+   "sig_matches": 2,
+   "sig_hit_rvas": [
+    "0x4df5f0",
+    "0x4dfaf5"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "GAME_MAP",
+   "kind": "code",
+   "rva": 5112544,
+   "status": "garbage",
+   "source": "game.h:25",
+   "namespace": "Offsets",
+   "evidence": "// [CONFIRMED GARBAGE on v1074 \u2014 see below]",
+   "status_source": "override",
+   "status_reason": "game.h:25 [CONFIRMED GARBAGE] live probe dereferenced it to unreadable memory",
+   "at_function_start": true,
+   "sig": "C0 74 60 41 8B 40 10 FF C8 3D FF 3F 00 00 0F 87 ?? ?? ?? ?? 48 8B 09 4C 89 74 24 30",
+   "sig_len": 28,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x4e02e0"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CURRENT_MAP_ID",
+   "kind": "data",
+   "rva": 6919520,
+   "status": "verified",
+   "source": "game.h:41",
+   "namespace": "Offsets",
+   "evidence": "\u2500\u2500 CURRENT MAP ID (v1074, session 10) \u2500\u2500 A DIRECT u32, not a pointer: mapId = *(uint32*)(base + CURRENT_MAP_ID). Found by a four-map differential over every u32 in the image (Twin City 1002, Desert 1000, Market 1036, Phoenix Castle 1011) \u2014 exactly two adjacent globals survived, and session 6 independently recorded these same two RVAs from its own differential. IMPORTANT HISTORY: these were briefly REJECTED because they failed a three-map test including \"Bird Island = 1020\". That id was wrong \u2014 Bird Island is 1015 (island.DMap); 1020 is Ape Mountain (canyon.DMap). The repo's data_maps.json mislabels Market (says 1004, is 1036) and Bird Island (says 1020, is 1015). The globals were correct the whole time; the labels were not. Trust ini/GameMap.json, never data_maps.json.",
+   "status_tagscrape": "wrong",
+   "status_source": "override",
+   "status_reason": "game.h:27-42 four-map differential (Twin City/Desert/Market/Phoenix) + session-6 independent match; Game::GetCurrentMapId() works live",
+   "xref_count_seen": 1,
+   "xref_sigs": [
+    {
+     "site_rva": "0x1379fe",
+     "sig": "4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? C7 05 ?? ?? ?? ?? 01 00 00 00 44 89 3D ?? ?? ?? ?? C7 05 ?? ?? ?? ?? 01 00 00 00 4C 89 3D ?? ?? ?? ?? 44 89 3D ?? ?? ?? ??",
+     "matches_in_code": 1,
+     "disp_off": 27,
+     "next_ip_off": 31,
+     "radius": 3,
+     "mnemonic": "mov dword ptr [rip + 0x561b5b], r15d",
+     "func_rel": {
+      "func_rva": "0x137903",
+      "func_sig": "E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8D 71 FF 48 8B C6 48 23 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 4C 8D 34 02 49 23 F6 48 8B 15 ?? ?? ?? ?? 48 83 3C F2 00 75 ?? B9 10 00 00 00 E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 89 04 F1 48 8B 0D ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8D 41 FF 49 23 C6 48 8B 0C C2 4C 89 39 4C 89 79 08 F0 FF 43 08 48 89 29 48 89 59 08",
+      "func_matches": 3,
+      "site_off": 251,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "CURRENT_MAP_ID_ALT",
+   "kind": "data",
+   "rva": 6919524,
+   "status": "verified",
+   "source": "game.h:42",
+   "namespace": "Offsets",
+   "evidence": "// adjacent survivor",
+   "status_tagscrape": "unverified",
+   "status_source": "override",
+   "status_reason": "game.h:42 the adjacent surviving global of the same differential; used as the fallback read",
+   "derived_from": "CURRENT_MAP_ID",
+   "derived_delta": 4,
+   "xref_count_seen": 0,
+   "xref_sigs": []
+  },
+  {
+   "name": "ROLE_SET_ROLES",
+   "kind": "struct_offset",
+   "rva": 4936,
+   "status": "unverified",
+   "source": "game.h:51",
+   "namespace": "Offsets",
+   "evidence": "\u2500\u2500 GAME REGISTRIES (v1074, 2026-09-03; see registries.h). The item vector is a plain global. The role-set object holding ROLE_SET_ROLES/ALL is NOT reached by a fixed address \u2014 two attempts at that (via the scene pointer, then a \"stable RVA\" hunt) both failed to reproduce across relogs. registries.cpp instead locates it by signature from ROLE_MGR_PTR each session; these two offsets are only meaningful relative to whatever object that locator finds. // roleSet+.. = vector<shared_ptr<CRole>> (roles only)",
+   "status_source": "override",
+   "status_reason": "struct offset inside the role-set object; registries.cpp logs 'role-set object not found' on the live client and falls back to heap scan (tonight's logs) - do NOT treat as verified"
+  },
+  {
+   "name": "ROLE_SET_ALL",
+   "kind": "struct_offset",
+   "rva": 4888,
+   "status": "unverified",
+   "source": "game.h:52",
+   "namespace": "Offsets",
+   "evidence": "// roleSet+.. = vector<shared_ptr<CObject>> (all scene objects)",
+   "status_source": "override",
+   "status_reason": "same as ROLE_SET_ROLES"
+  },
+  {
+   "name": "ROLE_MGR_TO_ROLESET_HOP1",
+   "kind": "struct_offset",
+   "rva": 19096,
+   "status": "unverified",
+   "source": "game.h:60",
+   "namespace": "Offsets",
+   "evidence": "Known-good 2-hop path from CRoleMgr to the role-set object, found by an exhaustive CRoleMgr-only signature search (heapfind v7, 2026-09-03). registries.cpp tries this FIRST and always re-validates it against the role-set signature before trusting it \u2014 a patch that changes the struct layout just fails that check, and the code falls back to the same signature scan that found this path in the first place. // CRoleMgr+.. -> intermediate object",
+   "status_source": "override",
+   "status_reason": "heapfind v7 path; live logs show the chain does not resolve reliably; heap-scan fallback is what actually runs"
+  },
+  {
+   "name": "ROLE_MGR_TO_ROLESET_HOP2",
+   "kind": "struct_offset",
+   "rva": 37440,
+   "status": "unverified",
+   "source": "game.h:61",
+   "namespace": "Offsets",
+   "evidence": "// intermediate+.. -> role-set object",
+   "status_source": "override",
+   "status_reason": "same as HOP1"
+  },
+  {
+   "name": "MAP_ITEM_VEC",
+   "kind": "data",
+   "rva": 6919384,
+   "status": "verified",
+   "source": "game.h:62",
+   "namespace": "Offsets",
+   "evidence": "// base+.. = vector<shared_ptr<CMapItem>> (GLOBAL, sole owner)",
+   "status_tagscrape": "unverified",
+   "status_source": "override",
+   "status_reason": "game.h:62 GLOBAL vector<shared_ptr<CMapItem>>; memory 'registries': confirmed working live (replaced the item heap-scan)",
+   "xref_count_seen": 1,
+   "xref_sigs": [
+    {
+     "site_rva": "0x1371bd",
+     "sig": "48 89 05 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 89 08 48 8D 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 0F 57 C0 66 0F 7F 05 ?? ?? 56 00 48 8D 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ??",
+     "matches_in_code": 1,
+     "disp_off": 34,
+     "next_ip_off": 38,
+     "radius": 5,
+     "mnemonic": "mov qword ptr [rip + 0x562314], r15",
+     "func_rel": {
+      "func_rva": "0x1370d1",
+      "func_sig": "D3 24 00 4C 89 78 08 48 89 05 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 89 08 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? B9 10 00 00 00 E8 ?? ?? ?? ?? 4C 89 78 08 48 89 05 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 89 08 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ??",
+      "func_matches": 1,
+      "site_off": 236,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "CENTITY_RENDER_VISUAL",
+   "kind": "code",
+   "rva": 1768736,
+   "status": "stale",
+   "source": "game.h:91",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78 block verdict: inherited pre-v1074 RVA, lands on non-prologue code; Detouring it corrupts the client",
+   "at_function_start": true,
+   "sig": "A9 00 00 00 0F B6 44 24 62 88 83 AA 00 00 00 0F B6 44 24 63 88 83 AB 00 00 00 0F B6 44 24 64",
+   "sig_len": 31,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x1afd20"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CNETCLIENT_GET_INSTANCE",
+   "kind": "code",
+   "rva": 758928,
+   "status": "stale",
+   "source": "game.h:92",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78 block verdict; 0x0B9490 does not disassemble as the real accessor",
+   "at_function_start": true,
+   "sig": "4C 8D 4D F7 F2 0F 10 45 0B 4C 8B C3 48 8B 96 70 5E 00 00 89 45 2B 48 8D 45 1F 48 89 45 EF 48 8D 05 ?? ?? ?? ?? 48 89 45 F7 48 8D 45 E7 89 4D 1F 48 8D 4D 07 48 89 44 24 20 F2 0F 11 45 23 48 C7 45 E7 02 00 00 00 48 C7 45 FF 04 00 00 00 E8 ?? ?? ?? ?? 48 8B 55 0F 41 B8 01 00 00 00 48 8B 86 70 5E 00 00 48 3B DA 48 0F 42 D3 C6 04 02 00 48 8B 8E 70 5E 00 00 48 03 D1 E8 ?? ?? ?? ??",
+   "sig_len": 126,
+   "sig_matches": 2,
+   "sig_hit_rvas": [
+    "0xb8dca",
+    "0xb9490"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CNETCLIENT_SEND_MSG",
+   "kind": "code",
+   "rva": 1633952,
+   "status": "garbage",
+   "source": "game.h:93",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78; superseded by CNETCLIENT_SEND_MSG_REAL (0x1DD450)",
+   "at_function_start": true,
+   "sig": null,
+   "sig_note": "could not decode from this address (misaligned / garbage)"
+  },
+  {
+   "name": "CHERO_GET_MAX_HP",
+   "kind": "code",
+   "rva": 1546624,
+   "status": "garbage",
+   "source": "game.h:94",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:71 'CSTATTABLE_GET_VALUE/CHERO_GET_MAX_HP to misaligned garbage'; max HP is read as the direct field CRole+0x3D0",
+   "at_function_start": true,
+   "sig": "68 2E AF 10 71 63 BD 6D 54 9F 3B 09 F6 EE 65 A7 49 83 67 67 14 32 E0 18 1C 2C 88 12 F8",
+   "sig_len": 29,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x179980"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CHERO_GET_MAX_MANA",
+   "kind": "code",
+   "rva": 1547152,
+   "status": "stale",
+   "source": "game.h:95",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78 block verdict",
+   "at_function_start": true,
+   "sig": "88 4D C9 97 E2 ?? A8 D5",
+   "sig_len": 8,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x179b90"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CSTATTABLE_GET_VALUE",
+   "kind": "code",
+   "rva": 2036880,
+   "status": "garbage",
+   "source": "game.h:96",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:71 misaligned garbage; current HP is read via m_pStatTable+0x10 -> +0x0 instead (docs/investigation/CURRENT_HP_READ_INVESTIGATION.md)",
+   "at_function_start": true,
+   "sig": "47 01 50 6B 02 57 0C 6D 91 B3 09 81 A5 92 83 45 CA 64 E9 1E AD",
+   "sig_len": 21,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x1f1490"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CHERO_GET_CURRENT_MANA",
+   "kind": "code",
+   "rva": 1726704,
+   "status": "stale",
+   "source": "game.h:97",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78 block verdict; mana has the same dead-accessor bug as HP (not yet fixed)",
+   "at_function_start": true,
+   "sig": "00 00 00 BA 40 00 00 00 48 8B 08 8B 04 0A 39 05 ?? ?? ?? ?? 7E ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? FF 75 ?? E8 ?? ?? ?? ??",
+   "sig_len": 48,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x1a58f0"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CHERO_FATAL_STRIKE",
+   "kind": "code",
+   "rva": 2267056,
+   "status": "garbage",
+   "source": "game.h:98",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:70 'CHERO_FATAL_STRIKE to padding'",
+   "at_function_start": true,
+   "sig": "02 00 00 C3 CC CC CC CC CC CC CC CC CC CC CC CC 40 53 48 83 EC 20 48 8D 05 ?? ?? ?? ?? 48 8B D9",
+   "sig_len": 32,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x2297b0"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CHERO_WALK",
+   "kind": "code",
+   "rva": 2268656,
+   "status": "stale",
+   "source": "game.h:99",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:69 'CHERO_WALK resolves mid-function'; movement is done by writing SyncClientPosition fields instead",
+   "at_function_start": true,
+   "sig": "45 89 47 30 E9 ?? ?? ?? ?? 48 8B D3 48 8D 4D 27 E8 ?? ?? ?? ?? 44 8B 45 2F 48 8B 55 27",
+   "sig_len": 29,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x229df0"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CHERO_JUMP",
+   "kind": "code",
+   "rva": 2269360,
+   "status": "stale",
+   "source": "game.h:100",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78 block verdict; jumps are sent as packets",
+   "at_function_start": true,
+   "sig": "8B D3 48 8B CE E8 ?? ?? ?? ?? 48 8B C8 EB ?? 48 8B CB 48 63 57 24 48 8D 59 02 C6 01 30 88 51 01 81 FA 80 00 00 00 72 ?? 0F B6 C2 0C 80 88 41 01 48 8B C2 48 C1 E8 07 88 03 48 8D 59 03 48 3D 80 00 00 00 72 ?? 66 66 66 0F 1F 84 00 00 00 00 00 80 4B FF 80 48 C1 E8 07 88 03 48 FF C3 48 3D 80 00 00 00 73 ?? 83 7F 28 00 74 ?? 48 8B D3 48 3B 1E 72 ?? 48 8B CE E8 ?? ?? ?? ?? 48 8B D0",
+   "sig_len": 126,
+   "sig_matches": 2,
+   "sig_hit_rvas": [
+    "0x22a0b0",
+    "0x22ab10"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CHERO_START_MINING",
+   "kind": "code",
+   "rva": 1620752,
+   "status": "stale",
+   "source": "game.h:101",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78 block verdict",
+   "at_function_start": true,
+   "sig": "6B 1E 00 86 DB DE A0 E7 55 C1 CE",
+   "sig_len": 11,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x18bb10"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "MSGUPDATE_PROCESS",
+   "kind": "code",
+   "rva": 1968240,
+   "status": "stale",
+   "source": "game.h:102",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78 block verdict (was Detoured at init; now gated off by VERIFIED_V1074)",
+   "at_function_start": true,
+   "sig": "0F C1 43 08 83 F8 01 0F 85 ?? ?? ?? ?? 48 8B 03 48 8B CB FF 10 F0 0F C1 73 0C 83 FE 01 0F 85 ?? ?? ?? ?? 48 8B 03 48 8B CB E9 ?? ?? ?? ??",
+   "sig_len": 46,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x1e0870"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "TRADEWINDOW_HANDLE_MESSAGE",
+   "kind": "code",
+   "rva": 1094128,
+   "status": "stale",
+   "source": "game.h:103",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78 block verdict",
+   "at_function_start": true,
+   "sig": "E4 74 68 44 09 A8 6C",
+   "sig_len": 7,
+   "sig_matches": 2,
+   "sig_hit_rvas": [
+    "0x10b058",
+    "0x10b1f0"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CGAMEUI_SHOW_MSG",
+   "kind": "code",
+   "rva": 1644896,
+   "status": "stale",
+   "source": "game.h:104",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:66-78 block verdict",
+   "at_function_start": true,
+   "sig": "89 6B 20 B9 40 00 00 00 E8 ?? ?? ?? ?? 48 89 45 48 4C 89 68 08 44 89 68 38 48 8D 0D ?? ?? ?? ??",
+   "sig_len": 32,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x191960"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CNETCLIENT_SINGLETON_ACCESSOR",
+   "kind": "code",
+   "rva": 618464,
+   "status": "wrong",
+   "source": "game.h:134",
+   "namespace": "GameRva",
+   "evidence": "v1074 [LIVE-TRACED via Frida, 2026-08-23, session 5 \u2014 independent of the stale dump above, do NOT gate behind VERIFIED_V1074]: re-derived by hooking send()/WSASend(), walking the confirmed call chain, and disassembling each hop from code_dump.bin. CNETCLIENT_SEND_MAPITEM_MSG is the native \"build + header + serialize + hand off\" function the client's OWN pickup UI code calls \u2014 traced live end-to-end (0x1C8B30 -> 0x22AC50 serialize -> 0x190DD0 BeginMsg -> 0x3C4CD0 commit -> confirmed plaintext matching our own wire-format assumptions -> encryption -> send()) while the user picked up/dropped a real item. Signature (x64 calling convention, read straight off the disasm, CONFIRMED against real calls session 5d): void* SendMapItemMsg(CNetClient* this, uint32_t itemId, uint16_t x, uint16_t y, uint32_t mode) (5th param is message MODE, e.g. 3=pickup \u2014 NOT the item's \"plus\" bonus; that was a real bug in the first implementation attempt, since fixed in CHero.cpp.) CNETCLIENT_SINGLETON_ACCESSOR IS CONFIRMED WRONG \u2014 session 5e, do NOT use. 0x96FE0 does NOT return the CNetClient-equivalent \"this\" that 0x1C8B30 actually expects. Live-verified (Frida) in the SAME session: our accessor call resolves to base+0x698BE0, whose contents look like a diagnostics/crash-handling object (holds our own module base verbatim twice, and a system-DLL address at +0x20) \u2014 NOT a network client. A REAL native pickup's rcx was 0x15E718 instead, a completely different, unrelated address, not reachable from 0x698BE0 or any static global in base+0x680000..0x6B0000 by a single pointer hop. This RVA was carried over from an unconfirmed session-3/4 singleton-hunting guess that got conflated with a different candidate along the way \u2014 never re-verified before being wired into code. Calling CNETCLIENT_SEND_MAPITEM_MSG with the result of this accessor as \"this\" is why every live test in session 5 faulted (one of them crashed the whole game process outright, SEH did not always save it). Finding the real accessor/path to 0x15E718-equivalent is unsolved \u2014 see coclassicbot-live-offsets memory, session 5e, for the investigation and concrete next steps. DO NOT call CNetClient_SendMapItemMsg with this accessor's result. // WRONG \u2014 see comment above",
+   "status_source": "override",
+   "status_reason": "game.h:119-134 CONFIRMED WRONG: resolves to an unrelated (diagnostics-like) object; never use as the net-client 'this'",
+   "at_function_start": true,
+   "sig": "40 53 48 83 EC 20 BA 40 00 00 00 65 48 8B 04 25 58 00 00 00 48 8B 08 8B 04 0A 39 05 ?? ?? ?? ?? 7E ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? FF 75 ?? 33 D2 41 B8 70 07 00 00",
+   "sig_len": 63,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x96fe0"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CNETCLIENT_SEND_MAPITEM_MSG",
+   "kind": "code",
+   "rva": 1870640,
+   "status": "verified",
+   "source": "game.h:135",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:106-118 [LIVE-TRACED via Frida]: a real function, but DO NOT CALL cold - it derefs netClient+0x20 with no null check (memory live-offsets session 7); the bot builds packets itself and uses SEND_MSG_REAL",
+   "at_function_start": true,
+   "sig": "40 57 48 83 EC 20 48 8B F9 85 D2 74 ?? 48 8B 41 20 89 50 10 48 8B 51 20 8B 44 24 50 89 42 24",
+   "sig_len": 31,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x1c8b30"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CNETCLIENT_COMPUTE_MAPITEM_SIZE",
+   "kind": "code",
+   "rva": 2272336,
+   "status": "verified",
+   "source": "game.h:171",
+   "namespace": "GameRva",
+   "evidence": "v1074 [LIVE-TRACED, session 7, 2026-08-24]: CNETCLIENT_SEND_MAPITEM_MSG (above) is NOT directly callable cold \u2014 disassembly + a live crash both confirmed it dereferences netClient+0x20 immediately (writing itemId into *(netClient+0x20)+0x10) with NO null check. That field is the address of a small, per-message \"staging\" struct that some OTHER function (not yet found \u2014 its caller sits behind a Themida VM transition, see coclassicbot-live-offsets memory session 6) allocates fresh, stores into netClient+0x20, and frees again around every real send; between sends it reads NULL (confirmed live: *(0x15E718+0x20) == 0 at idle), so calling CNETCLIENT_SEND_MAPITEM_MSG cold is a guaranteed null-pointer write. Workaround: skip that function's own field-writing prologue entirely and build the staging struct OURSELVES, then drive the rest of its own body by hand (this is exactly what 0x1C8B30 does internally after the part we skip \u2014 see CHero.cpp's own-struct pickup path): 1. CNETCLIENT_COMPUTE_MAPITEM_SIZE(stagingStruct) -> payload size. Reads only plain int32 fields off the struct by fixed offset (protobuf-lite varint-size codegen) \u2014 NO vtable dispatch, confirmed by disassembling its full body, so any zeroed buffer with the right fields works, no need for a real vtable pointer for THIS call. 2. CNETCLIENT_BEGIN_MSG(netClient, size, msgType=0x44D) -> allocates the real output buffer, stores its cursor into netClient+0x10 (also +0x8/+0x18 \u2014 not used by us). Confirmed signature via disasm. 3. CNETCLIENT_COMMIT_STAGING(stagingStruct, cursor, size) -> writes the actual field bytes + queues for send. THIS call dispatches through the staging struct's OWN vtable internally (session 5 finding), so the struct's offset-0 vtable pointer must be real \u2014 see MSGMAPITEM_VTABLE below, live-captured from 8 real native pickups this session, always identical. Staging struct field offsets (confirmed live, both by CNETCLIENT_SEND_ MAPITEM_MSG's own writes and matching what CNETCLIENT_COMPUTE_MAPITEM_SIZE reads): itemId@+0x10 (u32), x@+0x18 (u32), y@+0x1C (u32), mode@+0x24 (u32, 3=pickup). Struct only needs to be large enough to cover the highest offset touched by the size-calc (+0x30 seen read) \u2014 0x40 bytes is safe.",
+   "status_source": "override",
+   "status_reason": "game.h:137-173 [LIVE-TRACED session 7]; byte-exact payload size confirmed",
+   "at_function_start": true,
+   "sig": "8B 41 10 4C 8B C1 F7 D8 48 1B C9 41 8B 40 14 83 E1 05 85 C0 74 ?? 83 C8 01 0F BD C0",
+   "sig_len": 28,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x22ac50"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CNETCLIENT_BEGIN_MSG",
+   "kind": "code",
+   "rva": 1641936,
+   "status": "verified",
+   "source": "game.h:172",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:137-173 [LIVE-TRACED session 7] allocates the output buffer",
+   "at_function_start": true,
+   "sig": "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B D9 0F B7 FA 48 8B 49 18 41 0F B7 F0 48 85 C9",
+   "sig_len": 32,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x190dd0"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CNETCLIENT_COMMIT_STAGING",
+   "kind": "code",
+   "rva": 3951824,
+   "status": "verified",
+   "source": "game.h:173",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:137-173 [LIVE-TRACED session 7]; plaintext hand-off point",
+   "at_function_start": true,
+   "sig": "48 89 5C 24 18 55 56 57 48 81 EC 90 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 80 00 00 00 49 63 F0 48 8B EA 48 8B D9 48 8B 01 FF 50 38",
+   "sig_len": 48,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x3c4cd0"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "MSGMAPITEM_VTABLE",
+   "kind": "data",
+   "rva": 6106608,
+   "status": "verified",
+   "source": "game.h:179",
+   "namespace": "GameRva",
+   "evidence": "Live-captured vtable RVA for a MsgMapItem-type staging struct (session 7, frida_get_vtable.py hooking CNETCLIENT_SEND_MAPITEM_MSG's own entry during 8 separate real native pickups \u2014 8/8 identical). Client-build- specific like the other v1074 RVAs above; not module-base-relative storage, just the vtable's own RVA within the module.",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:179 staging-struct vtable, live-captured 8/8 identical across real pickups",
+   "xref_count_seen": 4,
+   "xref_sigs": [
+    {
+     "site_rva": "0x1c8a3f",
+     "sig": "48 89 78 08 89 78 2C 0F 57 C0 0F 11 40 10 0F 11 40 1C 48 8D 0D ?? ?? ?? ?? 48 89 08 48 8B 7B 20 48 89 43 20 48 85 FF 74 ??",
+     "matches_in_code": 1,
+     "disp_off": 21,
+     "next_ip_off": 25,
+     "radius": 5,
+     "mnemonic": "lea rcx, [rip + 0x40a3aa]",
+     "func_rel": {
+      "func_rva": "0x1c89f0",
+      "func_sig": "48 89 5C 24 18 48 89 4C 24 08 57 48 83 EC 20 48 8B D9 33 FF 48 89 79 18 48 89 79 10 48 89 79 08 48 8D 05 ?? ?? ?? ?? 48 89 01 48 89 79 20 B9 30 00 00 00 E8 ?? ?? ?? ?? 48 89 44 24 30 48 89 78 08 89 78 2C 0F 57 C0 0F 11 40 10 0F 11 40 1C 48 8D 0D ?? ?? ?? ?? 48 89 08 48 8B 7B 20",
+      "func_matches": 1,
+      "site_off": 79,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x22a506",
+     "sig": "48 8B 5C 24 38 48 83 C4 20 5F C3 48 8B CA E9 ?? ?? ?? ?? CC CC CC CC CC CC CC CC 40 53 48 83 EC 20 48 8D 05 ?? ?? ?? ?? 48 89 01 48 8D 59 08 0F B6 0B 48 8B 03 48 83 E0 FC 80 E1 01 74 ?? 48 8B 00 48 85 C0 75 ?? 84 C9 74 ?? 48 8B CB E8 ?? ?? ?? ?? 48 8B 03 A8 02",
+     "matches_in_code": 1,
+     "disp_off": 36,
+     "next_ip_off": 40,
+     "radius": 16,
+     "mnemonic": "lea rax, [rip + 0x3a88e3]",
+     "func_rel": {
+      "func_rva": "0x22a500",
+      "func_sig": "40 53 48 83 EC 20 48 8D 05 ?? ?? ?? ?? 48 89 01 48 8D 59 08 0F B6 0B 48 8B 03 48 83 E0 FC 80 E1 01 74 ?? 48 8B 00 48 85 C0 75 ?? 84 C9 74 ?? 48 8B CB E8 ?? ?? ?? ?? 48 8B 03 A8 02 74 ?? 48 8B D8 48 83 E3 FC A8 01 74 ?? 48 8B 1B 48 85 DB 74 ?? 48 8B CB E8 ?? ?? ?? ?? BA 20 00 00 00 48 8B CB 48 83 C4 20 5B E9 ?? ?? ?? ?? 48 83 C4 20 5B C3 CC CC CC CC CC CC CC CC CC CC CC CC CC CC CC",
+      "func_matches": 15,
+      "site_off": 6,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x22ae1b",
+     "sig": "57 48 83 EC 20 48 8B D9 33 FF 48 85 C9 75 ?? B9 30 00 00 00 E8 ?? ?? ?? ?? 48 89 44 24 30 48 89 78 08 48 8D 0D ?? ?? ?? ?? 48 89 08 89 78 2C 0F 57 C0 0F 11 40 10 0F 11 40 1C 48 8B 5C 24 38 48 83 C4 20 5F C3 45 33 C0 BA 30 00 00 00 E8 ?? ?? ?? ?? 48 89 58 08 48 8D 0D ?? ?? ?? ?? 48 89 08 89 78 2C 0F 57 C0 0F 11 40 10 0F 11 40 1C 48 8B 5C 24 38 48 83 C4 20 5F C3 CC CC 48 8B CA E9 ?? ?? ?? ?? CC CC CC CC CC CC CC CC 40 53 48 83 EC 20 48 8D 05 ?? ?? ?? ??",
+     "matches_in_code": 1,
+     "disp_off": 89,
+     "next_ip_off": 93,
+     "radius": 24,
+     "mnemonic": "lea rcx, [rip + 0x3a7fce]",
+     "func_rel": {
+      "func_rva": "0x22adc0",
+      "func_sig": "48 89 5C 24 10 57 48 83 EC 20 48 8B D9 33 FF 48 85 C9 75 ?? B9 30 00 00 00 E8 ?? ?? ?? ?? 48 89 44 24 30 48 89 78 08 48 8D 0D ?? ?? ?? ?? 48 89 08 89 78 2C 0F 57 C0 0F 11 40 10 0F 11 40 1C 48 8B 5C 24 38 48 83 C4 20 5F C3 45 33 C0 BA 30 00 00 00 E8 ?? ?? ?? ?? 48 89 58 08 48 8D 0D ?? ?? ?? ?? 48 89 08 89 78 2C 0F 57 C0 0F 11 40 10 0F 11 40 1C 48 8B 5C 24 38 48 83 C4 20 5F C3 CC CC",
+      "func_matches": 2,
+      "site_off": 91,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x22ade7",
+     "sig": "E8 ?? ?? ?? ?? 48 89 44 24 30 48 89 78 08 48 8D 0D ?? ?? ?? ?? 48 89 08 89 78 2C 0F 57 C0",
+     "matches_in_code": 2,
+     "disp_off": 17,
+     "next_ip_off": 21,
+     "radius": 3,
+     "mnemonic": "lea rcx, [rip + 0x3a8002]",
+     "func_rel": {
+      "func_rva": "0x22adc0",
+      "func_sig": "48 89 5C 24 10 57 48 83 EC 20 48 8B D9 33 FF 48 85 C9 75 ?? B9 30 00 00 00 E8 ?? ?? ?? ?? 48 89 44 24 30 48 89 78 08 48 8D 0D ?? ?? ?? ?? 48 89 08 89 78 2C 0F 57 C0 0F 11 40 10 0F 11 40 1C 48 8B 5C 24 38 48 83 C4 20 5F C3 45 33 C0 BA 30 00 00 00 E8 ?? ?? ?? ?? 48 89 58 08 48 8D 0D ?? ?? ?? ?? 48 89 08 89 78 2C 0F 57 C0 0F 11 40 10 0F 11 40 1C 48 8B 5C 24 38 48 83 C4 20 5F C3 CC CC",
+      "func_matches": 2,
+      "site_off": 39,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "CNETCLIENT_CONNECTION_SINGLETON",
+   "kind": "code",
+   "rva": 750368,
+   "status": "verified",
+   "source": "game.h:214",
+   "namespace": "GameRva",
+   "evidence": "v1074 [LIVE-CONFIRMED, session 8, 2026-08-24]: the REAL CNetClient::SendMsg \u2014 completely supersedes the stale, garbage `CNETCLIENT_SEND_MSG` (0x18EEA0, above; doesn't even disassemble as valid code) and `CNETCLIENT_GET_INSTANCE` (0x0B9490, never re-verified \u2014 do not use for this path). Found via a send()/WSASend() backtrace sweep on REAL traffic (netfinder-style, done via Frida for iteration speed), NOT the session-7 native-object pickup path \u2014 that path's own logging/telemetry code (0xE9960 region) actively resists hooking and produced an unwanted duplicate-game-instance side effect when called directly; it's abandoned in favor of this one, which is confirmed NOT hook-resistant and produced zero anomalies across many live calls. Signature: bool SendMsg(void* connectionObject, const uint8_t* buffer, uint32_t length) \u2014 `buffer` must be a fully-built [u16 size][u16 type] + payload packet (exactly what packets.cpp already builds); `length` must equal the buffer's own embedded size field (SendMsg validates this itself and fails otherwise). Internally: validates, flushes the pending queue first if it doesn't have room, copies the bytes in, and lets an already-running per-tick poller (0x1DD860) drain the queue to the real Winsock send(). Fully disassembled, plain non-obfuscated code \u2014 see coclassicbot-live-offsets memory, session 8, for the complete trace. `connectionObject` (arg 1) is NOT netClient (0x15E718) \u2014 it's a DIFFERENT, per-session object obtained via CNETCLIENT_CONNECTION_SINGLETON below: call it (a genuine, safe MSVC magic-static, unlike the confirmed-fake 0x96FE0), then read its own `+0x20` field live \u2014 this is a fresh per-session pointer, not stable across relaunches, so re-resolve it every call rather than caching it long-term like the old g_netClient. LIVE-CONFIRMED END TO END (session 8): built a real pickup packet using packets.cpp's own pre-existing, never-modified raw-packet format, called this SendMsg directly \u2014 the item was genuinely picked up in-game. This is not just a \"call succeeded\" result; it's a full round-trip through the real server.",
+   "status_tagscrape": "garbage",
+   "status_source": "override",
+   "status_reason": "game.h:196-214 [LIVE-CONFIRMED session 8] genuine MSVC magic-static returning &(base+0x69A4E8); connection object = *(that+0x20)",
+   "at_function_start": true,
+   "sig": "48 83 EC 28 65 48 8B 04 25 58 00 00 00 BA 40 00 00 00 48 8B 08 8B 04 0A 39 05 ?? ?? ?? ?? 7E ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? FF 75 ?? 33 D2 48 8D 05 ?? ?? ?? ??",
+   "sig_len": 62,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0xb7320"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CNETCLIENT_SEND_MSG_REAL",
+   "kind": "code",
+   "rva": 1954896,
+   "status": "verified",
+   "source": "game.h:215",
+   "namespace": "GameRva",
+   "evidence": "",
+   "status_tagscrape": "stale_default",
+   "status_source": "override",
+   "status_reason": "game.h:196-215 [LIVE-CONFIRMED END TO END session 8]: real CNetClient::SendMsg(conn, buf, len); every packet action goes through it",
+   "at_function_start": true,
+   "sig": "48 89 5C 24 10 48 89 74 24 18 57 48 83 EC 20 49 8B F8 48 8B F2 48 8B D9 E8 ?? ?? ?? ?? 44 8B D0",
+   "sig_len": 32,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x1dd450"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CROLE_SET_COMMAND_REAL",
+   "kind": "code",
+   "rva": 1771104,
+   "status": "verified",
+   "source": "game.h:232",
+   "namespace": "GameRva",
+   "evidence": "v1074 [LIVE-CONFIRMED, session 9, 2026-08-24]: the REAL CRole::SetCommand. GameVtableIndex::CRole_SetCommand (59, below) is CONFIRMED WRONG \u2014 a live vtable scan (slots 0-199) found no match for this address anywhere in the hero's own vtable; slot 59 itself resolves to an unrelated trivial stub (`mov eax, 0xCD764F08; ret`, ignores its args). The real function is reached via a plain DIRECT call, not a virtual dispatch \u2014 confirmed by hooking it live during natural walking: consistent (this, cmd) args, sensible CCommand contents tracking the character's real position, and a stable, non-vtable call chain. Root-caused after `CRole::SetCommand()` (via the wrong vtable slot) crashed the game live \u2014 that call was actually harmless on its own (the stub ignores its args), so the crash's exact mechanism through the old path is unconfirmed, but moot now that this is fixed. Signature: void SetCommand(void* this, CCommand* cmd) \u2014 null-checks cmd, then bulk-copies it into this+0x188 (m_cmdAction, independently confirmed correct all session).",
+   "status_tagscrape": "wrong",
+   "status_source": "override",
+   "status_reason": "game.h:216-232 [LIVE-CONFIRMED session 9]: the real CRole::SetCommand (a direct call, not vtable slot 59)",
+   "at_function_start": true,
+   "sig": "48 85 D2 75 ?? 33 C0 C3 48 81 C1 88 01 00 00 B8 02 00 00 00 48 8D 89 80 00 00 00 0F 10 02",
+   "sig_len": 30,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x1b0660"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CRole_SetCommand",
+   "kind": "vtable_index",
+   "value": 59,
+   "status": "wrong",
+   "source": "game.h:238",
+   "evidence": "CONFIRMED WRONG for v1074 \u2014 see GameRva::CROLE_SET_COMMAND_REAL above. Kept for reference only; do not use for SetCommand.",
+   "status_source": "override",
+   "status_reason": "game.h:236-238 vtable slot 59 CONFIRMED WRONG (resolves to a stub `mov eax,0xCD764F08; ret`)"
+  },
+  {
+   "name": "CNETCLIENT_POLLER_1DD860",
+   "rva": 1955936,
+   "kind": "code",
+   "status": "verified",
+   "source": "notes",
+   "evidence": "per-tick outbound poller that drains the pending-send queue to real send(); plain code, NOT hook-resistant (game.h SEND_MSG_REAL comment; flushfinder retirement note in CONNECTION_DECIPHER_PREP.md)",
+   "status_source": "tag",
+   "at_function_start": true,
+   "sig": "40 53 48 83 EC 20 4C 8B 81 00 20 00 00 48 8B D9 4D 85 C0 74 ?? 48 8B D1 45 33 C9",
+   "sig_len": 27,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x1dd860"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "CONN_STATIC_69A4E8",
+   "rva": 6923496,
+   "kind": "data",
+   "status": "verified",
+   "source": "notes",
+   "evidence": "static storage returned by CNETCLIENT_CONNECTION_SINGLETON (0xB7320: `lea rax,[rip+0x5e3144]`); connection object = *(u64*)(base+0x69A4E8+0x20). Derived 2026-09-20 by decoding the accessor in image_dump.bin",
+   "status_source": "tag",
+   "xref_count_seen": 3,
+   "xref_sigs": [
+    {
+     "site_rva": "0xb737e",
+     "sig": "48 8D 0D ?? ?? ?? ?? 48 89 15 ?? ?? ?? ?? F3 0F 7F 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 48 89 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ??",
+     "matches_in_code": 1,
+     "disp_off": 25,
+     "next_ip_off": 29,
+     "radius": 3,
+     "mnemonic": "mov qword ptr [rip + 0x5e3163], rax",
+     "func_rel": {
+      "func_rva": "0xb7320",
+      "func_sig": "48 83 EC 28 65 48 8B 04 25 58 00 00 00 BA 40 00 00 00 48 8B 08 8B 04 0A 39 05 ?? ?? ?? ?? 7E ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? FF 75 ?? 33 D2 48 8D 05 ?? ?? ?? ??",
+      "func_matches": 1,
+      "site_off": 94,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0xb739d",
+     "sig": "48 89 05 ?? ?? ?? ?? 48 89 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 05 ?? ?? ?? ?? 48 83 C4 28 C3 CC CC CC",
+     "matches_in_code": 1,
+     "disp_off": 34,
+     "next_ip_off": 38,
+     "radius": 5,
+     "mnemonic": "lea rax, [rip + 0x5e3144]",
+     "func_rel": {
+      "func_rva": "0xb7320",
+      "func_sig": "48 83 EC 28 65 48 8B 04 25 58 00 00 00 BA 40 00 00 00 48 8B 08 8B 04 0A 39 05 ?? ?? ?? ?? 7E ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 3D ?? ?? ?? ?? FF 75 ?? 33 D2 48 8D 05 ?? ?? ?? ??",
+      "func_matches": 1,
+      "site_off": 125,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x547dd0",
+     "sig": "48 C7 05 ?? ?? ?? ?? 00 00 00 00 48 83 C4 28 C3 CC CC CC CC CC CC CC CC CC CC CC CC CC 48 8D 0D ?? ?? ?? ?? E9 ?? ?? ?? ?? CC CC CC CC 48 83 EC 28 48 8B 0D ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 48 8D 15 ?? ?? ?? ?? 48 3B CA 0F 95 C2 FF 50 20 48 C7 05 ?? ?? ?? ?? 00 00 00 00 48 83 C4 28",
+     "matches_in_code": 3,
+     "disp_off": 32,
+     "next_ip_off": 36,
+     "radius": 16,
+     "mnemonic": "lea rcx, [rip + 0x152711]",
+     "func_rel": {
+      "func_rva": "0x547dd0",
+      "func_sig": "48 8D 0D ?? ?? ?? ?? E9 ?? ?? ?? ?? CC CC CC CC 48 83 EC 28 48 8B 0D ?? ?? ?? ?? 48 85 C9 74 ?? 48 8B 01 48 8D 15 ?? ?? ?? ?? 48 3B CA 0F 95 C2 FF 50 20 48 C7 05 ?? ?? ?? ?? 00 00 00 00 48 83 C4 28 C3 CC CC CC CC CC CC CC CC CC CC CC CC CC 48 8D 0D ?? ?? ?? ?? E9 ?? ?? ?? ?? CC CC CC CC",
+      "func_matches": 1,
+      "site_off": 0,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "MAP_SCENE_PTR_699370",
+   "rva": 6919024,
+   "kind": "data",
+   "status": "verified",
+   "source": "notes",
+   "evidence": "heap object that tracks the active map (vtable not in image; a real CGameMap vtable is 0x5CCB60) - REVAMP_PLAN session 9",
+   "status_source": "tag",
+   "xref_count_seen": 16,
+   "xref_sigs": [
+    {
+     "site_rva": "0x137030",
+     "sig": "4C 8D 2D ?? ?? ?? ?? 4C 89 AC 24 80 00 00 00 48 8D 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? B9 10 00 00 00 E8 ?? ?? ?? ??",
+     "matches_in_code": 1,
+     "disp_off": 39,
+     "next_ip_off": 43,
+     "radius": 5,
+     "mnemonic": "mov qword ptr [rip + 0x562339], r15",
+     "func_rel": {
+      "func_rva": "0x136ff0",
+      "func_sig": "48 89 5C 24 18 48 89 4C 24 08 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 40 45 33 FF",
+      "func_matches": 1,
+      "site_off": 64,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x137494",
+     "sig": "48 89 05 ?? ?? ?? ?? 48 8D 34 02 48 23 FE 48 8B 15 ?? ?? ?? ?? 48 83 3C FA 00 75 ?? B9 10 00 00 00",
+     "matches_in_code": 1,
+     "disp_off": 17,
+     "next_ip_off": 21,
+     "radius": 3,
+     "mnemonic": "mov rdx, qword ptr [rip + 0x561ed5]",
+     "func_rel": {
+      "func_rva": "0x137465",
+      "func_sig": "E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8D 79 FF 48 8B C7",
+      "func_matches": 1,
+      "site_off": 47,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x1374ac",
+     "sig": "75 ?? B9 10 00 00 00 E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 89 04 F9 48 8B 0D ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ??",
+     "matches_in_code": 1,
+     "disp_off": 15,
+     "next_ip_off": 19,
+     "radius": 3,
+     "mnemonic": "mov rcx, qword ptr [rip + 0x561ebd]",
+     "func_rel": {
+      "func_rva": "0x137465",
+      "func_sig": "E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8D 79 FF 48 8B C7",
+      "func_matches": 1,
+      "site_off": 71,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x1374be",
+     "sig": "48 8B 0D ?? ?? ?? ?? 48 89 04 F9 48 8B 0D ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8D 41 FF 48 23 C6 48 8B 0C C2",
+     "matches_in_code": 1,
+     "disp_off": 21,
+     "next_ip_off": 25,
+     "radius": 3,
+     "mnemonic": "mov rdx, qword ptr [rip + 0x561eab]",
+     "func_rel": {
+      "func_rva": "0x137465",
+      "func_sig": "E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8D 79 FF 48 8B C7",
+      "func_matches": 1,
+      "site_off": 89,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x1376ea",
+     "sig": "48 89 05 ?? ?? ?? ?? 48 8D 2C 02 48 23 F5 48 8B 15 ?? ?? ?? ?? 48 83 3C F2 00 75 ?? B9 10 00 00 00",
+     "matches_in_code": 1,
+     "disp_off": 17,
+     "next_ip_off": 21,
+     "radius": 3,
+     "mnemonic": "mov rdx, qword ptr [rip + 0x561c7f]",
+     "func_rel": {
+      "func_rva": "0x1376bb",
+      "func_sig": "E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8D 71 FF 48 8B C6 48 23 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 48 8D 2C 02 48 23 F5",
+      "func_matches": 1,
+      "site_off": 47,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x137702",
+     "sig": "48 8B 15 ?? ?? ?? ?? 48 83 3C F2 00 75 ?? B9 10 00 00 00 E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 89 04 F1 48 8B 0D ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8D 41 FF 48 23 C5",
+     "matches_in_code": 1,
+     "disp_off": 27,
+     "next_ip_off": 31,
+     "radius": 5,
+     "mnemonic": "mov rcx, qword ptr [rip + 0x561c67]",
+     "func_rel": {
+      "func_rva": "0x1376bb",
+      "func_sig": "E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8D 71 FF 48 8B C6 48 23 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 48 8D 2C 02 48 23 F5",
+      "func_matches": 1,
+      "site_off": 71,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "MAP_GLOBAL_6993B8",
+   "rva": 6919096,
+   "kind": "data",
+   "status": "unverified",
+   "source": "notes",
+   "evidence": "'repeated 0x10000, not a map' - REVAMP_PLAN session 9; listed so a diff can see whether it moved",
+   "status_source": "tag",
+   "xref_count_seen": 1,
+   "xref_sigs": [
+    {
+     "site_rva": "0x1379ed",
+     "sig": "E8 ?? ?? ?? ?? 44 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? 4C 89 3D ?? ?? ?? ?? C7 05 ?? ?? ?? ?? 01 00 00 00 44 89 3D ?? ?? ?? ?? C7 05 ?? ?? ?? ?? 01 00 00 00",
+     "matches_in_code": 1,
+     "disp_off": 22,
+     "next_ip_off": 26,
+     "radius": 3,
+     "mnemonic": "mov qword ptr [rip + 0x5619c4], r15",
+     "func_rel": {
+      "func_rva": "0x137903",
+      "func_sig": "E8 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8D 71 FF 48 8B C6 48 23 05 ?? ?? ?? ?? 48 89 05 ?? ?? ?? ?? 4C 8D 34 02 49 23 F6 48 8B 15 ?? ?? ?? ?? 48 83 3C F2 00 75 ?? B9 10 00 00 00 E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 89 04 F1 48 8B 0D ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 8D 41 FF 49 23 C6 48 8B 0C C2 4C 89 39 4C 89 79 08 F0 FF 43 08 48 89 29 48 89 59 08",
+      "func_matches": 3,
+      "site_off": 234,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "CGAMEMAP_VTABLE_5CCB60",
+   "rva": 6081376,
+   "kind": "data",
+   "status": "verified",
+   "source": "notes",
+   "evidence": "genuine CGameMap vtable RVA; map descriptor id at +0x10 (memory live-offsets, map-id verification technique)",
+   "status_source": "tag",
+   "xref_count_seen": 3,
+   "xref_sigs": [
+    {
+     "site_rva": "0x13cd92",
+     "sig": "BB 01 00 00 00 48 8B BC 24 98 00 00 00 48 8B B4 24 A0 00 00 00 4C 8D 25 ?? ?? ?? ?? 4D 3B F2 0F 85 ?? ?? ?? ?? 41 0F B6 0E",
+     "matches_in_code": 1,
+     "disp_off": 24,
+     "next_ip_off": 28,
+     "radius": 3,
+     "mnemonic": "lea r12, [rip + 0x48fdc7]",
+     "func_rel": {
+      "func_rva": "0x13ca20",
+      "func_sig": "48 89 5C 24 18 48 89 74 24 20 48 89 4C 24 08 57 41 54 41 55 41 56 41 57 48 81 EC B0 04 00 00",
+      "func_matches": 1,
+      "site_off": 882,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x13d80c",
+     "sig": "0F 11 00 C7 40 08 01 00 00 00 C7 40 0C 01 00 00 00 48 8D 05 ?? ?? ?? ?? 49 89 06 49 8D 7E 10 48 8B 94 24 A8 00 00 00",
+     "matches_in_code": 1,
+     "disp_off": 20,
+     "next_ip_off": 24,
+     "radius": 3,
+     "mnemonic": "lea rax, [rip + 0x48f34d]",
+     "func_rel": {
+      "func_rva": "0x13d7da",
+      "func_sig": "03 44 89 A4 24 A0 00 00 00 B9 A8 00 00 00 E8 ?? ?? ?? ?? 4C 8B F0 48 89 84 24 B8 00 00 00",
+      "func_matches": 1,
+      "site_off": 50,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    },
+    {
+     "site_rva": "0x1415c6",
+     "sig": "C3 CC CC CC CC CC 40 53 48 83 EC 20 48 8D 05 ?? ?? ?? ?? 48 8B D9 48 89 01 F6 C2 01 74 ?? BA A8 00 00 00 E8 ?? ?? ?? ?? 48 8B C3 48 83 C4 20",
+     "matches_in_code": 1,
+     "disp_off": 15,
+     "next_ip_off": 19,
+     "radius": 8,
+     "mnemonic": "lea rax, [rip + 0x48b593]",
+     "func_rel": {
+      "func_rva": "0x1415c0",
+      "func_sig": "40 53 48 83 EC 20 48 8D 05 ?? ?? ?? ?? 48 8B D9 48 89 01 F6 C2 01 74 ?? BA A8 00 00 00 E8 ?? ?? ?? ?? 48 8B C3 48 83 C4 20 5B C3 CC CC CC CC CC 40 53 48 83 EC 20 48 8D 05 ?? ?? ?? ?? 48 8B D9",
+      "func_matches": 1,
+      "site_off": 6,
+      "ins_size": 7,
+      "disp_off_in_insn": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "HERO_ROLEMGR_ACCESSOR_181B30",
+   "rva": 1579824,
+   "kind": "code",
+   "status": "verified",
+   "source": "notes",
+   "evidence": "hero/rolemgr singleton accessor foothold found in session 3 (REVAMP_PLAN)",
+   "status_source": "tag",
+   "at_function_start": true,
+   "sig": "48 89 5C 24 18 48 89 74 24 20 57 48 83 EC 20 BA 40 00 00 00 65 48 8B 04 25 58 00 00 00 48 8B 08",
+   "sig_len": 32,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0x181b30"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "GETTIMESTAMP_C6A80",
+   "rva": 813696,
+   "kind": "code",
+   "status": "stale",
+   "source": "notes",
+   "evidence": "used inline in CHero.cpp/packets.cpp; game.h: resolves to an epilogue on v1074",
+   "status_source": "tag",
+   "at_function_start": true,
+   "sig": "5E 5F 5E 5D C3 CC CC CC CC CC CC CC CC CC CC CC 48 89 5C 24 08 55 56 57 41 56 41 57 48 83 EC 50 49 8B F9 4D 8B F0 48 8B E9 0F 57 C0 0F 11 44 24 20 0F 11 44 24 30 48 8D 41 08 48 89 44 24 20 4C 89 4C 24 28 4C 8D 3D ?? ?? ?? ?? 4C 89 7C 24 38 48 C7 44 24 40 40 00 00 00 8B 30 83 C6 FC",
+   "sig_len": 94,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0xc6a80"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "COROUTINE_E9960",
+   "rva": 956768,
+   "kind": "code",
+   "status": "verified",
+   "source": "notes",
+   "evidence": "HOOK-RESISTANT region (anti-tamper); DO NOT hook/call - calling 0xE9960(realNetClient) spawned a duplicate game instance (memory workflow-feedback)",
+   "status_source": "tag",
+   "at_function_start": true,
+   "sig": "41 54 48 81 EC 80 00 00 00 4C 8B E1 E8 ?? ?? ?? ?? 84 C0 74 ?? 33 C0 48 81 C4 80 00 00 00 41 5C",
+   "sig_len": 32,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0xe9960"
+   ],
+   "sig_self_hit": true
+  },
+  {
+   "name": "COROUTINE_BF920",
+   "rva": 784672,
+   "kind": "code",
+   "status": "verified",
+   "source": "notes",
+   "evidence": "HOOK-RESISTANT region (anti-tamper); DO NOT hook/call (same finding as 0xE9960)",
+   "status_source": "tag",
+   "at_function_start": true,
+   "sig": "48 8B C4 53 55 56 57 41 54 41 55 41 56 41 57 48 81 EC D8 00 00 00 0F 29 70 A8 0F 29 78 98",
+   "sig_len": 30,
+   "sig_matches": 1,
+   "sig_hit_rvas": [
+    "0xbf920"
+   ],
+   "sig_self_hit": true
+  }
+ ],
+ "struct_fields": [
+  {
+   "file": "CRole.h",
+   "line": 147,
+   "field": "_pad20",
+   "offset": 32,
+   "comment": "+0x20",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 150,
+   "field": "m_nStatusFlag",
+   "offset": 48,
+   "comment": "+0x30",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 153,
+   "field": "_pad38",
+   "offset": 56,
+   "comment": "+0x38  (deque<PAniEffect> + unknowns)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 157,
+   "field": "m_id",
+   "offset": 104,
+   "comment": "+0x68  entity ID",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 159,
+   "field": "_pad6C",
+   "offset": 108,
+   "comment": "+0x6C",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 161,
+   "field": "m_szName",
+   "offset": 148,
+   "comment": "+0x94  null-terminated ASCII",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 163,
+   "field": "_padA4",
+   "offset": 164,
+   "comment": "+0xA4",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 165,
+   "field": "m_posMap",
+   "offset": 216,
+   "comment": "+0xD8  map cell position",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 166,
+   "field": "m_posWorld",
+   "offset": 224,
+   "comment": "+0xE0  world position",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 167,
+   "field": "m_posScr",
+   "offset": 232,
+   "comment": "+0xE8  screen position",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 170,
+   "field": "_padF0",
+   "offset": 240,
+   "comment": "+0xF0",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 185,
+   "field": "m_posMoveStart",
+   "offset": 264,
+   "comment": "+0x108  movement start world position",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 186,
+   "field": "m_posMoveDest",
+   "offset": 272,
+   "comment": "+0x110  movement destination world position",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 188,
+   "field": "_pad118",
+   "offset": 280,
+   "comment": "+0x118",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 190,
+   "field": "m_cmdAction",
+   "offset": 392,
+   "comment": "+0x188  current action command",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 192,
+   "field": "_pad290",
+   "offset": 656,
+   "comment": "+0x290",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 194,
+   "field": "m_nMaxHp",
+   "offset": 976,
+   "comment": "+0x3D0 cached max HP",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 196,
+   "field": "_pad3D4",
+   "offset": 980,
+   "comment": "+0x3D4",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 198,
+   "field": "m_nStamina",
+   "offset": 1760,
+   "comment": "+0x6E0 current stamina (PP)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 199,
+   "field": "m_nMaxStamina",
+   "offset": 1764,
+   "comment": "+0x6E4 max stamina",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 212,
+   "field": "m_nLevel",
+   "offset": 1768,
+   "comment": "+0x6E8",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 214,
+   "field": "_pad6EC",
+   "offset": 1772,
+   "comment": "+0x6EC",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 216,
+   "field": "m_idSyndicate",
+   "offset": 1812,
+   "comment": "+0x714  syndicate/guild ID (0 = none)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 217,
+   "field": "m_nSyndicateRank",
+   "offset": 1816,
+   "comment": "+0x718  syndicate rank (100=Leader, 90=Deputy, 50=Member)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CRole.h",
+   "line": 297,
+   "field": "CRole::m_nStatusFlag",
+   "offset": 48,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 298,
+   "field": "CRole::m_id",
+   "offset": 104,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 299,
+   "field": "CRole::m_szName",
+   "offset": 148,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 300,
+   "field": "CRole::m_posMap",
+   "offset": 216,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 301,
+   "field": "CRole::m_posWorld",
+   "offset": 224,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 302,
+   "field": "CRole::m_posScr",
+   "offset": 232,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 303,
+   "field": "CRole::m_posMoveStart",
+   "offset": 264,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 304,
+   "field": "CRole::m_posMoveDest",
+   "offset": 272,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 305,
+   "field": "CRole::m_cmdAction",
+   "offset": 392,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 306,
+   "field": "CRole::m_nMaxHp",
+   "offset": 976,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 307,
+   "field": "CRole::m_nStamina",
+   "offset": 1760,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 308,
+   "field": "CRole::m_nMaxStamina",
+   "offset": 1764,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 309,
+   "field": "CRole::m_nLevel",
+   "offset": 1768,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 310,
+   "field": "CRole::m_idSyndicate",
+   "offset": 1812,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 311,
+   "field": "CRole::m_nSyndicateRank",
+   "offset": 1816,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 335,
+   "field": "CRoleMgr::m_pHero",
+   "offset": 0,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CRole.h",
+   "line": 336,
+   "field": "CRoleMgr::m_deqRole",
+   "offset": 112,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 81,
+   "field": "_pad71C",
+   "offset": 1820,
+   "comment": "+0x71C  hero runtime fields",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 84,
+   "field": "m_pStatTable",
+   "offset": 2408,
+   "comment": "+0x968 current HP/stat table",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 90,
+   "field": "_pad970",
+   "offset": 80,
+   "comment": "+0x970 gap to silver slot (v1074 +0x50)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 93,
+   "field": "m_qwRuntimeA30",
+   "offset": 2688,
+   "comment": "+0xA80 (v1074) silver in low 32 bits [LIVE-VERIFIED =7681]",
+   "status": "verified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 96,
+   "field": "_padA88",
+   "offset": 2696,
+   "comment": "+0xA88 gap to inventory deque",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 99,
+   "field": "m_deqItem",
+   "offset": 2928,
+   "comment": "+0xB70 (v1074) inventory items [inferred from equip offset]",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 105,
+   "field": "m_equipment",
+   "offset": 3032,
+   "comment": "+0xBD8 (v1074) equipped items [LIVE-VERIFIED: GoldCoronet/Lathee]",
+   "status": "verified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 108,
+   "field": "_padC58",
+   "offset": 3160,
+   "comment": "+0xC58 gap to max mana cache",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 111,
+   "field": "m_nMaxMana",
+   "offset": 3320,
+   "comment": "+0xCF8 (v1074) cached max MP [inferred]",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 112,
+   "field": "m_bMaxManaValid",
+   "offset": 3324,
+   "comment": "+0xCFC max MP cache-valid byte",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 115,
+   "field": "_padCFD",
+   "offset": 3325,
+   "comment": "+0xCFD",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 124,
+   "field": "m_bNpcActive",
+   "offset": 4176,
+   "comment": "+0x1050 (v1074)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 138,
+   "field": "m_pNpcDialog",
+   "offset": 4192,
+   "comment": "+0x1060 (v1074)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 141,
+   "field": "_pad1068",
+   "offset": 4200,
+   "comment": "+0x1068 gap to magic vector",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 144,
+   "field": "m_vecMagic",
+   "offset": 6504,
+   "comment": "+0x1968 (v1074) learned skills [LIVE-VERIFIED: count 18]",
+   "status": "verified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 147,
+   "field": "_pad1980",
+   "offset": 6528,
+   "comment": "+0x1980 gap to active NPC UID",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 154,
+   "field": "m_idActiveNpc",
+   "offset": 14196,
+   "comment": "+0x3774 (v1074)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 157,
+   "field": "_pad3778",
+   "offset": 14200,
+   "comment": "+0x3778 gap to VIP flag",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 160,
+   "field": "m_bVip",
+   "offset": 14224,
+   "comment": "+0x3790 (v1074) VIP status flag [inferred]",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CHero.h",
+   "line": 247,
+   "field": "CHero::m_pStatTable",
+   "offset": 2408,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 248,
+   "field": "CHero::m_qwRuntimeA30",
+   "offset": 2688,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 249,
+   "field": "CHero::m_nMaxMana",
+   "offset": 3320,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 250,
+   "field": "CHero::m_bMaxManaValid",
+   "offset": 3324,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 251,
+   "field": "CHero::m_bNpcActive",
+   "offset": 4176,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 252,
+   "field": "CHero::m_pNpcDialog",
+   "offset": 4192,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 253,
+   "field": "CHero::m_deqItem",
+   "offset": 2928,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 254,
+   "field": "CHero::m_equipment",
+   "offset": 3032,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 255,
+   "field": "CHero::m_vecMagic",
+   "offset": 6504,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 256,
+   "field": "CHero::m_idActiveNpc",
+   "offset": 14196,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CHero.h",
+   "line": 257,
+   "field": "CHero::m_bVip",
+   "offset": 14224,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 168,
+   "field": "m_id",
+   "offset": 8,
+   "comment": "+0x08  item instance UID",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 170,
+   "field": "_pad0C",
+   "offset": 12,
+   "comment": "+0x0C",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 172,
+   "field": "m_idType",
+   "offset": 16,
+   "comment": "+0x10  item type ID",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 174,
+   "field": "_pad14",
+   "offset": 20,
+   "comment": "+0x14",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 176,
+   "field": "m_szName",
+   "offset": 24,
+   "comment": "+0x18  null-terminated ASCII name",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 179,
+   "field": "_pad28",
+   "offset": 40,
+   "comment": "+0x28  gap to attribute fields",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 182,
+   "field": "m_nAmount",
+   "offset": 98,
+   "comment": "+0x62  current durability raw, or current arrow count",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 183,
+   "field": "m_nAmountLimit",
+   "offset": 100,
+   "comment": "+0x64  max durability raw, or max arrow count",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 184,
+   "field": "m_nStatus",
+   "offset": 102,
+   "comment": "+0x66  item status flags",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 185,
+   "field": "m_nGem1",
+   "offset": 103,
+   "comment": "+0x67  socket 1 gem type (0=none, 255=empty)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 186,
+   "field": "m_nGem2",
+   "offset": 104,
+   "comment": "+0x68  socket 2 gem type (0=none, 255=empty)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 187,
+   "field": "m_nMagic1",
+   "offset": 105,
+   "comment": "+0x69  magic attribute 1",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 188,
+   "field": "m_nBless",
+   "offset": 106,
+   "comment": "+0x6A  lucky/bless (0-7)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 189,
+   "field": "m_nAddition",
+   "offset": 107,
+   "comment": "+0x6B  plus level (+0 to +12)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CItem.h",
+   "line": 237,
+   "field": "CItem::m_id",
+   "offset": 8,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 238,
+   "field": "CItem::m_idType",
+   "offset": 16,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 239,
+   "field": "CItem::m_szName",
+   "offset": 24,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 240,
+   "field": "CItem::m_nAmount",
+   "offset": 98,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 241,
+   "field": "CItem::m_nAmountLimit",
+   "offset": 100,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 242,
+   "field": "CItem::m_nStatus",
+   "offset": 102,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 243,
+   "field": "CItem::m_nGem1",
+   "offset": 103,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 244,
+   "field": "CItem::m_nGem2",
+   "offset": 104,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 245,
+   "field": "CItem::m_nMagic1",
+   "offset": 105,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 246,
+   "field": "CItem::m_nBless",
+   "offset": 106,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CItem.h",
+   "line": 247,
+   "field": "CItem::m_nAddition",
+   "offset": 107,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 50,
+   "field": "m_id",
+   "offset": 0,
+   "comment": "+0x00  item instance UID",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 51,
+   "field": "m_idType",
+   "offset": 4,
+   "comment": "+0x04  item type ID",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 52,
+   "field": "m_pos",
+   "offset": 8,
+   "comment": "+0x08  tile position (x, y)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 53,
+   "field": "m_pInfo",
+   "offset": 16,
+   "comment": "+0x10  MapItemInfo* (rendering data)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 54,
+   "field": "m_pInfoCtrl",
+   "offset": 24,
+   "comment": "+0x18  shared_ptr control block",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 98,
+   "field": "CMapItem::m_id",
+   "offset": 0,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 99,
+   "field": "CMapItem::m_idType",
+   "offset": 4,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 100,
+   "field": "CMapItem::m_pos",
+   "offset": 8,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 108,
+   "field": "m_sizeMap",
+   "offset": 48,
+   "comment": "+0x30  map dimensions in tiles",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 109,
+   "field": "m_sizeWorld",
+   "offset": 56,
+   "comment": "+0x38  world dimensions in pixels",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 113,
+   "field": "m_posCameraPos",
+   "offset": 68,
+   "comment": "+0x44  isometric origin offset",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 114,
+   "field": "m_posViewport",
+   "offset": 76,
+   "comment": "+0x4C  camera scroll (viewport)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 118,
+   "field": "m_pCellInfo",
+   "offset": 88,
+   "comment": "+0x58  pointer to cell array [width * height]",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 120,
+   "field": "_pad60",
+   "offset": 96,
+   "comment": "+0x60  gap to ground items vector",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 133,
+   "field": "m_idMap",
+   "offset": 512,
+   "comment": "+0x200 current map ID (e.g. 1002 = Twin City)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 134,
+   "field": "m_idDoc",
+   "offset": 516,
+   "comment": "+0x204 map document ID",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 243,
+   "field": "CGameMap::m_sizeMap",
+   "offset": 48,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 244,
+   "field": "CGameMap::m_posCameraPos",
+   "offset": 68,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 245,
+   "field": "CGameMap::m_posViewport",
+   "offset": 76,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 246,
+   "field": "CGameMap::m_pCellInfo",
+   "offset": 88,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 247,
+   "field": "CGameMap::m_vecItems",
+   "offset": 376,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 248,
+   "field": "CGameMap::m_idMap",
+   "offset": 512,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CGameMap.h",
+   "line": 249,
+   "field": "CGameMap::m_idDoc",
+   "offset": 516,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMapObj.h",
+   "line": 52,
+   "field": "_pad08",
+   "offset": 8,
+   "comment": "+0x08: weak_ptr from enable_shared_from_this",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMapObj.h",
+   "line": 55,
+   "field": "m_nType",
+   "offset": 24,
+   "comment": "+0x18",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMapObj.h",
+   "line": 56,
+   "field": "m_dwARGB",
+   "offset": 28,
+   "comment": "+0x1C",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 25,
+   "field": "default",
+   "offset": 0,
+   "comment": "+0x00  vtable (8 bytes)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 26,
+   "field": "m_bEnable",
+   "offset": 8,
+   "comment": "+0x08  (BOOL \u2014 is the skill usable)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 27,
+   "field": "m_dwExp",
+   "offset": 12,
+   "comment": "+0x0C  (current skill experience)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 30,
+   "field": "m_idMagicType",
+   "offset": 16,
+   "comment": "+0x10  (skill type ID, e.g. 1000 = Thunder)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 31,
+   "field": "m_dwActionSort",
+   "offset": 20,
+   "comment": "+0x14",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 32,
+   "field": "m_strName",
+   "offset": 24,
+   "comment": "+0x18  (skill name, 32 bytes on MSVC x64)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 35,
+   "field": "m_dwLevel",
+   "offset": 72,
+   "comment": "+0x48",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 36,
+   "field": "m_dwMpCost",
+   "offset": 76,
+   "comment": "+0x4C",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 37,
+   "field": "m_dwPower",
+   "offset": 80,
+   "comment": "+0x50",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 38,
+   "field": "m_dwIntoneDuration",
+   "offset": 84,
+   "comment": "+0x54",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 39,
+   "field": "m_dwHitPoint",
+   "offset": 88,
+   "comment": "+0x58",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 40,
+   "field": "m_dwDuration",
+   "offset": 92,
+   "comment": "+0x5C",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 41,
+   "field": "m_dwRange",
+   "offset": 96,
+   "comment": "+0x60",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 42,
+   "field": "m_dwDistance",
+   "offset": 100,
+   "comment": "+0x64",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 44,
+   "field": "m_dwExpRequired",
+   "offset": 112,
+   "comment": "+0x70",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 46,
+   "field": "m_dwXp",
+   "offset": 120,
+   "comment": "+0x78  (0=regular, 1=XP skill)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 48,
+   "field": "m_dwUsePP",
+   "offset": 152,
+   "comment": "+0x98  (stamina cost)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CMagic.h",
+   "line": 67,
+   "field": "CMagic::m_bEnable",
+   "offset": 8,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMagic.h",
+   "line": 68,
+   "field": "CMagic::m_dwExp",
+   "offset": 12,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMagic.h",
+   "line": 69,
+   "field": "CMagic::m_idMagicType",
+   "offset": 16,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMagic.h",
+   "line": 70,
+   "field": "CMagic::m_strName",
+   "offset": 24,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMagic.h",
+   "line": 81,
+   "field": "CMagic::m_dwLevel",
+   "offset": 72,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMagic.h",
+   "line": 82,
+   "field": "CMagic::m_dwMpCost",
+   "offset": 76,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMagic.h",
+   "line": 83,
+   "field": "CMagic::m_dwPower",
+   "offset": 80,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMagic.h",
+   "line": 84,
+   "field": "CMagic::m_dwExpRequired",
+   "offset": 112,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMagic.h",
+   "line": 85,
+   "field": "CMagic::m_dwXp",
+   "offset": 120,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CMagic.h",
+   "line": 86,
+   "field": "CMagic::m_dwUsePP",
+   "offset": 152,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 20,
+   "field": "m_nTradeRequestState",
+   "offset": 3968,
+   "comment": "+0xF80 observed as 7 while request popup is active",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 26,
+   "field": "m_idTradeRequester",
+   "offset": 3984,
+   "comment": "+0xF90 requester UID",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 32,
+   "field": "m_szTradeRequesterName",
+   "offset": 3992,
+   "comment": "+0xF98 requester name",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 35,
+   "field": "m_pWarehouseRing",
+   "offset": 4024,
+   "comment": "+0xFB8 warehouse item pointer ring buffer",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 36,
+   "field": "m_qwWarehouseRingMask",
+   "offset": 4032,
+   "comment": "+0xFC0 ring capacity mask",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 37,
+   "field": "m_qwWarehouseRingStart",
+   "offset": 4040,
+   "comment": "+0xFC8 logical start index",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 38,
+   "field": "m_qwWarehouseRingCount",
+   "offset": 4048,
+   "comment": "+0xFD0 item count",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 44,
+   "field": "m_nWarehouseCapacity",
+   "offset": 4064,
+   "comment": "+0xFE0 visible warehouse slot count",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 65,
+   "field": "CEntityInfo::m_nTradeRequestState",
+   "offset": 3968,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 66,
+   "field": "CEntityInfo::m_idTradeRequester",
+   "offset": 3984,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 67,
+   "field": "CEntityInfo::m_szTradeRequesterName",
+   "offset": 3992,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 68,
+   "field": "CEntityInfo::m_pWarehouseRing",
+   "offset": 4024,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 69,
+   "field": "CEntityInfo::m_qwWarehouseRingMask",
+   "offset": 4032,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 70,
+   "field": "CEntityInfo::m_qwWarehouseRingStart",
+   "offset": 4040,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 71,
+   "field": "CEntityInfo::m_qwWarehouseRingCount",
+   "offset": 4048,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntityInfo.h",
+   "line": 72,
+   "field": "CEntityInfo::m_nWarehouseCapacity",
+   "offset": 4064,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 28,
+   "field": "m_id",
+   "offset": 0,
+   "comment": "+0x00  syndicate ID",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 29,
+   "field": "_pad04",
+   "offset": 4,
+   "comment": "+0x04",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 30,
+   "field": "m_szName",
+   "offset": 8,
+   "comment": "+0x08  syndicate name",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 31,
+   "field": "m_szSubTitle",
+   "offset": 40,
+   "comment": "+0x28  rank subtitle",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 32,
+   "field": "m_nColorType",
+   "offset": 72,
+   "comment": "+0x48  0=ally(green), 1=enemy(red), 2=neutral(yellow)",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 36,
+   "field": "CSyndicateEntry::m_id",
+   "offset": 0,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 37,
+   "field": "CSyndicateEntry::m_szName",
+   "offset": 8,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 38,
+   "field": "CSyndicateEntry::m_szSubTitle",
+   "offset": 40,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 39,
+   "field": "CSyndicateEntry::m_nColorType",
+   "offset": 72,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 50,
+   "field": "_pad00",
+   "offset": 0,
+   "comment": "+0x00  vtable + internal fields",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 52,
+   "field": "m_vec",
+   "offset": 80,
+   "comment": "+0x50  syndicate entries",
+   "status": "unverified",
+   "asserted": false
+  },
+  {
+   "file": "CEntitySet.h",
+   "line": 61,
+   "field": "CEntitySet::m_vec",
+   "offset": 80,
+   "comment": "static_assert(offsetof)",
+   "status": "verified",
+   "asserted": true
+  }
+ ]
+}
