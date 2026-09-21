@@ -206,6 +206,19 @@ set_target_properties(heapfind PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ── Image/object capture (standalone, READ-ONLY; full decrypted-image + paired
+#    live object-layout checkpoints for the v1074 baseline -- see src/imgdump.cpp,
+#    docs/investigation/V1074_CAPTURE_SESSION.md). CMake-only like the other
+#    standalone diagnostic DLLs (no hand-authored vcxproj). ──
+add_library(imgdump SHARED
+    src/imgdump.cpp
+)
+target_link_libraries(imgdump PRIVATE psapi)
+set_target_properties(imgdump PROPERTIES
+    OUTPUT_NAME "imgdump"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ── Net finder (standalone; Detour-hooks Winsock send/WSASend to locate
 #    CNetClient::SendMsg — safe alternative to hardware-breakpoint tracing) ──
 add_library(netfinder SHARED

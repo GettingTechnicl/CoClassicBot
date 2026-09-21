@@ -158,6 +158,27 @@ Deliverable: updated GameRva:: constants + a per-function confidence + byte-sign
 only once each one is individually re-derived and live-confirmed; see coclassicbot-live-offsets
 memory, session 4, for what's already safe-guarded and why.
 
+## Phase 2.5 — Client update recovery (2026-09-20): new critical path  [Claude-solo + one guided session]
+Context: the client updated past v1074 and the server stopped accepting v1074, so the bot is down
+everywhere. Full record and status checklist: `docs/investigation/CLIENT_V1074_BASELINE.md`.
+- **Baseline preserved** (byte-exact, hashed, mirrored): the v1074 install, `image_dump.bin`/`code_dump.bin`,
+  wire captures, all memory/transcripts. The v1074 side of the diff is intact; a live logged-in v1074 capture is
+  NOT possible any more.
+- **Getting the new version without ever updating the live client: fresh install -> throwaway dir -> let it update.**
+  A fresh install ships an older build and updates up to current, so we can (a) record its `version.json`/hashes
+  before updating, (b) snapshot the base, (c) let it update, (d) snapshot the result. Side benefits: the base->updated
+  pair is a cheap KNOWN pair to rehearse the whole diff toolchain on, and if the base pre-dates v1074 it recovers the
+  baseline the last update lost (base -> v1074 validation against work already done).
+- **Build the v1074 side now, offline:** `tools/build_offset_registry.py` -> a masked-signature registry for every verified
+  RVA in `game.h` (+ xref signatures for every verified global) from the preserved dumps; `tools/sigscan.py` to locate
+  those signatures in a new image and validate on the identity pair (v1074 vs itself).
+- **Full in-game capture belongs to the NEW version** (it can log in): `src/imgdump.cpp` checkpoints across a guided feature
+  exercise (every panel, each skill class, combat, trade, warehouse, teleport/map changes, mine, items) so one session forces
+  maximum Themida decryption, plus paired object layouts (re-derive the roots first) and a wire capture.
+- **Then**: diff new vs v1074, re-derive shifted RVAs/offsets, PE-stamp build fence (refuse to arm on an unknown build),
+  port, re-verify with the self-test harness. Both machines move to the new version; no old-version continuity is kept.
+- Deprioritised until the bot runs again: Twin City live-check, mana offset, warehouse-deposit loop, warn-log spam.
+
 ## Phase 3 — Resilience: AOB self-healing engine  [Claude-solo]
 Replace hardcoded RVAs/offsets with a runtime **pattern-scan engine** that locates
 functions and globals by byte-signature at DLL init, so client patches don't break the bot.

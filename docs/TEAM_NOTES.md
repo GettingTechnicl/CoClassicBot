@@ -48,6 +48,26 @@ Standing practice (per the user, 2026-09-18): the PC-side instance posts anythin
 as it happens, so the user doesn't have to manually relay it. Newest entries on top. Each entry
 should be skimmable — point to the real detail (a commit, a doc) rather than duplicating it.
 
+### 2026-09-20 (late) — the server has flipped: v1074 cannot log in any more; new plan = restore the bot on the NEW version
+
+**Supersedes the HOLD below in one respect: there is no v1074 play window left**, so the VM's
+unattended bots cannot log in either — expect login failures, not a bot bug, until we are on the new
+version. The v1074 install is preserved byte-exact on the PC (E: and F: snapshots, SHA-256 manifest;
+dossier `docs/investigation/CLIENT_V1074_BASELINE.md`), so the VM's copy is now only a spare — still
+please don't delete it, and don't run the official launcher on it yet. The earlier idea of keeping one
+machine on v1074 is dropped; **both machines move to the new version** once it is ready.
+
+How we get there (PC side, in progress): fresh-install -> update in a throwaway directory (never the
+live client) to obtain the new build; diff it against the preserved v1074 decrypted image
+(signature registry generated from `game.h` + `image_dump.bin`/`code_dump.bin`; new tools:
+`tools/imgdump_report.py`, `src/imgdump.cpp` / `imgdump.dll`, `tools/inject_dll.ps1`); re-derive the shifted
+RVAs/offsets; add a PE-stamp build fence so the bot refuses to arm on a build it doesn't know; port.
+**Do not run the bot (any DLL from this repo) against the new client until the PC side says it has been
+re-verified** — stale RVAs are jumped into (the last update showed every function RVA moving
+non-uniformly); a wrong call can crash the game. VM-side: keep unattended runs paused; if you have spare
+capacity, the useful thing is to hash the VM's v1074 install (see below) and to note the exact new-version
+number/file list the launcher reports if you see it.
+
 ### 2026-09-20 — HOLD: the game client has a pending update; do NOT update or replace the v1074 client yet
 
 The PC side found the client has an update available (`version.json` still `1074`; nothing staged

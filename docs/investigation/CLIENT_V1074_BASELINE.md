@@ -67,18 +67,57 @@ workflow"). That needs the OLD image captured at full coverage before the old cl
 a signature (masked prologue bytes) for every verified RVA, plus raw object layouts, so each
 verified offset can be located and re-validated in the new build instead of re-hunted.
 
-## 5. Snapshot plan / status (fill in as done)
+## 5. Status (authoritative) — REVISED 2026-09-20 late: the server has flipped
 
-See the plan agreed in chat on 2026-09-20; checklist below is authoritative for status.
+**The v1074 client can no longer log in and play.** The "logged-in, feature-exercised v1074
+decrypted image" window (old P1) is CLOSED and will not happen; do not build or wait on a v1074
+play session. What v1074 coverage is still gettable is offline/passive only, and the diff baseline
+is what we already hold. The v1074 bot is down on every machine, so the critical path is
+**restoring the bot on the NEW version**; there is no old-version continuity to preserve, so
+both the PC and the VM move to the new version (the earlier "stagger the update" idea is dropped).
 
-- [ ] P0a  Freeze: official launcher/updater not run; VM-side told to hold (TEAM_NOTES)
-- [ ] P0b  Byte-exact copy of the install -> `F:\CO_Snapshots\v1074_2026-09-20\install\`, SHA-256 manifest, read-only
-- [ ] P0c  Second copy on another volume (E:), manifest re-verified
-- [ ] P0d  Backup of memory dir + transcripts + persistent scratchpad + bot binaries/PDBs; git tag `pre-update-v1074`
-- [ ] P1a  Fetch update manifest (needs user OK): new version, changed-file list, sizes, hashes
-- [ ] P1b  Full-coverage decrypted-image dumps of the running OLD client at login screen / in-city idle / after exercising features (region map + SHA-256 each)
-- [ ] P1c  Live object-layout dumps paired to the image dump (hero, stat table + dereferenced records, role mgr, item registry, net client chain, current map descriptor)
-- [ ] P1d  Fresh wire capture with the OLD client: login + handshake + steady state (client-version field, static cipher state)
-- [ ] P2a  Verified-offset registry (`V1074_OFFSET_REGISTRY.md`) with masked-prologue signature per RVA, generated from `game.h` + struct headers
-- [ ] P2b  Runtime build fence (refuse to arm anything unless PE TimeDateStamp == `0x6A51CFB9`)
-- [ ] P3   Only then: apply the update; diff; re-derive; re-verify with the self-test harness
+### Done
+- [x] P0a  Freeze: official launcher/updater not run on the PC; HOLD posted to TEAM_NOTES
+- [x] P0b  Byte-exact copy of the install -> `E:\CO_Snapshots\v1074_2026-09-20\install` (53,309/53,309 files, 0 failed,
+      `ImConquer.exe` SHA-256 = baseline; full SHA-256 manifest `manifest_E.csv`, 53,308 rows). Verified independently
+      2026-09-20: file counts, exe hash, random re-hash sample, live install untouched (`version.json` 1074).
+      One file is on disk but not in the manifest: `ini\cache.dat` (0 bytes; identical hash on live/E:/F:) — harmless.
+- [x] P0c  Second copy `F:\CO_Snapshots\v1074_2026-09-20\install` (53,309 files, exe hash matches)
+- [x] P0d  Non-git artifacts backed up to E: — `CO99\scratchpad` (image_dump.bin, code_dump.bin, pktmon captures, object dumps)
+      and the full `.claude` project dir (all memory + transcripts). (Git tag `pre-update-v1074`: see below.)
+- [x] Capture tooling built (kept — now for the NEW version): `src/imgdump.cpp` (CMake target `imgdump`; read-only full-image +
+      region map + page hashes + paired object-graph dumper; smoke-tested off-game on a harmless process incl. the
+      pointer-graph path), `tools/imgdump_report.py` (coverage / packed-vs-clear per page / union image),
+      `tools/inject_dll.ps1`. Its object roots are v1074-specific (`kRva*` constants) and only arm when the host PE stamp is
+      `0x6A51CFB9`; on any other build it runs in generic mode (image + sections + modules + vmmap) until the roots are re-derived.
+
+### What v1074 coverage is still gettable (offline, passive, from the preserved copy)
+- [ ] V1  Determine the exact failure mode of the preserved client: launch a DISPOSABLE working copy
+      (`F:\CO_Work\v1074_run`, made from the F: mirror — never the pristine snapshots, never the live install) and record whether it
+      reaches the login screen (startup/menu/login-UI code decrypts without a server → capturable) or blocks / forces an update.
+      Record child processes, network endpoints, files it modifies, `ImConquer.log`.
+- [ ] V2  If it reaches the login screen: `imgdump` checkpoints there (and after opening every login-screen UI: server list,
+      settings, etc.) to add whatever Themida decrypts beyond the existing 17% `image_dump.bin`. Report coverage with
+      `imgdump_report.py`.
+- [ ] V3  **The real v1074 diff baseline (already preserved):** generate the offset registry (masked signature per verified RVA
+      + xref signatures for every verified global) from `game.h` (`Offsets::`/`GameRva::`) + `image_dump.bin`/`code_dump.bin`
+      + the struct headers -> `V1074_OFFSET_REGISTRY.md` / `v1074_offset_registry.json`, plus a signature matcher
+      (`tools/sigscan.py`) validated on the identity pair (v1074 vs itself: every signature must hit its own RVA).
+
+### The NEW version (where full capture is actually possible)
+- [ ] N1  Get it via **fresh install -> update, in a throwaway location, never the live client** (a fresh install ships an older
+      build and updates up to current). Record the fresh install's `version.json` + hashes BEFORE it updates, snapshot the base,
+      let it update, snapshot the result.
+- [ ] N2  Rehearsal: the fresh-base -> updated pair is a cheap KNOWN pair to validate the whole diff toolchain (registry,
+      sigscan, ghidriff/Diaphora) before depending on it for v1074 -> new. If the fresh base is older than v1074 it also recovers
+      the pre-v1074 baseline that the last update lost (base -> v1074 validation against work already done).
+- [ ] N3  Full in-game capture on the new client (it CAN log in): `imgdump` checkpoints at login screen / world idle / after a
+      guided feature exercise (open every panel, each skill class, combat, trade, warehouse in/out, teleport & map changes,
+      mine, use items) so one session forces maximum Themida decryption; plus paired object layouts (re-derive the roots first)
+      and a wire capture (`pktmon filter add -p 9959` / `-p 5816`, `--pkt-size 0`, `pktmon format ... --hex`).
+- [ ] N4  Diff new vs the preserved v1074 baseline; re-derive shifted RVAs/offsets; PE-stamp build fence (`0x6A51CFB9` -> new stamp);
+      port the bot; re-verify with the self-test harness.
+
+### Still deprioritised (old-client concerns): Twin City live-check, mana offset, warehouse-deposit loop, warn-log spam
+None can be live-tested until the bot runs on the new version anyway; the mana/HP method (dereference the stat-table record,
+rank-correlate, sentinel-on-failure) is the template when it is picked up again.
