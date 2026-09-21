@@ -72,6 +72,14 @@ only calls a global/field "high" when >=2 sites agree. All of this is a *proxy* 
 Still open: capturing that image (needs the user's go for elevated injection of the read-only imgdump.dll), then run
 `sigscan.py --image <v1078> --fields` and check the exact32 hit-rate to learn which regime the update is in.
 
+### 2026-09-21 (evening) — v1078 first contact: regime A, but the send path and CHero layout changed (docs: V1078_FIRST_CONTACT.md)
+
+Read-only image checkpoint of the live v1078 client (imgdump loaded by the user). ~74% of sampled functions relocate by exact bytes
+(ceiling 84%); section layout identical, `.text` +2%. NOT ported yet, nothing is trusted: `CNETCLIENT_SEND_MSG_REAL`/poller changed
+(re-derive live), CHero fields shift +0x28 after ~0x968 and +0x48 by 0x3774 (m_pStatTable 0x968 ambiguous - HP needs re-verifying),
+CRole name at +0x94 is the stable anchor. The launcher fence still refuses v1078 by design. VM instance: no action; do not point any
+DLL at v1078.
+
 ### 2026-09-21 (later) — v1078 capture tooling ready; regime classifier added (tools + docs only)
 
 `tools/regime_classify.py` names the regime (same-codegen / mixed / codegen-changed) per tier before any hit-rate is trusted; calibrated on

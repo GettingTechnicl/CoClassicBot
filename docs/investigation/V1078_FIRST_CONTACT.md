@@ -16,7 +16,7 @@ image read, 0 bytes skipped, 0.7 s, client stayed responsive. Identity: PE stamp
 | ciphertext-looking code pages | 47/1387 = 3.4% (v1074: 46/1360 = 3.4%): the code image is already ~fully decrypted |
 | section table | identical layout; `.text` 0x5501DF -> 0x56B5DF (+2%); every section grows slightly |
 
-Not a "codegen changed" build. Bytes moved (functions shifted +0x1.8K .. +0x17.b90 in growing steps) but the bulk is intact.
+Not a "codegen changed" build. Bytes moved (functions shifted from about +0x1800 to +0x17B90 in growing steps) but the bulk is intact.
 
 Method note: the first classifier run also swept Themida's own `.themida`/`.boot` sections (21 MB of runtime, absent from the
 v1074 dump) which took >10 min and would have fired the ciphertext guard falsely. `sigkit.Image` now excludes packer sections.
