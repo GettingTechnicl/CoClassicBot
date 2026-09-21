@@ -21,6 +21,10 @@ Not a "codegen changed" build. Bytes moved (functions shifted from about +0x1800
 Method note: the first classifier run also swept Themida's own `.themida`/`.boot` sections (21 MB of runtime, absent from the
 v1074 dump) which took >10 min and would have fired the ciphertext guard falsely. `sigkit.Image` now excludes packer sections.
 
+> **CORRECTION (same day, see V1078_OFFSET_FINDINGS.md):** the send path was NOT lost. `CNETCLIENT_SEND_MSG_REAL` is at 0x1C70C0 (moved
+> backwards by the linker; corroborated by two exact-matched callers) - the 'order violation' below was a false positive of a heuristic.
+> The poller is a candidate at 0x1C75E0. CURRENT_MAP_ID's single-anchor proposal was also wrong (true: 0x6B9D40).
+
 ## Verified code entries (all "candidates" until confirmed live)
 Exact-matched with smoothly increasing deltas (a strong consistency signal): `HERO_ROLEMGR_ACCESSOR_181B30` +0x8D50,
 `CNETCLIENT_BEGIN_MSG` +0x92D0, `CROLE_SET_COMMAND_REAL` +0xBE80, `CNETCLIENT_SEND_MAPITEM_MSG` +0xE690,
