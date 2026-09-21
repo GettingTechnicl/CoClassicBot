@@ -87,6 +87,33 @@ The function-start sweep required 16-byte alignment after int3 padding; `/O1` bu
 of ~3300 functions were detected. `sigkit.sweep` now falls back to `align=1` when detection density is implausibly low.
 Worth knowing for v1078: if the sweep reports far fewer functions than v1074's ~15.7k, suspect alignment first.
 
+## 3b. Classify the regime first: `tools/regime_classify.py`
+
+A blended hit-rate hides which regime a build is in, and the regime decides the port strategy. The classifier reports **which tier
+resolves each function** - exact masked-byte prefix (same codegen, lean on the registry), shape/caller anchor only
+(codegen-stable-ish), nothing (codegen changed or not decrypted: live re-derivation) - for the verified registry entries by
+name *and* for a random sample of ~1,200 distinctive functions from the whole old image (11 verified functions cannot classify a
+build). It needs no ground truth: a true relocation preserves ordering, so the order-inversion rate among relocated functions is
+the correctness check. Multiple v1078 dumps are merged page by page (lazy, cumulative decryption).
+
+Calibration on the proxy pairs (all translation units included here, so A is a little higher than the changed-TU-excluded numbers above):
+
+| pair | exact32 | any tier | order inversions | verdict |
+|---|---|---|---|---|
+| A: 208b3e3 -> HEAD, same flags | 90.0% | 99% | 0.4% | A |
+| B: /O2 -> /O1 | 19.0% | 30% | 9.9% | B |
+| identity ceiling (v1074 image vs itself) | 84.1% | 92% | 0.0% | A |
+
+The identity row matters: even against itself ~8% of sampled distinctive functions are not uniquely re-found, so ~90% is the
+practical ceiling, not 100%. Verdict rule: exact32 >= 60% -> A; exact32 >= 30% or any-tier >= 60% -> mixed; else B.
+
+**Guards printed before the verdict** (they explain a low number that is *not* "codegen changed"): function-count coverage of the
+new image vs the old (far fewer functions -> suspect the alignment fallback in `sigkit.sweep` or an under-decrypted dump first) and
+the share of code pages that look like ciphertext (byte entropy > 7.5). The old v1074 dump has 46/1360 = 3.4% such pages; functions
+on them are excluded from the sample and reported as a known cost - they cannot be signatured by construction and need live
+re-derivation whatever the regime. That is the empirical size of the "protected" subset; nothing is excluded by *name*, and the
+verified `COROUTINE_*` entries are plain x86 in the v1074 dump (resolve by exact32), so they are reported like any other function.
+
 ## 4. Caveats (read before believing any number here)
 
 * Proxy pair, not the game. Different compiler heuristics, no Themida, and our DLL has 3-4k functions vs the game's ~15k.

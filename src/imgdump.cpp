@@ -31,7 +31,8 @@
 // stamp test is the seed of the runtime build fence planned for coclassic.dll.
 //
 // TRIGGERS (poll every 100 ms): Ctrl+Shift+F9 = checkpoint, Ctrl+Shift+F10 = unload;
-// or write "checkpoint <label>" / "quit" to <base>\trigger.txt (tools/capture_session.ps1
+// or write "checkpoint <label>" (image) / "full <label>" (image + private-heap pack, the mode for a
+// build whose object roots are unknown) / "quit" to <base>\trigger.txt (tools/capture_session.ps1
 // does this). Output root: C:\Users\Public\coclassic_capture\ ; the current session dir
 // is the first line of <base>\session.txt (created automatically if absent).
 // =====================================================================
@@ -488,8 +489,60 @@ void DumpTestRoot(const std::string& dir)
     fclose(c.pack); fclose(c.csv);
 }
 
+// ---------------------------------------------------------------- private-heap dump (generic / unknown-build mode)
+// On a build whose object roots are not known yet (v1078...) the paired object dumps cannot follow verified
+// pointers, so instead copy every committed, readable MEM_PRIVATE region (heaps, stacks, Themida's own
+// allocations) into one pack. The hero / stat table / role manager / item registry / connection object are then
+// found OFFLINE by correlating against the on-screen values recorded in the session notes (the way current HP was
+// found), with no game code run. Same posture as the image dump: guard/noaccess/uncommitted pages are never
+// touched, every copy is SEH-guarded, capped by bytes and wall-clock, and it yields between chunks.
+constexpr uint64_t kHeapByteCap = 900ull * 1024 * 1024;
+constexpr ULONGLONG kHeapMsCap  = 120000;
+
+struct HeapStats { uint64_t bytes = 0, skipped = 0; uint32_t regions = 0; bool capped = false; };
+
+HeapStats DumpHeap(const std::string& dir)
+{
+    HeapStats hs;
+    FILE* fp = fopen((dir + "\\heap.bin").c_str(), "wb");
+    FILE* fc = fopen((dir + "\\heap_regions.csv").c_str(), "wb");
+    if (!fp || !fc) { if (fp) fclose(fp); if (fc) fclose(fc); return hs; }
+    fprintf(fc, "addr,size,protect,pack_offset,bytes_read\n");
+    static uint8_t buf[1 << 20];
+    const ULONGLONG deadline = GetTickCount64() + kHeapMsCap;
+    const uintptr_t imgLo = g_base, imgHi = g_base + g_imgSize;
+    uint64_t packOff = 0;
+    int chunks = 0;
+    uintptr_t addr = 0x10000;
+    while (addr < 0x00007FFF00000000ull) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<void*>(addr), &mbi, sizeof(mbi))) break;
+        const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+        const uintptr_t next = base + mbi.RegionSize;
+        if (next <= addr) break;
+        const bool inImage = base < imgHi && next > imgLo;
+        if (mbi.Type == MEM_PRIVATE && !inImage && ReadableProt(mbi.Protect, mbi.State)) {
+            if (hs.bytes + mbi.RegionSize > kHeapByteCap || GetTickCount64() > deadline) { hs.capped = true; break; }
+            uint64_t got = 0;
+            for (uintptr_t a = base; a < next; ) {
+                const size_t n = std::min<size_t>(sizeof(buf), next - a);
+                if (!SafeCopy(buf, reinterpret_cast<void*>(a), n)) break;   // stop this region at the first fault; keep what we have
+                fwrite(buf, 1, n, fp);
+                got += n; a += n;
+                if (++chunks >= 8) { chunks = 0; Sleep(1); }
+            }
+            fprintf(fc, "0x%llX,0x%llX,0x%lX,0x%llX,0x%llX\n", (unsigned long long)base, (unsigned long long)mbi.RegionSize,
+                    (unsigned long)mbi.Protect, (unsigned long long)packOff, (unsigned long long)got);
+            packOff += got; hs.bytes += got; hs.skipped += mbi.RegionSize - got; ++hs.regions;
+        }
+        addr = next;
+    }
+    fclose(fp); fclose(fc);
+    return hs;
+}
+
 // ---------------------------------------------------------------- checkpoint
-void Checkpoint(const std::string& labelIn)
+void Checkpoint(const std::string& labelIn, bool withHeap)
 {
     if (g_sessionDir.empty() || !g_seq) g_sessionDir = ResolveSessionDir();
     const std::string label = Sanitize(labelIn);
@@ -511,6 +564,11 @@ void Checkpoint(const std::string& labelIn)
     catch (...) { Log("checkpoint %s: object dump threw; image checkpoint is still valid", sub); }
     try { DumpTestRoot(dir); }
     catch (...) { Log("checkpoint %s: test-root dump threw", sub); }
+    HeapStats hp;
+    if (withHeap) {
+        try { hp = DumpHeap(dir); Log("heap: %u regions, %llu bytes, %llu skipped%s", hp.regions, (unsigned long long)hp.bytes, (unsigned long long)hp.skipped, hp.capped ? " (CAPPED)" : ""); }
+        catch (...) { Log("checkpoint %s: heap dump threw; image checkpoint is still valid", sub); }
+    }
     const ULONGLONG t2 = GetTickCount64();
 
     if (FILE* m = fopen((dir + "\\meta.json").c_str(), "wb")) {
@@ -527,6 +585,8 @@ void Checkpoint(const std::string& labelIn)
                 pr.name, pr.heroId, pr.level, pr.maxHp, pr.mapId);
         fprintf(m, "  \"hero_ptr\": \"0x%llX\",\n  \"rolemgr_ptr\": \"0x%llX\",\n  \"ground_items_dumped\": %d,\n",
                 (unsigned long long)pr.hero, (unsigned long long)pr.roleMgr, pr.items);
+        fprintf(m, "  \"heap_dumped\": %s,\n  \"heap_regions\": %u,\n  \"heap_bytes\": %llu,\n  \"heap_capped\": %s,\n",
+                withHeap ? "true" : "false", hp.regions, (unsigned long long)hp.bytes, hp.capped ? "true" : "false");
         fprintf(m, "  \"image_ms\": %llu,\n  \"objects_ms\": %llu\n}\n",
                 (unsigned long long)(t1 - t0), (unsigned long long)(t2 - t1));
         fclose(m);
@@ -563,7 +623,7 @@ DWORD WINAPI Worker(LPVOID)
             Sleep(100);
             const bool chord = (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_SHIFT) & 0x8000);
             bool f9 = KeyEdge(VK_F9, f9prev), f10 = KeyEdge(VK_F10, f10prev);
-            if (chord && f9) { Checkpoint("hotkey"); continue; }
+            if (chord && f9) { Checkpoint("hotkey", false); continue; }
             if (chord && f10) break;
 
             if (GetFileAttributesA(trig.c_str()) != INVALID_FILE_ATTRIBUTES) {
@@ -573,9 +633,10 @@ DWORD WINAPI Worker(LPVOID)
                 std::string s(line);
                 while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ')) s.pop_back();
                 if (s.rfind("quit", 0) == 0) break;
-                if (s.rfind("checkpoint", 0) == 0) {
-                    std::string lab = s.size() > 11 ? s.substr(11) : "cp";
-                    Checkpoint(lab);
+                if (s.rfind("checkpoint", 0) == 0 || s.rfind("full", 0) == 0) {
+                    const bool full = s.rfind("full", 0) == 0;
+                    const size_t skip = full ? 5 : 11;                 // "full " / "checkpoint "
+                    Checkpoint(s.size() > skip ? s.substr(skip) : "cp", full);
                 }
             }
         }

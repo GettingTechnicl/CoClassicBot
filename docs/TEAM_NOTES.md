@@ -72,6 +72,13 @@ only calls a global/field "high" when >=2 sites agree. All of this is a *proxy* 
 Still open: capturing that image (needs the user's go for elevated injection of the read-only imgdump.dll), then run
 `sigscan.py --image <v1078> --fields` and check the exact32 hit-rate to learn which regime the update is in.
 
+### 2026-09-21 (later) — v1078 capture tooling ready; regime classifier added (tools + docs only)
+
+`tools/regime_classify.py` names the regime (same-codegen / mixed / codegen-changed) per tier before any hit-rate is trusted; calibrated on
+the proxy pairs (A 90% exact32, B 19%). `src/imgdump.cpp` gained a bounded read-only private-heap pack (`full <label>` trigger,
+generic mode only) so object layouts on an unknown build can be found offline by correlation; `tools/capture_session.ps1` drives
+checkpoints + notes. Runbook: `docs/investigation/V1078_CAPTURE_RUNBOOK.md`. Nothing here touches bot behaviour. VM instance: no action.
+
 ### 2026-09-20 (late) — the server has flipped: v1074 cannot log in any more; new plan = restore the bot on the NEW version
 
 **Supersedes the HOLD below in one respect: there is no v1074 play window left**, so the VM's
