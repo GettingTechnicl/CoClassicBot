@@ -78,6 +78,19 @@ class Locator:
             return dict(rva=loc[0], method="shape-AMBIGUOUS", score=round(loc[1], 3), margin=round(loc[2], 3), low=True)
         return None
 
+    def caller_vote(self, callers):
+        """locate each distinctive caller, take its call at the recorded ordinal, vote on the target"""
+        votes = Counter()
+        for c in callers or []:
+            cl = self.by_fp(c["fp"], None, 1)
+            if not cl or cl.get("low"):
+                continue
+            cf = self.func(cl["rva"])
+            k = c["call_ordinal"]
+            if cf and k < len(cf.calls):
+                votes[cf.calls[k][2]] += 1
+        return votes
+
     def func(self, rva):
         return self.idx.by_start.get(rva) or sk.func_at(self.img, rva)
 
@@ -152,6 +165,18 @@ def main():
             continue
         if e["kind"] == "code" and e.get("fp"):
             r = loc.by_fp(e["fp"], e.get("callers"))
+            cv = loc.caller_vote(e.get("callers"))
+            if len(cv) == 1:
+                (ct, cc), = cv.items()
+                if r and not r.get("low") and r["rva"] == ct:
+                    r = dict(r, method=r["method"] + "+callers x%d" % cc, corroborated=True)
+                elif r and not r.get("low") and r["method"] == "exact32":
+                    r = dict(r, method="CONFLICT exact32 vs callers", low=True, cv=hex(ct))
+                elif cc >= 2:
+                    r = dict(rva=ct, method="caller-vote x%d" % cc, score=1.0, margin=1.0, corroborated=True,
+                             cascade_said=("0x%X" % r["rva"]) if r else "nothing")
+            elif len(cv) > 1 and r and not r.get("low"):
+                r = dict(r, note="callers disagree: " + ", ".join("0x%X x%d" % kv for kv in cv.most_common(3)))
             rows.append((e, "code", r))
         elif e["kind"] == "data":
             v, d = resolve_global(loc, e)
@@ -164,7 +189,12 @@ def main():
             if not r:
                 res = ("NOT FOUND", "-", "-", "none"); ok = False
             else:
-                conf = "LOW (siblings)" if r.get("low") else ("high" if r["method"] in ("exact32", "shape-exact") else "medium")
+                if r.get("low"):
+                    conf = "LOW (%s)" % r["method"]
+                elif r.get("corroborated"):
+                    conf = "high (2 independent locators agree)" if "callers" in r["method"] and not r["method"].startswith("caller-vote") else "high (callers%s)" % ((", cascade said " + r["cascade_said"]) if r.get("cascade_said") else "")
+                else:
+                    conf = "high" if r["method"] in ("exact32", "shape-exact") else "medium"
                 res = (r["method"], "0x%X" % r["rva"], "%+#x" % (r["rva"] - e["rva"]), conf)
                 ok = (r["rva"] == e["rva"] and not r.get("low"))
                 if not r.get("low"):
@@ -192,12 +222,13 @@ def main():
 
     # ---- ordering check: a linker keeps the relative order of code it did not reorder, so a proposal that lands OUTSIDE the
     # interval set by its nearest exact-matched neighbours (by old address) is suspect however good its own score looks.
-    # (The first v1078 capture caught CNETCLIENT_SEND_MSG_REAL this way: shape-exact at delta -0x16390 while every neighbour moved +0x9000..+0x17000.)
+    # NOTE the first v1078 capture flagged CNETCLIENT_SEND_MSG_REAL this way (delta -0x16390 while neighbours moved forward) and it was a FALSE
+    # POSITIVE: two exact-matched callers pin it at that address (the linker moved it). Ordering is therefore only a warning, cleared by callers.
     anchors = sorted((e["rva"], r["rva"], e["name"]) for (e, k, r) in rows
-                     if k == "code" and r and r["method"] == "exact32")
+                     if k == "code" and r and r["method"].startswith("exact32") and not r.get("low"))
     violations = []
     for (e, k, r) in rows:
-        if k != "code" or not r or r.get("low") or r["method"] == "exact32":
+        if k != "code" or not r or r.get("low") or r["method"].startswith("exact32") or r.get("corroborated"):
             continue
         lo = [x for x in anchors if x[0] < e["rva"]]
         hi = [x for x in anchors if x[0] > e["rva"]]
@@ -205,10 +236,10 @@ def main():
         hi_n = hi[0][1] if hi else 1 << 40
         if not (lo_n < r["rva"] < hi_n):
             violations.append(e["name"])
-            print("ORDER VIOLATION: %s proposed 0x%X but exact-matched neighbours bound it to (0x%X, %s) -> treat as WRONG/unproven" %
+            print("ORDER VIOLATION: %s proposed 0x%X but exact-matched neighbours bound it to (0x%X, %s) -> UNCORROBORATED, treat as unproven (ordering is a heuristic: a linker can reorder; corroborate via callers)" %
                   (e["name"], r["rva"], lo_n, ("0x%X" % hi_n) if hi else "end"))
     if violations:
-        print("%d order violation(s): those proposals are not to be used" % len(violations))
+        print("%d uncorroborated order violation(s): confirm by another locator or live before use" % len(violations))
     moved.sort()
     inv = [(moved[i][2], moved[i + 1][2]) for i in range(len(moved) - 1) if moved[i][1] > moved[i + 1][1]]
     print("\nconsistency: %d relocated entries; order inversions (old order != new order): %d %s" % (len(moved), len(inv), inv[:6]))

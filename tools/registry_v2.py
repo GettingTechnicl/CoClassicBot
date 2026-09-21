@@ -100,9 +100,11 @@ def build(img, entries, fields):
         e["fp"]["distinctive"] = distinctive(e["fp"])
         if e["fp"]["distinctive"]:
             stats["code_distinct"] += 1
-        else:
-            e["callers"] = caller_anchors(e["rva"])
-            stats["code_caller_anchored"] += bool(e["callers"])
+        # every code entry gets caller anchors, distinctive or not: an independent second locator. The first v1078 capture
+        # showed why - a function the linker MOVED BACKWARDS is caught by neither ordering nor its own score, but two exact-matched
+        # callers calling the same target at the same ordinal pin it (docs/investigation/V1078_FIRST_CONTACT.md).
+        e["callers"] = caller_anchors(e["rva"])
+        stats["code_caller_anchored"] += bool(e["callers"])
 
     # ------------------------------------------------------------------ data entries (globals)
     refs_by_target = defaultdict(list)                    # data target -> [(func, k among data refs, token id, ordinal among same token)]

@@ -72,6 +72,13 @@ only calls a global/field "high" when >=2 sites agree. All of this is a *proxy* 
 Still open: capturing that image (needs the user's go for elevated injection of the read-only imgdump.dll), then run
 `sigscan.py --image <v1078> --fields` and check the exact32 hit-rate to learn which regime the update is in.
 
+### 2026-09-21 (night) — v1078 offsets, value-confirmed offline from one in-world heap checkpoint (docs: V1078_OFFSET_FINDINGS.md)
+
+Correction to the entry below: the send path did NOT vanish - `CNETCLIENT_SEND_MSG_REAL` is at 0x1C70C0 (linker moved it backwards; two
+exact-matched callers pin it). HP path on v1078: `CHero+0x978` -> `[+0x10]` -> `[+0]` = current HP (value-confirmed 51). Also confirmed by
+value: max HP 0x3E0, level 0x6F8, stamina 0x6F0/0x6F4, silver 0xAA8, hero via `ROLE_MGR_PTR` 0x6BCEF0, map id 0x6B9D40 (sigscan's
+0x6B9C30 was wrong). Still read-only research: fence unchanged, no bot behaviour changed, no proposal made to change it yet.
+
 ### 2026-09-21 (evening) — v1078 first contact: regime A, but the send path and CHero layout changed (docs: V1078_FIRST_CONTACT.md)
 
 Read-only image checkpoint of the live v1078 client (imgdump loaded by the user). ~74% of sampled functions relocate by exact bytes

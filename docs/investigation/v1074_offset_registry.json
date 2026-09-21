@@ -246,7 +246,8 @@
     "func_len": 313,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "ENTITY_INFO",
@@ -312,7 +313,8 @@
     "func_len": 305,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "ENTITY_SET",
@@ -377,7 +379,8 @@
     "func_len": 209,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "GAME_MAP",
@@ -446,7 +449,8 @@
     "func_len": 458,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CURRENT_MAP_ID",
@@ -721,7 +725,8 @@
     "func_len": 653,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CNETCLIENT_GET_INSTANCE",
@@ -787,7 +792,8 @@
     "func_len": 476,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CNETCLIENT_SEND_MSG",
@@ -857,7 +863,8 @@
     "func_len": 383,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CHERO_GET_MAX_HP",
@@ -932,7 +939,8 @@
     "func_len": 283,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CHERO_GET_MAX_MANA",
@@ -1007,7 +1015,8 @@
     "func_len": 402,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CSTATTABLE_GET_VALUE",
@@ -1077,7 +1086,8 @@
     "func_len": 638,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CHERO_GET_CURRENT_MANA",
@@ -1146,7 +1156,8 @@
     "func_len": 331,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CHERO_FATAL_STRIKE",
@@ -1229,7 +1240,8 @@
     "func_len": 1211,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CHERO_JUMP",
@@ -1295,7 +1307,8 @@
     "func_len": 507,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CHERO_START_MINING",
@@ -1366,7 +1379,8 @@
     "func_len": 245,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "MSGUPDATE_PROCESS",
@@ -1434,7 +1448,8 @@
     "func_len": 1166,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "TRADEWINDOW_HANDLE_MESSAGE",
@@ -1507,7 +1522,8 @@
     "func_len": 2690,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CGAMEUI_SHOW_MSG",
@@ -1575,7 +1591,8 @@
     "func_len": 1852,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CNETCLIENT_SINGLETON_ACCESSOR",
@@ -1873,7 +1890,8 @@
     "func_len": 139,
     "best_other": 0.614,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CNETCLIENT_COMPUTE_MAPITEM_SIZE",
@@ -1938,7 +1956,69 @@
     "func_len": 228,
     "best_other": 0.375,
     "distinctive": true
-   }
+   },
+   "callers": [
+    {
+     "fp": {
+      "func_rva": "0x1c8b30",
+      "detected_start": true,
+      "exact32": "40 57 48 83 EC 20 48 8B F9 85 D2 74 ?? 48 8B 41 20 89 50 10 48 8B 51 20 8B 44 24 50 89 42 24 48 8B 41 20",
+      "exact32_unique_old": true,
+      "shape": [
+       "push R8",
+       "sub R8,i",
+       "mov R8,R8",
+       "test R4,R4",
+       "jcc",
+       "mov R8,Mx",
+       "mov Mx,R4",
+       "mov R8,Mx",
+       "mov R4,Msp",
+       "mov Mx,R4",
+       "mov R8,Mx",
+       "movzx R4,R2",
+       "mov Mx,R4",
+       "mov R8,Mx",
+       "movzx R4,R2",
+       "mov Mx,R4",
+       "mov R8,Mx",
+       "call rel",
+       "cmp R8,I8000",
+       "jcc",
+       "mov Msp,R8",
+       "mov R4,i",
+       "movzx R4,R2",
+       "mov R8,R8",
+       "movzx R4,R2",
+       "call rel",
+       "mov R8,Mx",
+       "mov R4,R4",
+       "mov R8,Mx",
+       "call rel",
+       "mov R8,Msp",
+       "zero",
+       "test R1,R1",
+       "setne R1",
+       "mov R4,R4",
+       "add R8,i",
+       "pop R8",
+       "ret ",
+       "zero",
+       "add R8,i"
+      ],
+      "imms": [
+       "0x8000"
+      ],
+      "strings": [],
+      "callee_count": 3,
+      "func_len": 139,
+      "best_other": 0.614,
+      "distinctive": true
+     },
+     "call_ordinal": 0,
+     "call_count": 3
+    }
+   ]
   },
   {
    "name": "CNETCLIENT_BEGIN_MSG",
@@ -2004,7 +2084,204 @@
     "func_len": 263,
     "best_other": 0.088,
     "distinctive": true
-   }
+   },
+   "callers": [
+    {
+     "fp": {
+      "func_rva": "0x1b7820",
+      "detected_start": true,
+      "exact32": "48 89 4C 24 08 48 81 EC E8 00 00 00 E9 ?? ?? ?? ?? 50 79 ?? 1C 94 5C 2B 57 61 A0 08 AB 3D 1E 18 33 35 DC",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov Msp,R8",
+       "sub R8,i",
+       "jmp rel",
+       "push R8",
+       "jcc",
+       "sbb R1,i",
+       "pop R8",
+       "sub R4,Mx",
+       "movabs R1,Mabs",
+       "sbb R4,R4",
+       "cmp R4,I7f3e2556",
+       "push R8",
+       "pop R8",
+       "?",
+       "sti ",
+       "push R8",
+       "and R4,I79971295",
+       "xchg R4,R4",
+       "fist Mrip",
+       "sub Mx,R4",
+       "pop R8",
+       "stosb Mx,R1",
+       "loope i",
+       "fcmovnb R10,R10",
+       "fsubr Mx",
+       "int1 ",
+       "cmp R4,R4",
+       "movabs Mabs,R4",
+       "adc R1,i",
+       "ret Ie830",
+       "sub R1,Mx",
+       "loop i",
+       "jcc",
+       "sahf ",
+       "sbb R1,i",
+       "xchg R4,R4",
+       "?",
+       "jcc",
+       "fsub Mx",
+       "wait "
+      ],
+      "imms": [
+       "0xe830",
+       "0x699977f3",
+       "0x79971295",
+       "0x7f3e2556",
+       "0xa34ee134"
+      ],
+      "strings": [],
+      "callee_count": 6,
+      "func_len": 361,
+      "best_other": 0.056,
+      "distinctive": true
+     },
+     "call_ordinal": 3,
+     "call_count": 6
+    },
+    {
+     "fp": {
+      "func_rva": "0x74a10",
+      "detected_start": true,
+      "exact32": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 08 FF FF FF 48 81 EC B8 01 00 00 0F 29 70 A8",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov R8,R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "lea R8,Mx",
+       "sub R8,i",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "mov R8,Mrip",
+       "xor R8,R8",
+       "mov Msp,R8",
+       "mov R8,R8",
+       "mov Msp,R8",
+       "zero",
+       "mov Msp,i",
+       "call rel",
+       "mov R4,Mx",
+       "call rel",
+       "mov R4,Mx",
+       "mov Msp,R4",
+       "mov R4,Mx",
+       "mov Msp,R4",
+       "mov R8,Mrip",
+       "mov Mx,I43480000",
+       "mov Mx,I43480000",
+       "mov Mx,I7f7fffff",
+       "mov Mx,I7f7fffff",
+       "mov Mx,R8",
+       "mov Mx,R8",
+       "or Mx,i",
+       "mov Mx,I441b0000",
+       "mov Mx,I43960000"
+      ],
+      "imms": [
+       "0x20000021",
+       "0x41000000",
+       "0x41a00000",
+       "0x43480000",
+       "0x43960000",
+       "0x441b0000",
+       "0x7f7fffff"
+      ],
+      "strings": [
+       "Booth"
+      ],
+      "callee_count": 119,
+      "func_len": 5105,
+      "best_other": 0.069,
+      "distinctive": true
+     },
+     "call_ordinal": 76,
+     "call_count": 119
+    },
+    {
+     "fp": {
+      "func_rva": "0x1b8bc0",
+      "detected_start": true,
+      "exact32": "4C 89 4C 24 20 4C 89 44 24 18 48 89 54 24 10 48 89 4C 24 08 57 48 81 EC A0 01 00 00 E9 ?? ?? ?? ??",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov Msp,R8",
+       "mov Msp,R8",
+       "mov Msp,R8",
+       "mov Msp,R8",
+       "push R8",
+       "sub R8,i",
+       "jmp rel",
+       "push R8",
+       "lea R4,Mx",
+       "xchg Mx,R4",
+       "xchg R4,R4",
+       "xchg R4,R4",
+       "?",
+       "pop R8",
+       "mov R1,i",
+       "out i,R1",
+       "?",
+       "?",
+       "xlatb ",
+       "xor Mx,R4",
+       "scasd R4,Mx",
+       "lodsb R1,Mx",
+       "ret ",
+       "pop R8",
+       "jcc",
+       "or R1,i",
+       "ret I35d2",
+       "add R1,i",
+       "lea R4,Mx",
+       "?",
+       "?",
+       "or Mx,Iffffffa0",
+       "pop R8",
+       "in R1,i",
+       "and R4,I562fe7a1",
+       "jcc",
+       "sub R4,Mx",
+       "leave ",
+       "xchg R4,R4",
+       "cdq "
+      ],
+      "imms": [
+       "0x35d2",
+       "0x8003b8c",
+       "0x562fe7a1",
+       "0xffffffa0"
+      ],
+      "strings": [],
+      "callee_count": 7,
+      "func_len": 1268,
+      "best_other": 0.071,
+      "distinctive": true
+     },
+     "call_ordinal": 4,
+     "call_count": 7
+    }
+   ]
   },
   {
    "name": "CNETCLIENT_COMMIT_STAGING",
@@ -2712,7 +2989,198 @@
     "func_len": 137,
     "best_other": 0.469,
     "distinctive": true
-   }
+   },
+   "callers": [
+    {
+     "fp": {
+      "func_rva": "0x1068f0",
+      "detected_start": true,
+      "exact32": "40 53 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 78 48 8B 15 ?? ?? ?? ?? 48 8B F9 0F 29 74 24 60",
+      "exact32_unique_old": true,
+      "shape": [
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "sub R8,i",
+       "mov R8,Mrip",
+       "mov R8,R8",
+       "movaps Msp,R16",
+       "zero",
+       "movdqa R16,Mrip",
+       "movaps Msp,R16",
+       "mov R8,Mx",
+       "mov R4,Mx",
+       "mov R8,Mx",
+       "mov R4,R4",
+       "or R4,i",
+       "or R4,i",
+       "movsd R16,Mx",
+       "movsd R16,Mx",
+       "mov Mx,R4",
+       "mulps R16,R16",
+       "mov Mx,I3f000000",
+       "mov Mx,I3f000000",
+       "mov Mx,i",
+       "addps R16,R16",
+       "movsd Mx,R16",
+       "movsd R16,Mx",
+       "mulps R16,R16",
+       "mov Mx,R4",
+       "mov Mx,i",
+       "movsd Mx,R16",
+       "call rel",
+       "call rel",
+       "cmp Mrip,i",
+       "lea R8,Mrip",
+       "mov R4,i"
+      ],
+      "imms": [
+       "0x3f000000"
+      ],
+      "strings": [
+       "##RegisterTable",
+       "Register"
+      ],
+      "callee_count": 55,
+      "func_len": 1995,
+      "best_other": 0.095,
+      "distinctive": true
+     },
+     "call_ordinal": 22,
+     "call_count": 55
+    },
+    {
+     "fp": {
+      "func_rva": "0x1068f0",
+      "detected_start": true,
+      "exact32": "40 53 55 56 57 41 54 41 55 41 56 41 57 48 83 EC 78 48 8B 15 ?? ?? ?? ?? 48 8B F9 0F 29 74 24 60",
+      "exact32_unique_old": true,
+      "shape": [
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "sub R8,i",
+       "mov R8,Mrip",
+       "mov R8,R8",
+       "movaps Msp,R16",
+       "zero",
+       "movdqa R16,Mrip",
+       "movaps Msp,R16",
+       "mov R8,Mx",
+       "mov R4,Mx",
+       "mov R8,Mx",
+       "mov R4,R4",
+       "or R4,i",
+       "or R4,i",
+       "movsd R16,Mx",
+       "movsd R16,Mx",
+       "mov Mx,R4",
+       "mulps R16,R16",
+       "mov Mx,I3f000000",
+       "mov Mx,I3f000000",
+       "mov Mx,i",
+       "addps R16,R16",
+       "movsd Mx,R16",
+       "movsd R16,Mx",
+       "mulps R16,R16",
+       "mov Mx,R4",
+       "mov Mx,i",
+       "movsd Mx,R16",
+       "call rel",
+       "call rel",
+       "cmp Mrip,i",
+       "lea R8,Mrip",
+       "mov R4,i"
+      ],
+      "imms": [
+       "0x3f000000"
+      ],
+      "strings": [
+       "##RegisterTable",
+       "Register"
+      ],
+      "callee_count": 55,
+      "func_len": 1995,
+      "best_other": 0.095,
+      "distinctive": true
+     },
+     "call_ordinal": 48,
+     "call_count": 55
+    },
+    {
+     "fp": {
+      "func_rva": "0xbf920",
+      "detected_start": true,
+      "exact32": "48 8B C4 53 55 56 57 41 54 41 55 41 56 41 57 48 81 EC D8 00 00 00 0F 29 70 A8 0F 29 78 98 44 0F 29 40 88",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov R8,R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "sub R8,i",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "mov R8,Mrip",
+       "xor R8,R8",
+       "mov Msp,R8",
+       "mov R8,R8",
+       "zero",
+       "mov Msp,R4",
+       "lea R8,Mrip",
+       "lea R8,Mrip",
+       "call rel",
+       "mov R8,Mx",
+       "call Mrip",
+       "call rel",
+       "mov R8,Mx",
+       "test R8,R8",
+       "jcc",
+       "lock inc Mx",
+       "mov R8,Mx",
+       "mov Msp,R8",
+       "mov R8,Mx",
+       "mov Msp,R8",
+       "mov R4,i",
+       "mov Msp,R4",
+       "cmp Mx,i",
+       "jcc",
+       "call rel",
+       "mov R8,Mx"
+      ],
+      "imms": [
+       "0xffffffff"
+      ],
+      "strings": [
+       "game.status",
+       "running"
+      ],
+      "callee_count": 53,
+      "func_len": 2292,
+      "best_other": 0.115,
+      "distinctive": true
+     },
+     "call_ordinal": 4,
+     "call_count": 53
+    }
+   ]
   },
   {
    "name": "CNETCLIENT_SEND_MSG_REAL",
@@ -2782,7 +3250,123 @@
     "func_len": 354,
     "best_other": 0.118,
     "distinctive": true
-   }
+   },
+   "callers": [
+    {
+     "fp": {
+      "func_rva": "0x4050",
+      "detected_start": true,
+      "exact32": "4C 89 44 24 18 48 89 54 24 10 48 89 4C 24 08 48 83 EC 38 48 8B 44 24 40 83 78 28 00 75 ?? 33 C0",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov Msp,R8",
+       "mov Msp,R8",
+       "mov Msp,R8",
+       "sub R8,i",
+       "mov R8,Msp",
+       "cmp Mx,i",
+       "jcc",
+       "zero",
+       "jmp rel",
+       "mov Msp,i",
+       "mov R8,Msp",
+       "mov R8,Mx",
+       "mov Msp,R8",
+       "mov R8,Msp",
+       "mov R8,Msp",
+       "mov R8,Msp",
+       "call rel",
+       "mov Msp,R4",
+       "mov R4,Msp",
+       "mov Msp,R4",
+       "jmp rel",
+       "mov R8,Msp",
+       "mov R8,Mx",
+       "add R8,Msp",
+       "mov R8,Msp",
+       "mov Mx,R8",
+       "mov R4,i",
+       "mov R8,Msp",
+       "call rel",
+       "mov R4,Msp",
+       "add R8,i",
+       "ret "
+      ],
+      "imms": [],
+      "strings": [],
+      "callee_count": 2,
+      "func_len": 137,
+      "best_other": 0.136,
+      "distinctive": true
+     },
+     "call_ordinal": 0,
+     "call_count": 2
+    },
+    {
+     "fp": {
+      "func_rva": "0x1b66e0",
+      "detected_start": true,
+      "exact32": "48 89 5C 24 08 57 48 83 EC 20 83 79 20 00 49 8B F8 48 8B D9 74 ?? 48 8B 49 18 48 85 C9 74 ?? E8 ?? ?? ?? ??",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov Msp,R8",
+       "push R8",
+       "sub R8,i",
+       "cmp Mx,i",
+       "mov R8,R8",
+       "mov R8,R8",
+       "jcc",
+       "mov R8,Mx",
+       "test R8,R8",
+       "jcc",
+       "call rel",
+       "add Mx,R8",
+       "mov R8,Msp",
+       "add R8,i",
+       "pop R8",
+       "ret ",
+       "mov R8,Msp",
+       "zero",
+       "add R8,i",
+       "pop R8",
+       "ret ",
+       "mov Msp,R8",
+       "mov Msp,R8",
+       "push R8",
+       "sub R8,i",
+       "mov R8,R8",
+       "zero",
+       "jmp rel",
+       "push R8",
+       "or R4,Mx",
+       "hlt ",
+       "scasd R4,Mx",
+       "mov R1,i",
+       "movabs Mabs,R4",
+       "sbb R1,i",
+       "and Mx,i",
+       "mov R1,i",
+       "sbb R4,I107d63c0",
+       "?",
+       "jcc"
+      ],
+      "imms": [
+       "0x107d63c0",
+       "0x28cf750b",
+       "0x7c37cdd6",
+       "0x86055d98",
+       "0x894998cb"
+      ],
+      "strings": [],
+      "callee_count": 2,
+      "func_len": 317,
+      "best_other": 0.229,
+      "distinctive": true
+     },
+     "call_ordinal": 0,
+     "call_count": 2
+    }
+   ]
   },
   {
    "name": "CROLE_SET_COMMAND_REAL",
@@ -2838,7 +3422,8 @@
     "func_len": 115,
     "best_other": 0.0,
     "distinctive": true
-   }
+   },
+   "callers": []
   },
   {
    "name": "CRole_SetCommand",
@@ -2907,7 +3492,193 @@
     "func_len": 126,
     "best_other": 0.098,
     "distinctive": true
-   }
+   },
+   "callers": [
+    {
+     "fp": {
+      "func_rva": "0x1b6540",
+      "detected_start": true,
+      "exact32": "48 89 4C 24 08 53 56 57 41 56 48 83 EC 38 4C 8B F1 48 8D 59 18 48 8B 0B E8 ?? ?? ?? ?? 85 C0 75 ??",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov Msp,R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "sub R8,i",
+       "mov R8,R8",
+       "lea R8,Mx",
+       "mov R8,Mx",
+       "call rel",
+       "test R4,R4",
+       "jcc",
+       "mov R8,R8",
+       "call rel",
+       "jmp rel",
+       "mov Msp,R8",
+       "mov Msp,I8000",
+       "lea R8,Msp",
+       "lea R8,Mrip",
+       "mov R8,Msp",
+       "mov R8,Mx",
+       "call rel",
+       "test R4,R4",
+       "jcc",
+       "mov R8,Mx",
+       "call rel",
+       "nop",
+       "add R8,i",
+       "pop R8",
+       "pop R8",
+       "pop R8",
+       "pop R8",
+       "ret ",
+       "lea R8,Mrip",
+       "mov Msp,R8",
+       "mov R8,Msp",
+       "nop",
+       "movzx R4,Mx",
+       "mov Msp,R8",
+       "cmp R8,R8"
+      ],
+      "imms": [
+       "0x8000"
+      ],
+      "strings": [],
+      "callee_count": 5,
+      "func_len": 279,
+      "best_other": 0.111,
+      "distinctive": true
+     },
+     "call_ordinal": 3,
+     "call_count": 5
+    },
+    {
+     "fp": {
+      "func_rva": "0x1dd450",
+      "detected_start": true,
+      "exact32": "48 89 5C 24 10 48 89 74 24 18 57 48 83 EC 20 49 8B F8 48 8B F2 48 8B D9 E8 ?? ?? ?? ?? 44 8B D0",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov Msp,R8",
+       "mov Msp,R8",
+       "push R8",
+       "sub R8,i",
+       "mov R8,R8",
+       "mov R8,R8",
+       "mov R8,R8",
+       "call rel",
+       "mov R4,R4",
+       "mov R4,I10624dd3",
+       "imul R4",
+       "sar R4,i",
+       "mov R4,R4",
+       "shr R4,i",
+       "add R4,R4",
+       "imul R4,R4,i",
+       "cmp R4,R4",
+       "jcc",
+       "mov R8,Mrip",
+       "call rel",
+       "mov Msp,R8",
+       "test R8,R8",
+       "jcc",
+       "lea R8,Mx",
+       "mov R4,I7fff",
+       "cmp R8,R8",
+       "jcc",
+       "cmp Mrip,i",
+       "jcc",
+       "lea R8,Mrip",
+       "mov Mrip,R8",
+       "call Mrip",
+       "mov R4,Mrip",
+       "test R4,R4",
+       "jcc",
+       "mov R4,R4",
+       "sub R4,R4",
+       "cmp R4,i",
+       "jcc",
+       "mov R8,Mrip"
+      ],
+      "imms": [
+       "0x2000",
+       "0x7fff",
+       "0x10624dd3"
+      ],
+      "strings": [],
+      "callee_count": 7,
+      "func_len": 354,
+      "best_other": 0.118,
+      "distinctive": true
+     },
+     "call_ordinal": 3,
+     "call_count": 7
+    },
+    {
+     "fp": {
+      "func_rva": "0x1908e0",
+      "detected_start": true,
+      "exact32": "48 89 4C 24 08 53 56 57 41 56 41 57 48 83 EC 30 4C 8B F1 4C 8D 79 20 4C 89 7C 24 20 49 8B 0F 48 85 C9",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov Msp,R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "sub R8,i",
+       "mov R8,R8",
+       "lea R8,Mx",
+       "mov Msp,R8",
+       "mov R8,Mx",
+       "test R8,R8",
+       "jcc",
+       "call rel",
+       "test R4,R4",
+       "jcc",
+       "mov Mrip,i",
+       "call rel",
+       "lea R8,Mx",
+       "call rel",
+       "call rel",
+       "mov R8,R8",
+       "call rel",
+       "mov R8,Mx",
+       "mov R4,I18714",
+       "mov R8,R8",
+       "call Mx",
+       "lea R8,Mx",
+       "mov R8,R8",
+       "call rel",
+       "cmp Mx,i",
+       "jcc",
+       "mov R8,Mx",
+       "call rel",
+       "mov R8,Mx",
+       "call rel",
+       "mov Mx,i",
+       "mov R8,Mx",
+       "test R8,R8",
+       "jcc"
+      ],
+      "imms": [
+       "0x8000",
+       "0x12048",
+       "0x18714"
+      ],
+      "strings": [],
+      "callee_count": 14,
+      "func_len": 444,
+      "best_other": 0.203,
+      "distinctive": true
+     },
+     "call_ordinal": 6,
+     "call_count": 14
+    }
+   ]
   },
   {
    "name": "CONN_STATIC_69A4E8",
@@ -3364,7 +4135,183 @@
     "func_len": 335,
     "best_other": 0.415,
     "distinctive": true
-   }
+   },
+   "callers": [
+    {
+     "fp": {
+      "func_rva": "0x99780",
+      "detected_start": true,
+      "exact32": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 B8 FE FF FF 48 81 EC 08 02 00 00 0F 29 70 A8",
+      "exact32_unique_old": false,
+      "shape": [
+       "mov R8,R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "lea R8,Mx",
+       "sub R8,i",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "mov R8,Mrip",
+       "xor R8,R8",
+       "mov Msp,R8",
+       "mov R8,R8",
+       "zero",
+       "mov R4,R4",
+       "mov Msp,R4",
+       "mov Msp,R4",
+       "mov R4,R4",
+       "mov Msp,R4",
+       "movss R16,Mrip",
+       "movss R16,Mrip",
+       "mov R4,Msp",
+       "mov Msp,R4",
+       "movsd R16,Msp",
+       "mov Msp,R4",
+       "lea R4,Mx",
+       "mov Msp,R4",
+       "mov R4,R4",
+       "lea R8,Mrip",
+       "lea R8,Msp",
+       "call rel",
+       "lea R4,Mx",
+       "mov R1,i",
+       "call rel",
+       "movzx R4,R1"
+      ],
+      "imms": [],
+      "strings": [],
+      "callee_count": 64,
+      "func_len": 3248,
+      "best_other": 0.062,
+      "distinctive": true
+     },
+     "call_ordinal": 9,
+     "call_count": 64
+    },
+    {
+     "fp": {
+      "func_rva": "0x99780",
+      "detected_start": true,
+      "exact32": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 B8 FE FF FF 48 81 EC 08 02 00 00 0F 29 70 A8",
+      "exact32_unique_old": false,
+      "shape": [
+       "mov R8,R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "lea R8,Mx",
+       "sub R8,i",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "mov R8,Mrip",
+       "xor R8,R8",
+       "mov Msp,R8",
+       "mov R8,R8",
+       "zero",
+       "mov R4,R4",
+       "mov Msp,R4",
+       "mov Msp,R4",
+       "mov R4,R4",
+       "mov Msp,R4",
+       "movss R16,Mrip",
+       "movss R16,Mrip",
+       "mov R4,Msp",
+       "mov Msp,R4",
+       "movsd R16,Msp",
+       "mov Msp,R4",
+       "lea R4,Mx",
+       "mov Msp,R4",
+       "mov R4,R4",
+       "lea R8,Mrip",
+       "lea R8,Msp",
+       "call rel",
+       "lea R4,Mx",
+       "mov R1,i",
+       "call rel",
+       "movzx R4,R1"
+      ],
+      "imms": [],
+      "strings": [],
+      "callee_count": 64,
+      "func_len": 3248,
+      "best_other": 0.062,
+      "distinctive": true
+     },
+     "call_ordinal": 21,
+     "call_count": 64
+    },
+    {
+     "fp": {
+      "func_rva": "0x99780",
+      "detected_start": true,
+      "exact32": "48 8B C4 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 B8 FE FF FF 48 81 EC 08 02 00 00 0F 29 70 A8",
+      "exact32_unique_old": false,
+      "shape": [
+       "mov R8,R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "push R8",
+       "lea R8,Mx",
+       "sub R8,i",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "movaps Mx,R16",
+       "mov R8,Mrip",
+       "xor R8,R8",
+       "mov Msp,R8",
+       "mov R8,R8",
+       "zero",
+       "mov R4,R4",
+       "mov Msp,R4",
+       "mov Msp,R4",
+       "mov R4,R4",
+       "mov Msp,R4",
+       "movss R16,Mrip",
+       "movss R16,Mrip",
+       "mov R4,Msp",
+       "mov Msp,R4",
+       "movsd R16,Msp",
+       "mov Msp,R4",
+       "lea R4,Mx",
+       "mov Msp,R4",
+       "mov R4,R4",
+       "lea R8,Mrip",
+       "lea R8,Msp",
+       "call rel",
+       "lea R4,Mx",
+       "mov R1,i",
+       "call rel",
+       "movzx R4,R1"
+      ],
+      "imms": [],
+      "strings": [],
+      "callee_count": 64,
+      "func_len": 3248,
+      "best_other": 0.062,
+      "distinctive": true
+     },
+     "call_ordinal": 23,
+     "call_count": 64
+    }
+   ]
   },
   {
    "name": "GETTIMESTAMP_C6A80",
@@ -3445,7 +4392,67 @@
     "func_len": 551,
     "best_other": 0.18,
     "distinctive": true
-   }
+   },
+   "callers": [
+    {
+     "fp": {
+      "func_rva": "0x384620",
+      "detected_start": true,
+      "exact32": "48 89 5C 24 08 57 48 83 EC 30 B9 01 00 00 00 E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? 40 32 FF 40 88 7C 24 20",
+      "exact32_unique_old": true,
+      "shape": [
+       "mov Msp,R8",
+       "push R8",
+       "sub R8,i",
+       "mov R4,i",
+       "call rel",
+       "test R1,R1",
+       "jcc",
+       "zero",
+       "mov Msp,R1",
+       "call rel",
+       "movzx R4,R1",
+       "mov R4,Mrip",
+       "cmp R4,i",
+       "jcc",
+       "test R4,R4",
+       "jcc",
+       "mov Mrip,i",
+       "lea R8,Mrip",
+       "lea R8,Mrip",
+       "call rel",
+       "test R4,R4",
+       "jcc",
+       "mov R4,i",
+       "jmp rel",
+       "lea R8,Mrip",
+       "lea R8,Mrip",
+       "call rel",
+       "mov Mrip,i",
+       "jmp rel",
+       "mov R1,i",
+       "mov Msp,R1",
+       "movzx R4,R1",
+       "call rel",
+       "call rel",
+       "mov R8,R8",
+       "cmp Mx,i",
+       "jcc",
+       "mov R8,R8",
+       "call rel",
+       "test R1,R1"
+      ],
+      "imms": [],
+      "strings": [],
+      "callee_count": 22,
+      "func_len": 372,
+      "best_other": 0.079,
+      "distinctive": true
+     },
+     "call_ordinal": 12,
+     "call_count": 22
+    }
+   ]
   },
   {
    "name": "COROUTINE_BF920",
@@ -3511,9 +4518,76 @@
     ],
     "callee_count": 53,
     "func_len": 2292,
-    "best_other": 0.153,
+    "best_other": 0.115,
     "distinctive": true
-   }
+   },
+   "callers": [
+    {
+     "fp": {
+      "func_rva": "0xe9960",
+      "detected_start": true,
+      "exact32": "41 54 48 81 EC 80 00 00 00 4C 8B E1 E8 ?? ?? ?? ?? 84 C0 74 ?? 33 C0 48 81 C4 80 00 00 00 41 5C",
+      "exact32_unique_old": true,
+      "shape": [
+       "push R8",
+       "sub R8,i",
+       "mov R8,R8",
+       "call rel",
+       "test R1,R1",
+       "jcc",
+       "zero",
+       "add R8,i",
+       "pop R8",
+       "ret ",
+       "mov Msp,R8",
+       "mov Msp,R8",
+       "mov Msp,R8",
+       "call rel",
+       "call Mrip",
+       "lea R8,Mrip",
+       "mov R8,R8",
+       "call Mrip",
+       "mov R8,R8",
+       "lea R8,Mrip",
+       "call Mrip",
+       "test R8,R8",
+       "jcc",
+       "lea R8,Mrip",
+       "mov R8,R8",
+       "call R8",
+       "call rel",
+       "lea R8,Mrip",
+       "mov R8,R8",
+       "mov R8,R8",
+       "call rel",
+       "zero",
+       "mov R8,R8",
+       "call rel",
+       "lea R8,Mrip",
+       "mov R8,R8",
+       "call rel",
+       "mov R4,i",
+       "mov R8,R8",
+       "call rel"
+      ],
+      "imms": [
+       "0x7fffffffffffffff"
+      ],
+      "strings": [
+       "SetThreadDescription",
+       "https://b8df208c9e944ede8f3d36c4d13dea56@o450554",
+       "kernel32.dll",
+       "main-thread"
+      ],
+      "callee_count": 20,
+      "func_len": 551,
+      "best_other": 0.18,
+      "distinctive": true
+     },
+     "call_ordinal": 17,
+     "call_count": 20
+    }
+   ]
   }
  ],
  "struct_fields": [
@@ -8922,7 +9996,7 @@
       ],
       "callee_count": 223,
       "func_len": 7731,
-      "best_other": 0.255,
+      "best_other": 0.283,
       "distinctive": true
      },
      "window": [
@@ -10611,7 +11685,7 @@
       ],
       "callee_count": 223,
       "func_len": 7731,
-      "best_other": 0.255,
+      "best_other": 0.283,
       "distinctive": true
      },
      "window": [
@@ -14372,7 +15446,7 @@
       ],
       "callee_count": 223,
       "func_len": 7731,
-      "best_other": 0.255,
+      "best_other": 0.283,
       "distinctive": true
      },
      "window": [
@@ -15685,7 +16759,7 @@
       ],
       "callee_count": 223,
       "func_len": 7731,
-      "best_other": 0.255,
+      "best_other": 0.283,
       "distinctive": true
      },
      "window": [
@@ -18162,7 +19236,7 @@
       "strings": [],
       "callee_count": 9,
       "func_len": 853,
-      "best_other": 0.062,
+      "best_other": 0.077,
       "distinctive": true
      },
      "window": [
@@ -20019,7 +21093,7 @@
       ],
       "callee_count": 82,
       "func_len": 2580,
-      "best_other": 0.12,
+      "best_other": 0.286,
       "distinctive": true
      },
      "window": [
@@ -20089,7 +21163,7 @@
       "strings": [],
       "callee_count": 64,
       "func_len": 3248,
-      "best_other": 0.086,
+      "best_other": 0.062,
       "distinctive": true
      },
      "window": [
@@ -22760,7 +23834,7 @@
       "strings": [],
       "callee_count": 9,
       "func_len": 853,
-      "best_other": 0.062,
+      "best_other": 0.077,
       "distinctive": true
      },
      "window": [
@@ -23437,7 +24511,7 @@
       ],
       "callee_count": 82,
       "func_len": 2580,
-      "best_other": 0.12,
+      "best_other": 0.286,
       "distinctive": true
      },
      "window": [
@@ -23507,7 +24581,7 @@
       "strings": [],
       "callee_count": 64,
       "func_len": 3248,
-      "best_other": 0.086,
+      "best_other": 0.062,
       "distinctive": true
      },
      "window": [
@@ -30512,7 +31586,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -30884,7 +31958,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -31254,7 +32328,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -31626,7 +32700,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -31998,7 +33072,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -32369,7 +33443,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -32764,7 +33838,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -33136,7 +34210,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -33506,7 +34580,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -33891,7 +34965,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -34262,7 +35336,7 @@
       "strings": [],
       "callee_count": 6,
       "func_len": 2129,
-      "best_other": 0.077,
+      "best_other": 0.036,
       "distinctive": true
      },
      "window": [
@@ -34762,7 +35836,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -35130,7 +36204,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -35498,7 +36572,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -35866,7 +36940,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -36234,7 +37308,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -36602,7 +37676,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -36970,7 +38044,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -37338,7 +38412,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -37706,7 +38780,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -38074,7 +39148,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -38442,7 +39516,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -38862,7 +39936,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -39230,7 +40304,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -39598,7 +40672,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -39966,7 +41040,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -40334,7 +41408,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
@@ -40702,7 +41776,7 @@
       ],
       "callee_count": 8,
       "func_len": 1400,
-      "best_other": 0.071,
+      "best_other": 0.068,
       "distinctive": true
      },
      "window": [
