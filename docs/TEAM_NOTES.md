@@ -48,6 +48,23 @@ Standing practice (per the user, 2026-09-18): the PC-side instance posts anythin
 as it happens, so the user doesn't have to manually relay it. Newest entries on top. Each entry
 should be skimmable — point to the real detail (a commit, a doc) rather than duplicating it.
 
+### 2026-09-20 — HOLD: the game client has a pending update; do NOT update or replace the v1074 client yet
+
+The PC side found the client has an update available (`version.json` still `1074`; nothing staged
+in `LauncherResources/updates`). Once it applies, the v1074 binary, the ability to log in with it,
+and every runtime-only artifact are gone, and our RVAs/struct offsets will be stale (the last
+update moved every function RVA non-uniformly and shifted data fields by +0x50). We are
+snapshotting v1074 first. **VM-side instance / whoever runs the VM: please do NOT run
+`ImLauncher.exe` / `ImBootstrapper.exe` or click any Update button, and do not delete or
+overwrite the VM's client install.** The bot's own launcher starts `ImConquer.exe` directly and
+does not update it. The VM's untouched v1074 install is a useful second copy: if you can, run
+`Get-FileHash -Algorithm SHA256 bin\64\ImConquer.exe` there, compare it with
+`C2B53437EF68D687A1EF0F70C74BCF2DF6027BF82B558E93330C839EB5E1C396` (PE TimeDateStamp
+`0x6A51CFB9`, 18,198,544 bytes) and post the result here. After the update lands the bot MUST NOT
+run against the new client until it has been re-verified (stale RVAs jump into garbage); a
+runtime build fence is planned. Full dossier and checklist:
+`docs/investigation/CLIENT_V1074_BASELINE.md`.
+
 ### 2026-09-19 — Twin City bridge "walkable tile the server refuses": rail cells now block (walkable grid CHANGED)
 
 If you've seen the bot repeat the same failing jump onto a Twin City bridge end-cap
