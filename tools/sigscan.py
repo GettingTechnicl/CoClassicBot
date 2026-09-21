@@ -1,148 +1,245 @@
 #!/usr/bin/env python3
 """
-sigscan.py - locate the v1074 registry entries in another build's decrypted image dump.
+sigscan.py - propose where each registry entry moved in another build's decrypted image (v2, tiered).
 
-  python tools/sigscan.py --image <new_image_dump.bin> [--registry docs/investigation/v1074_offset_registry.json]
-                          [--status verified,unverified] [--out report.md] [--identity]
+  python tools/sigscan.py --image <new_image.bin|.exe|.dll> [--registry docs/investigation/v1074_offset_registry.json]
+                          [--status verified] [--fields] [--out report.md] [--identity]
 
-For each registry entry:
-  code  : search the masked function-start signature in the new image's code section(s); report
-          every hit and the delta from the old RVA. Exactly one hit = confident relocation.
-  data  : for each stored xref signature, find the same code site in the new image, read the
-          rip-relative displacement there and recover the global's NEW address
-          (site + next_ip_off + disp32). Sites vote; agreement across sites = confident.
-  derived: a global with no code reference of its own (reached as sibling+delta) is resolved from
-          its sibling's result.
-Nothing here "verifies" anything on a live client - it only proposes where each item moved. Every
-proposed address must still be re-validated at runtime (self-test / imgdump paired dumps).
+Locating a FUNCTION cascades: (1) fixed 32-byte masked prefix, only trusted when it was unique in the old
+build; (2) normalised instruction-shape stream (exact prefix match, else fuzzy trigram similarity that must beat
+the runner-up by a margin); (3) for functions with near-identical siblings, the function's distinctive CALLERS
+(locate the caller, take the call at the same ordinal). Each result carries its METHOD and SCORE.
+GLOBALS are read out of the code that references them (function-anchored, by ordinal), sites vote.
+STRUCT FIELDS: each code-access site is re-found by its window of normalised instructions inside the
+located function and the NEW displacement is read back; sites vote; per-struct delta consistency and
+interpolation are reported (interpolated values are hypotheses, flagged as such). Fields whose strategy is
+`live-correlation` are listed with their recipe - a bare offset never survives an update.
 
---identity  run against the SAME v1074 dump the registry was built from: every selected entry must
-            resolve to its own RVA. This validates the whole toolchain on a known pair before it is
-            trusted on v1074 -> new; exit code 1 if any entry fails.
+Nothing here verifies anything on a live client; every proposal must be re-validated (self-test / paired dumps).
+
+--identity  run on the build the registry came from. A SANITY GATE only (it proves the anchors are consistent,
+            NOT that they survive a recompile). The real measure is tools/sig_validate.py on a known pair and,
+            ultimately, the hit-rate on the real new build.
 """
-import argparse, json, os, re, struct, sys
+import argparse, json, os, sys
+from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import build_offset_registry as bor
+import sigkit as sk
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MARGIN = 0.05            # shape-fuzzy must beat the runner-up by this much to count as a relocation
+SHAPE_SANITY = 0.5       # caller-anchored targets must at least look like the original
 
 
-def rx_from_hex(sig):
-    return re.compile(b"".join(b"." if p == "??" else re.escape(bytes([int(p, 16)])) for p in sig.split()), re.DOTALL)
+def hexlist(s):
+    return [None if p == "??" else int(p, 16) for p in s.split()]
 
 
-def scan_one(e, blobs, limit=20):
-    if e["kind"] == "code":
-        hits = []
-        if e.get("sig"):
-            rx = rx_from_hex(e["sig"])
-            for base, blob in blobs:
-                for m in rx.finditer(blob):
-                    hits.append(base + m.start())
-                    if len(hits) >= limit:
-                        break
-        return dict(e=e, kind="code", hits=hits, ok=(len(hits) == 1 and hits[0] == e["rva"]), unique=len(hits) == 1)
-    # Two kinds of evidence. STRONG = a signature that is unique in the code section (a local window
-    # around the reference site, or the enclosing function's start signature + the site's offset in it).
-    # WEAK = a local window that matched several places; only used when there is no strong evidence,
-    # and then the result is reported as AMBIGUOUS, never as a confident relocation.
-    strong, weak, detail = {}, {}, []
+class Locator:
+    def __init__(self, img):
+        self.img = img
+        self.idx = sk.Index(img)
+        self.cache = {}
 
-    def add(d, new):
-        d[new] = d.get(new, 0) + 1
+    def by_fp(self, fp, callers=None, depth=0):
+        key = (fp["func_rva"], depth)
+        if key in self.cache:
+            return self.cache[key]
+        res = self._by_fp(fp, callers, depth)
+        self.cache[key] = res
+        return res
 
-    for xs in e.get("xref_sigs", []):
-        rx = rx_from_hex(xs["sig"])
-        for base, blob in blobs:
-            ms = list(rx.finditer(blob))
-            if not ms or len(ms) > 4:
-                continue
-            for m in ms:
-                new = base + m.start() + xs["next_ip_off"] + struct.unpack_from("<i", blob, m.start() + xs["disp_off"])[0]
-                add(strong if len(ms) == 1 else weak, new)
-                detail.append(("local", xs["site_rva"], hex(new), len(ms)))
-        fr = xs.get("func_rel")
-        if fr and fr["func_matches"] == 1:
-            frx = rx_from_hex(fr["func_sig"])
-            for base, blob in blobs:
-                fms = list(frx.finditer(blob))
-                if len(fms) == 1:
-                    site = fms[0].start() + fr["site_off"]
-                    if site + fr["disp_off_in_insn"] + 4 <= len(blob):
-                        new = base + site + fr["ins_size"] + struct.unpack_from("<i", blob, site + fr["disp_off_in_insn"])[0]
-                        add(strong, new)
-                        detail.append(("func", xs["site_rva"], hex(new), 1))
-    votes = strong or weak
-    best = max(votes.items(), key=lambda kv: kv[1]) if votes else None
-    unique = len(votes) == 1 and bool(strong)
-    return dict(e=e, kind="data", votes=votes, detail=detail, best=best, strong=bool(strong),
-                ok=bool(best and best[0] == e["rva"] and unique),
-                contains_own=e["rva"] in votes, unique=unique)
+    def _by_fp(self, fp, callers, depth):
+        idx = self.idx
+        if fp.get("exact32_unique_old"):
+            h = idx.find_masked(hexlist(fp["exact32"]))
+            if len(h) == 1:
+                return dict(rva=h[0], method="exact32", score=1.0, margin=1.0)
+        sh = tuple(fp["shape"])
+        imm = {int(x, 16) for x in fp.get("imms", [])}
+        loc = idx.locate_shape(sh, imm)
+        if loc and (loc[3] == "shape-exact" or loc[2] >= MARGIN):
+            return dict(rva=loc[0], method=loc[3], score=round(loc[1], 3), margin=round(loc[2], 3))
+        if callers and depth == 0:
+            for c in callers:
+                cl = self.by_fp(c["fp"], None, 1)
+                if not cl:
+                    continue
+                cf = idx.by_start.get(cl["rva"])
+                k = c["call_ordinal"]
+                if cf and k < len(cf.calls):
+                    tgt = cf.calls[k][2]
+                    tf = idx.by_start.get(tgt) or sk.func_at(self.img, tgt)
+                    sim = len(sk.grams(tuple(fp["shape"])) & sk.grams(sk.shape(tf))) / max(1, len(sk.grams(tuple(fp["shape"])) | sk.grams(sk.shape(tf))))
+                    if sim >= SHAPE_SANITY:
+                        return dict(rva=tgt, method="caller-anchor", score=round(sim, 3), margin=0.0)
+        if loc:
+            return dict(rva=loc[0], method="shape-AMBIGUOUS", score=round(loc[1], 3), margin=round(loc[2], 3), low=True)
+        return None
+
+    def func(self, rva):
+        return self.idx.by_start.get(rva) or sk.func_at(self.img, rva)
 
 
-def scan(img, reg, statuses, limit=20):
-    blobs = [(s["rva"], img.d[s["rva"]:min(s["rva"] + s["vsize"], len(img.d))]) for s in img.code]
-    allreg = {e["name"]: e for e in reg["entries"]}
-    rows = [scan_one(e, blobs, limit) for e in reg["entries"] if e["status"] in statuses and e["kind"] in ("code", "data")]
-    by_name = {r["e"]["name"]: r for r in rows}
-    for r in rows:
-        e = r["e"]
-        if e.get("derived_from"):
-            base = by_name.get(e["derived_from"]) or scan_one(allreg[e["derived_from"]], blobs, limit)
-            if base["kind"] == "data" and base["best"] and base["unique"]:
-                new = base["best"][0] + e["derived_delta"]
-                r.update(votes={new: base["best"][1]}, best=(new, base["best"][1]), unique=True, ok=(new == e["rva"]))
-    return rows
+def resolve_global(loc, e):
+    votes, detail = Counter(), []
+    for a in e.get("anchors", []):
+        r = loc.by_fp(a["func"], a.get("callers"))
+        if not r or r.get("low"):
+            continue
+        nf = loc.func(r["rva"])
+        dr = [(i, t) for (i, _r, t) in nf.refs if not loc.img.is_code(t)]
+        pick = None
+        if a["ord_all"] < len(dr) and sk._TOKNAME[nf.toks[dr[a["ord_all"]][0]]] == a["token"]:
+            pick = dr[a["ord_all"]][1]
+        else:
+            same = [t for (i, t) in dr if sk._TOKNAME[nf.toks[i]] == a["token"]]
+            if a["ord_token"] < len(same):
+                pick = same[a["ord_token"]]
+        if pick is not None:
+            votes[pick] += 1
+            detail.append((r["method"], hex(pick)))
+    return votes, detail
+
+
+def resolve_field(loc, fd):
+    votes = Counter()
+    for s in fd.get("access_sites", []):
+        r = loc.by_fp(s["func"], s.get("callers"))
+        if not r or r.get("low"):
+            continue
+        nf = loc.func(r["rva"])
+        ids = [sk._TOKID.get(t) for t in s["window"]]
+        if None in ids:
+            continue
+        w = len(ids)
+        hits = [p for p in range(len(nf.toks) - w + 1) if nf.toks[p:p + w] == ids]
+        disp = None
+        md = {i: d for (i, _, d) in nf.memacc}
+        if len(hits) == 1:
+            disp = md.get(hits[0] + s["centre"])
+        if disp is None:
+            tk = sk._TOKID.get(s["window"][s["centre"]])
+            cand = [d for (i, _, d) in nf.memacc if nf.toks[i] == tk]
+            if s["ord_token"] < len(cand):
+                disp = cand[s["ord_token"]]
+        if disp is not None:
+            votes[disp] += 1
+    return votes
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image", default=r"C:\Users\TerryGluff\Documents\Claude\CO99\scratchpad\image_dump.bin")
+    ap.add_argument("--image", required=True)
     ap.add_argument("--registry", default=os.path.join(REPO, "docs", "investigation", "v1074_offset_registry.json"))
     ap.add_argument("--status", default="verified")
-    ap.add_argument("--out")
+    ap.add_argument("--fields", action="store_true")
     ap.add_argument("--identity", action="store_true")
+    ap.add_argument("--out")
     a = ap.parse_args()
     reg = json.load(open(a.registry, encoding="utf-8"))
-    img = bor.Image(a.image)
-    print("target image: %s stamp 0x%08X  (registry built from stamp %s)" % (os.path.basename(a.image), img.stamp, reg["image"]["pe_timedatestamp"]))
-    rows = scan(img, reg, set(a.status.split(",")))
+    img = sk.Image.from_dump(a.image) if a.image.lower().endswith(".bin") else sk.Image.from_pe_file(a.image)
+    print("target: %s  PE stamp 0x%08X  (registry built from %s)" % (os.path.basename(a.image), img.stamp, reg["image"]["pe_timedatestamp"]))
+    loc = Locator(img)
+    print("swept %d functions" % len(loc.idx.funcs))
+    statuses = set(a.status.split(",")) if a.status != "all" else None
 
-    lines = ["| name | kind | old RVA | result | new RVA(s) | delta |", "|---|---|---|---|---|---|"]
-    bad = 0
-    for r in rows:
-        e = r["e"]
-        if r["kind"] == "code":
-            hs = r["hits"]
-            res = "UNIQUE" if len(hs) == 1 else ("none" if not hs else "%d hits" % len(hs))
-            newr = ", ".join("0x%X" % h for h in hs[:4]) or "-"
-            delta = "%+#x" % (hs[0] - e["rva"]) if len(hs) == 1 else "-"
-        else:
-            b = r["best"]
-            if b and r["unique"]:
-                res = "agree x%d" % b[1]
-            elif b and r["strong"]:
-                res = "CONFLICT"
-            elif b:
-                res = "AMBIGUOUS (%d cand%s)" % (len(r["votes"]), ", incl. own" if r["contains_own"] else "")
+    out, bad = [], 0
+    rows = []
+    for e in reg["entries"]:
+        if statuses and e["status"] not in statuses:
+            continue
+        if e["kind"] == "code" and e.get("fp"):
+            r = loc.by_fp(e["fp"], e.get("callers"))
+            rows.append((e, "code", r))
+        elif e["kind"] == "data":
+            v, d = resolve_global(loc, e)
+            rows.append((e, "data", (v, d)))
+    by = {e["name"]: (k, r) for (e, k, r) in rows}
+    lines = ["| name | kind | old RVA | method | new RVA | delta | confidence |", "|---|---|---|---|---|---|---|"]
+    moved = []
+    for (e, k, r) in rows:
+        if k == "code":
+            if not r:
+                res = ("NOT FOUND", "-", "-", "none"); ok = False
             else:
-                res = "none"
-            newr = ", ".join("0x%X" % k for k in sorted(r["votes"])) or "-"
-            delta = "%+#x" % (b[0] - e["rva"]) if b and r["unique"] else "-"
-        if a.identity and not r["ok"]:
+                conf = "LOW (siblings)" if r.get("low") else ("high" if r["method"] in ("exact32", "shape-exact") else "medium")
+                res = (r["method"], "0x%X" % r["rva"], "%+#x" % (r["rva"] - e["rva"]), conf)
+                ok = (r["rva"] == e["rva"] and not r.get("low"))
+                if not r.get("low"):
+                    moved.append((e["rva"], r["rva"], e["name"]))
+        else:
+            votes, detail = r
+            if e.get("derived_from") and e["derived_from"] in by and by[e["derived_from"]][0] == "data":
+                bv = by[e["derived_from"]][1][0]
+                if len(bv) == 1:
+                    (b0, c0), = bv.items()
+                    votes = Counter({b0 + e["derived_delta"]: c0})
+            if not votes:
+                res = ("no anchors resolved", "-", "-", "none"); ok = False
+            elif len(votes) == 1:
+                (t, c), = votes.items()
+                res = ("anchors x%d" % c, "0x%X" % t, "%+#x" % (t - e["rva"]), "high" if c >= 2 else "candidate (1 anchor - verify live)")
+                ok = (t == e["rva"])
+                moved.append((e["rva"], t, e["name"]))
+            else:
+                res = ("CONFLICT", ", ".join("0x%X(x%d)" % (t, c) for t, c in votes.most_common()), "-", "LOW"); ok = False
+        if a.identity and not ok:
             bad += 1
-            res += "  <-- FAILS identity"
-        lines.append("| `%s` | %s | 0x%X | %s | %s | %s |" % (e["name"], r["kind"], e["rva"], res, newr, delta))
-    out = "\n".join(lines)
-    print(out)
-    if a.out:
-        open(a.out, "w", encoding="utf-8").write(out + "\n")
+        lines.append("| `%s` | %s | 0x%X | %s | %s | %s | %s |" % (e["name"], k, e["rva"], res[0], res[1], res[2], res[3] + ("  <-- differs from old" if a.identity and not ok else "")))
+    print("\n".join(lines))
+
+    # ---- cross-entry consistency: a relocation should be (piecewise) monotonic and its deltas should cluster
+    moved.sort()
+    inv = [(moved[i][2], moved[i + 1][2]) for i in range(len(moved) - 1) if moved[i][1] > moved[i + 1][1]]
+    print("\nconsistency: %d relocated entries; order inversions (old order != new order): %d %s" % (len(moved), len(inv), inv[:6]))
+    dl = Counter((n - o) >> 12 for (o, n, _) in moved)
+    print("delta clusters (4 KB units): %s" % dict(dl.most_common(6)))
+
+    if a.fields:
+        print("\n### struct fields")
+        per_group = defaultdict(list)
+        unresolved, conflicts = [], []
+        for fd in reg["struct_fields"]:
+            if fd.get("strategy") == "code-access":
+                v = resolve_field(loc, fd)
+                if v:
+                    best, c = v.most_common(1)[0]
+                    if len(v) > 1:
+                        conflicts.append(fd["field"])
+                        unresolved.append(fd)
+                        continue
+                    per_group[fd["group"]].append((fd["offset"], best, c, len(fd["access_sites"]), fd["field"]))
+                else:
+                    unresolved.append(fd)
+            else:
+                unresolved.append(fd)
+        for g, lst in per_group.items():
+            lst.sort()
+            ds = Counter(n - o for (o, n, *_r) in lst)
+            hi = sum(1 for x in lst if x[2] >= 2)
+            print("group %-11s resolved %3d fields (%d with >=2 agreeing sites, the rest single-site candidates); deltas: %s"
+                  % (g, len(lst), hi, dict(ds.most_common(5))))
+        # interpolate unresolved fields between two resolved neighbours with the same delta (hypothesis only)
+        interp = 0
+        for fd in unresolved:
+            lst = per_group.get(fd.get("group", ""), [])
+            lo = [x for x in lst if x[0] <= fd["offset"]]
+            hi = [x for x in lst if x[0] >= fd["offset"]]
+            if lo and hi and (lo[-1][1] - lo[-1][0]) == (hi[0][1] - hi[0][0]):
+                interp += 1
+                fd["_proposed"] = fd["offset"] + (lo[-1][1] - lo[-1][0])
+        if conflicts:
+            print("fields whose sites DISAGREE (rejected, need live check): %s" % ", ".join(conflicts))
+        print("unresolved by code: %d; of which interpolated between two equal-delta neighbours (HYPOTHESIS, needs live check): %d" % (len(unresolved), interp))
     if a.identity:
         n = len(rows)
-        print("\nidentity check: %d/%d %s entries resolve to their own address%s" % (n - bad, n, a.status, "" if not bad else "  -- TOOLCHAIN NOT VALIDATED"))
-        return 1 if bad else 0
-    return 0
+        print("\nidentity sanity gate: %d/%d entries resolve to their own address%s" % (n - bad, n, "" if not bad else "  -- anchors inconsistent"))
+        print("(this does NOT show the anchors survive a recompile - see tools/sig_validate.py)")
+    if a.out:
+        open(a.out, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    return 1 if (a.identity and bad) else 0
 
 
 if __name__ == "__main__":

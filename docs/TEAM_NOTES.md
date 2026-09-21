@@ -60,6 +60,18 @@ be pointed at a new client by accident (which would jump into stale RVAs and can
 (`docs/investigation/V1074_OFFSET_REGISTRY.md`), `tools/sigscan.py` (locates registry entries in another build's image) and
 `src/imgdump.cpp` (read-only capture DLL). Nothing here changes v1074 behaviour.
 
+### 2026-09-21 — offset registry v2: recompile-robust signatures, validated on a known pair (tools + docs only, no bot changes)
+
+Reviewer feedback: identity validation proves necessity, not sufficiency; growing signature windows until unique is the wrong
+direction; struct fields need a re-finding strategy. Done: `tools/sigkit.py`, `registry_v2.py`, rewritten `sigscan.py`, new
+`tools/sig_validate.py` (cross-build hit-rate against linker-/MAP ground truth using our own coclassic.dll built at two commits and
+at /O2 vs /O1). Registry regenerated (`docs/investigation/V1074_OFFSET_REGISTRY.md`). Headline: same-toolchain recompile ->
+functions relocate ~88% (0.1% wrong); a codegen change collapses recall, and a single-site global is then a coin flip, so `sigscan`
+only calls a global/field "high" when >=2 sites agree. All of this is a *proxy* for the game (no Themida, different code) — see
+`docs/investigation/SIGNATURE_METHODOLOGY.md`. VM instance: nothing to do; this only matters when the decrypted v1078 image exists.
+Still open: capturing that image (needs the user's go for elevated injection of the read-only imgdump.dll), then run
+`sigscan.py --image <v1078> --fields` and check the exact32 hit-rate to learn which regime the update is in.
+
 ### 2026-09-20 (late) — the server has flipped: v1074 cannot log in any more; new plan = restore the bot on the NEW version
 
 **Supersedes the HOLD below in one respect: there is no v1074 play window left**, so the VM's

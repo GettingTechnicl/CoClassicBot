@@ -126,14 +126,20 @@ rank-correlate, sentinel-on-failure) is the template when it is picked up again.
 - `docs/investigation/V1074_OFFSET_REGISTRY.md` / `v1074_offset_registry.json`: 45 RVA entries (19 verified: 11 code + 8 data) + 177
   struct-field offsets scraped from the headers. Verdicts come from a reviewed `OVERRIDES` table (cited reasons); an early
   tag-scrape mis-read several entries (e.g. `CNETCLIENT_CONNECTION_SINGLETON` -> "garbage", `CURRENT_MAP_ID` -> "wrong"), which is why.
-- Tooling: `tools/build_offset_registry.py` (generate), `tools/sigscan.py` (locate in another image; `--identity` self-check).
-  Globals are relocated through code cross-references; MSVC magic-static accessors are byte-identical templates, so those use the
-  enclosing function's own start signature + the site's offset (a local window matched sibling globals and gave wrong answers —
-  the identity check caught it: 16/19 -> 17/19 -> 19/19).
-- Limits: the source image is the existing `image_dump.bin` (17% of the image; code section fully present). Only ~19 items are
-  byte-locatable; struct-field offsets (CHero+0x3D0 etc.) are NOT signature-locatable and must be re-verified at runtime on the new build.
-  `code_section` coverage of Themida-lazily-decrypted functions in the old dump is unknown (a function still encrypted at dump time
-  would have no usable signature) — all 11 verified code entries did decode, so the ones we depend on are fine.
+- Tooling (v2, 2026-09-21 — full methodology, measured survival and caveats in `SIGNATURE_METHODOLOGY.md`):
+  `tools/build_offset_registry.py` (generate) -> `registry_v2.py` (fingerprints) / `sigkit.py` (primitives); `tools/sigscan.py`
+  (locate in another image); `tools/sig_validate.py` (cross-build validator with ground truth). Signatures are **not** grown until
+  unique: each function carries a masked 32-byte prefix + normalised instruction-shape stream + distinctive immediates/strings
+  + a distinctiveness score; non-distinctive functions (magic-static accessors) anchor through their distinctive callers;
+  globals through the referencing function + ordinal.
+- **Struct fields (177) carry a re-finding strategy**: 107 `code-access` (access-site windows; the scanner reads the NEW
+  displacement back from the instruction, sites vote, disagreement rejects) and 70 `live-correlation` (recipe = the HP method).
+- **Identity (19/19) is only a sanity gate.** Real evidence = own-DLL known pair with /MAP ground truth: same toolchain
+  (208b3e3 -> HEAD) function cascade 88% found / 0.1% wrong, globals with >=2 agreeing sites 0.1% wrong; heavy codegen change
+  (/O2 -> /O1) recall collapses to ~24% and single-site globals become a coin flip, so confidence is tied to site agreement.
+  Proxy pair, NOT the game — real hit-rate needs the decrypted v1078 image (N4).
+- Limits: the source image is `image_dump.bin` (code section 98% decrypted; the rest is Themida runtime). Functions still
+  encrypted at dump time would have no usable signature — all 11 verified code entries decode, so the ones we depend on are fine.
 
 ## 6. The new version: v1078 (observed 2026-09-20 ~23:28)
 

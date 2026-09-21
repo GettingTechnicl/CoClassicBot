@@ -403,8 +403,14 @@ def main():
             e["derived_from"], e["derived_delta"] = DERIVED[e["name"]]
         else:
             e.setdefault("status_source", "tag" if e["status"] not in ("stale_default",) else "default")
-    build(img, [e for e in entries if e["kind"] in ("code", "data")], code_bytes, code_sec["rva"])
     fields = parse_struct_fields(os.path.join(REPO, "src"))
+    # v2 fingerprints (tools/registry_v2.py): recompile-robust tiers + distinctiveness + caller/function anchors + field
+    # re-finding strategies. The v1 byte-run builder above is no longer used: growing runs for uniqueness over-fits one build.
+    import registry_v2
+    import sigkit
+    simg = sigkit.Image.from_dump(a.image)
+    entries, fields, v2stats = registry_v2.build(simg, entries, fields)
+    print("registry v2:", v2stats)
 
     reg = dict(
         generated_by="tools/build_offset_registry.py",
@@ -445,20 +451,27 @@ def main():
         for e in sorted(rows, key=lambda x: (x["kind"], x.get("rva", x.get("value", 0)))):
             rva = "0x%X" % e["rva"] if "rva" in e else "idx %d" % e.get("value", 0)
             if e["kind"] == "code":
-                sig = ("`%s`…" % e["sig"][:47]) if e.get("sig") else "—"
-                uniq = str(e.get("sig_matches", "—")) + ("" if e.get("sig_self_hit", True) else " (!self)")
+                fp = e.get("fp")
+                sig = ("`%s`…" % fp["exact32"][:47]) if fp else "—"
+                uniq = ("%s%s" % ("distinct" if fp["distinctive"] else "SIBLINGS", " %.2f" % fp["best_other"])
+                        + (" +%d caller anchor(s)" % len(e.get("callers", [])) if e.get("callers") else "")) if fp else "—"
             elif e["kind"] == "data":
-                xs = e.get("xref_sigs") or []
-                sig = "%d xref site(s)" % len(xs) if xs else "no code refs found"
-                uniq = "best %s" % xs[0]["matches_in_code"] if xs else "—"
+                xs = e.get("anchors") or []
+                sig = "%d function-anchored site(s)" % len(xs) if xs else "no code refs found"
+                uniq = ("derived from %s%+d" % (e["derived_from"], e["derived_delta"])) if e.get("derived_from") else                     ("—" if not xs else " ".join("d" if a["func"]["distinctive"] else "s" for a in xs))
             else:
                 sig, uniq = "—", "—"
             md.append("| `%s` | %s | %s | %s | %s | %s |" % (e["name"], e["kind"], rva, sig, uniq, e.get("source", "")))
         md += [""]
-    md += ["## Struct-field offsets (from headers; runtime-verified, not byte-signature)", "",
-           "| file:line | field | offset | tag | comment |", "|---|---|---|---|---|"]
+    md += ["## Struct-field offsets (from headers) and how each is RE-FOUND in a new build", "",
+           "A bare offset is dead weight once fields shift. `code-access` = >=2 anchored functions that touch this field together with "
+           "other fields of the same object; the matcher re-finds the access instruction there and reads the NEW displacement back "
+           "(majority vote, then per-struct delta interpolation). `live-correlation` = code too generic to anchor; re-find by dumping "
+           "the object at several states and rank-correlating (the method that found current HP).", "",
+           "| file:line | field | offset | tag | strategy | sites | comment |", "|---|---|---|---|---|---|---|"]
     for f in sorted(fields, key=lambda x: (x["file"], x["offset"])):
-        md.append("| %s:%d | `%s` | +0x%X | %s | %s |" % (f["file"], f["line"], f["field"], f["offset"], f["status"], f["comment"][:90].replace("|", "/")))
+        md.append("| %s:%d | `%s` | +0x%X | %s | %s | %d | %s |" % (f["file"], f["line"], f["field"], f["offset"], f["status"],
+                  f.get("strategy", "?"), len(f.get("access_sites", [])), f["comment"][:80].replace("|", "/")))
     with open(os.path.join(a.out_dir, "V1074_OFFSET_REGISTRY.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(md) + "\n")
     print("wrote", jp, "and V1074_OFFSET_REGISTRY.md;", len(entries), "entries,", len(fields), "struct fields")
