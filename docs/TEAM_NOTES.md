@@ -48,6 +48,18 @@ Standing practice (per the user, 2026-09-18): the PC-side instance posts anythin
 as it happens, so the user doesn't have to manually relay it. Newest entries on top. Each entry
 should be skimmable — point to the real detail (a commit, a doc) rather than duplicating it.
 
+### 2026-09-20 (night) — the PC's live client is now v1078; BUILD FENCE landed — pull before you run any launcher/DLL from this repo
+
+The official launcher updated the PC's live install in place at 23:28 (**v1078**: `ImConquer.exe` SHA-256 `BE9DD723…C4E0`, PE stamp
+`0x6AB0822B`); v1074 remains byte-exact in the snapshots. The update is small (one exe + 8 data files + 24 custom-weapon assets; all maps
+and DLLs unchanged) — details in `docs/investigation/CLIENT_V1074_BASELINE.md` §6. **New in the repo, and important for you:**
+`src/build_fence.h` — the launcher (`injector/main.cpp`) now refuses to launch/inject, and `coclassic.dll` refuses to initialise anything,
+unless `ImConquer.exe`'s PE stamp/size match a verified build (only v1074 is listed). So a launcher/DLL from this repo can no longer
+be pointed at a new client by accident (which would jump into stale RVAs and can crash the game). If the VM's launcher says
+"Unsupported client build … bot disabled until re-verified", that is this working as intended, not a bug. Also new: an offset registry
+(`docs/investigation/V1074_OFFSET_REGISTRY.md`), `tools/sigscan.py` (locates registry entries in another build's image) and
+`src/imgdump.cpp` (read-only capture DLL). Nothing here changes v1074 behaviour.
+
 ### 2026-09-20 (late) — the server has flipped: v1074 cannot log in any more; new plan = restore the bot on the NEW version
 
 **Supersedes the HOLD below in one respect: there is no v1074 play window left**, so the VM's

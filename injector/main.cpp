@@ -27,6 +27,7 @@
 #include "auto_login.h"
 #include "account_session.h"
 #include "../src/msg_types.h"
+#include "../src/build_fence.h"
 #include "log_stamp.h"  // must stay LAST: redefines printf to add timestamps
 
 namespace fs = std::filesystem;
@@ -1362,6 +1363,32 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
     // kept retrying at all.
     constexpr int kStuckLoginBackoffThreshold = 3;
     constexpr DWORD kStuckLoginBackoffMs = 300000;
+
+    // BUILD FENCE (src/build_fence.h, docs/investigation/CLIENT_V1074_BASELINE.md): coclassic.dll's
+    // RVAs/offsets are only valid for verified client builds, and calling them on another build
+    // jumps into garbage. Read the exe's PE identity straight from the FILE on disk — before any
+    // process exists — and refuse to launch or inject on an unknown build. Same clean-up and Failed
+    // state as the CreateProcess-failed path below; returns 1 so no supervise/relaunch loop can spin.
+    {
+        uint32_t stamp = 0, imageSize = 0;
+        if (!BuildFence::ReadPeIdentityFromFile(params.gamePathStr.c_str(), &stamp, &imageSize) ||
+            !BuildFence::IsSupported(stamp, imageSize)) {
+            printf("[!] BUILD FENCE: %s is not a client build this bot has been verified against "
+                   "(PE stamp 0x%08X, image 0x%X). Refusing to launch or inject.\n",
+                   params.gamePathStr.c_str(), stamp, imageSize);
+            if (params.proxyMode) {
+                params.relay->Stop();
+                params.serverPatch->Restore();
+                if (params.activeLogger)
+                    params.activeLogger->Stop();
+            }
+            char msg[160];
+            snprintf(msg, sizeof(msg), "Unsupported client build (PE 0x%08X) - bot disabled until re-verified", stamp);
+            session->SetStatus(msg);
+            session->state = SessionState::Failed;
+            return 1;
+        }
+    }
 
     // Session 10: wraps the original single-shot launch+inject sequence in a
     // supervise-and-relaunch loop. Only actually loops when an account was

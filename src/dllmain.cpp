@@ -12,6 +12,7 @@
 #include "itemtype.h"
 #include "spawn_memory.h"
 #include "log.h"
+#include "build_fence.h"
 #include <string>
 
 ULONG64 g_qwModuleBase = 0;
@@ -91,8 +92,38 @@ void WriteLoggedInMarker()
 
 }  // namespace
 
+static bool g_fenced = false;
+
+// POD-only so it may use __try (MSVC forbids __try in functions with unwindable C++ objects).
+static bool ReadHostBuildIdentity(uint32_t* stamp, uint32_t* imageSize)
+{
+    const auto* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
+    if (!base)
+        return false;
+    __try { return BuildFence::ParsePeIdentity(base, 0x400, stamp, imageSize); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
 static DWORD WINAPI InitThread(LPVOID)
 {
+    // BUILD FENCE (src/build_fence.h): before ANY init — no Log/HWID hooks/game reads/scans/threads —
+    // check that the host process is a client build this bot has been verified against. On an
+    // unknown build every RVA in game.h would be a jump into garbage. The launcher refuses earlier
+    // (it reads the exe on disk); this is the second line, for any other way the DLL gets loaded.
+    {
+        uint32_t stamp = 0, imageSize = 0;
+        const bool ok = ReadHostBuildIdentity(&stamp, &imageSize);
+        if (!ok || !BuildFence::IsSupported(stamp, imageSize)) {
+            g_fenced = true;
+            Log::Init();
+            spdlog::error("[fence] UNSUPPORTED CLIENT BUILD (PE stamp 0x{:08X}, image 0x{:X}{}). Bot fully disabled: "
+                          "no hooks, no scans, no game reads. Re-derive + verify this build, then add it to "
+                          "src/build_fence.h (docs/investigation/CLIENT_V1074_BASELINE.md).",
+                          stamp, imageSize, ok ? "" : ", header unreadable");
+            return 0;
+        }
+    }
+
     // The game's login process sends an integrity/environment check to the server.
     // If we patch code or create D3D devices before login completes, the server
     // rejects the connection with "virtual machine detected!".
@@ -223,6 +254,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         break;
 
     case DLL_PROCESS_DETACH:
+        if (g_fenced) {
+            // Nothing was initialised; running the normal teardown would SaveConfig() defaults over
+            // the user's saved settings and touch subsystems that never started.
+            spdlog::info("[shutdown] fenced build - nothing to tear down");
+            Log::Shutdown();
+            break;
+        }
         spdlog::info("[shutdown] DLL detaching");
         PluginManager::Get().Shutdown();
         SaveConfig();

@@ -1,5 +1,6 @@
 #include "CGameMap.h"
 #include "mapdata.h"
+#include "build_fence.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -644,6 +645,60 @@ TEST(overlay_map1010_bridge_intact) {
     EXPECT(!tm.Get()->FindPath(67, 106, 91, 74, 3000000).empty());
 }
 
+
+// =====================================================================
+// Build fence (src/build_fence.h): the bot must arm ONLY on verified client builds.
+// =====================================================================
+static std::vector<uint8_t> FakePe(uint32_t stamp, uint32_t sizeOfImage)
+{
+    std::vector<uint8_t> b(0x400, 0);
+    b[0] = 'M'; b[1] = 'Z';
+    const int32_t e = 0x80;
+    memcpy(&b[0x3C], &e, 4);
+    memcpy(&b[e], "PE\0\0", 4);
+    memcpy(&b[e + 8], &stamp, 4);
+    memcpy(&b[e + 24 + 56], &sizeOfImage, 4);
+    return b;
+}
+
+TEST(buildfence_supports_only_verified_builds) {
+    uint32_t st = 0, sz = 0;
+    auto v1074 = FakePe(0x6A51CFB9u, 0x28C5000u);
+    EXPECT(BuildFence::ParsePeIdentity(v1074.data(), v1074.size(), &st, &sz));
+    EXPECT(st == 0x6A51CFB9u && sz == 0x28C5000u);
+    EXPECT(BuildFence::IsSupported(st, sz));
+    // v1078 (the update after v1074): NOT verified, must be refused.
+    EXPECT(!BuildFence::IsSupported(0x6AB0822Bu, 0x2A26000u));
+    // both fields must match: same stamp with a different size, or vice versa, is a different build.
+    EXPECT(!BuildFence::IsSupported(0x6A51CFB9u, 0x2A26000u));
+    EXPECT(!BuildFence::IsSupported(0x6AB0822Bu, 0x28C5000u));
+    EXPECT(!BuildFence::IsSupported(0, 0));
+}
+
+TEST(buildfence_rejects_malformed_headers) {
+    uint32_t st = 0, sz = 0;
+    std::vector<uint8_t> tiny(0x20, 0);
+    EXPECT(!BuildFence::ParsePeIdentity(tiny.data(), tiny.size(), &st, &sz));
+    auto notMz = FakePe(0x6A51CFB9u, 0x28C5000u); notMz[0] = 'X';
+    EXPECT(!BuildFence::ParsePeIdentity(notMz.data(), notMz.size(), &st, &sz));
+    auto noPe = FakePe(0x6A51CFB9u, 0x28C5000u); noPe[0x80] = 'X';
+    EXPECT(!BuildFence::ParsePeIdentity(noPe.data(), noPe.size(), &st, &sz));
+    auto badOff = FakePe(0x6A51CFB9u, 0x28C5000u); const int32_t huge = 0x7FFFFFF0; memcpy(&badOff[0x3C], &huge, 4);
+    EXPECT(!BuildFence::ParsePeIdentity(badOff.data(), badOff.size(), &st, &sz));
+    EXPECT(!BuildFence::ReadPeIdentityFromFile("C:\\definitely\\not\\here\\ImConquer.exe", &st, &sz));
+}
+
+TEST(buildfence_real_v1074_exe_is_supported) {
+    // The byte-exact v1074 snapshot; skipped where it isn't present.
+    const char* path = "E:\\CO_Snapshots\\v1074_2026-09-20\\install\\bin\\64\\ImConquer.exe";
+    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+        throw TestSkip{};
+    uint32_t st = 0, sz = 0;
+    EXPECT(BuildFence::ReadPeIdentityFromFile(path, &st, &sz));
+    EXPECT(st == 0x6A51CFB9u && sz == 0x28C5000u);
+    EXPECT(BuildFence::IsSupported(st, sz));
+}
+
 // =====================================================================
 // Dump file integration tests — run only when a dump is provided
 // =====================================================================
@@ -797,6 +852,11 @@ int main(int argc, char** argv)
     RUN(overlay_reach_invariant_twincity);
     RUN(overlay_reach_invariant_special_maps);
     RUN(overlay_map1010_bridge_intact);
+
+    // Build fence
+    RUN(buildfence_supports_only_verified_builds);
+    RUN(buildfence_rejects_malformed_headers);
+    RUN(buildfence_real_v1074_exe_is_supported);
 
     // Dump integration tests (if dump files provided as args)
     for (int i = 1; i < argc; ++i)

@@ -134,3 +134,57 @@ rank-correlate, sentinel-on-failure) is the template when it is picked up again.
   byte-locatable; struct-field offsets (CHero+0x3D0 etc.) are NOT signature-locatable and must be re-verified at runtime on the new build.
   `code_section` coverage of Themida-lazily-decrypted functions in the old dump is unknown (a function still encrypted at dump time
   would have no usable signature) — all 11 verified code entries did decode, so the ones we depend on are fine.
+
+## 6. The new version: v1078 (observed 2026-09-20 ~23:28)
+
+**The PC's live install was updated in place to v1078** (`version.json` rewritten `23:28:32`, the same second a new
+`ImConquer.exe` process, PID 39600, started — i.e. the official launcher updated and started the game). The pristine v1074 copies
+(E:, F:, and the disposable `F:\CO_Work\v1074_run`) are unaffected. The running client holds an established connection to
+`148.113.160.82:5820` (a game server; the login server is still `login.conqueronline.net:9959`).
+
+| | v1074 | v1078 |
+|---|---|---|
+| `ImConquer.exe` | 18,198,544 B, SHA-256 `C2B53437…C396` | 18,956,304 B (+757,760), SHA-256 `BE9DD723CAD8EB9068DA792B5CB8CEEC0D330F08AACB8C948E6F412D1520C4E0` |
+| PE TimeDateStamp | `0x6A51CFB9` (2026-07-11 05:08 UTC) | `0x6AB0822B` (2026-09-21 01:02 UTC) |
+| SizeOfImage / entry RVA | `0x28C5000` / `0x1ADE058` | `0x2A26000` / `0x1B96058` |
+| code section (1st) | VA `0x1000`, vsize `0x5501DF` | VA `0x1000`, vsize `0x56B5DF` (**+0x1B400 ≈ +110 KB, +2%**) |
+| following sections | `.rdata` `0x552000`, `.data` `0x641000`, `0x6AD000`, … | all shifted: `0x56D000` (+0x1B000), `0x65F000` (+0x1E000), `0x6CE000` (+0x21000), … up to `0x73E000` |
+| Themida runtime | `.themida` vsize `0x1388000`, `.boot` `0xDE5800` | `.themida` `0x141E000` (+0x96000), `.boot` `0xE8E400` (+0xA8C00) |
+
+**File-level diff v1074 -> v1078 (whole install, hash-verified): the update is SMALL.** Changed: `bin\64\ImConquer.exe`,
+`bin\64\crashpad_handler.exe` (897,536 -> 888,320), `c3\npc\999010100.C3` (1,307 -> 6,102), `ini\3DEffect.ini`, `3DEffectObj.ini`,
+`3dobj.ini`, `3dtexture.ini`, `Action3DEffect.ini`, `cosmetics.json`, `itemtype.json` (8,308,073 -> 8,311,902), `weapon.ini`,
+`servers.json` (652 -> 837: adds a **"Test" / "Test Server"** entry, same host/port), `integrity.json`, `version.json`. Added: 24 files under
+`c3\custom\weapons\` (cardcaptor-sakura-wand, halo-energy-sword, magic-wand, saber, stylized-magical-ice-staff-game-ready). **Unchanged:**
+`graphic.dll`, `GraphicData.dll`, `Role3D.dll`, `TqPackage*.dll`, every `.DMap`/`.scene` (so the map/walkability work and the
+`overlay_*` tests still hold), all other `ini\*`. Consequence: the only game-code difference is `ImConquer.exe`; everything we
+parse from data files needs at most an `itemtype.json` refresh.
+
+**Expectation (same shape as last time, smaller):** code +2%, every data-section RVA shifted by roughly +0x1B000..+0x21000, so
+the globals in `game.h` (`ROLE_MGR_PTR` 0x69C730 etc.) will have moved; function RVAs will have moved by varying amounts after each
+insertion point. `tools/sigscan.py` proposes new locations from the registry; struct-field offsets (`CHero+0x3D0` …) are not
+byte-locatable and must be re-verified at runtime.
+
+### Correction to section 2: the existing v1074 dump is nearly complete for CODE
+"17% of the image" overstated the gap: the missing 83% is the Themida runtime (`.themida`/`.boot`, not game code). Measured on
+`image_dump.bin`: **code section 98.0% decrypted** (1,334/1,361 pages `clear`, 27 `packed`), `.rdata` 96.7%, first data sections
+63–100% (the rest zero pages). So the v1074 baseline for diffing game code is already essentially complete, and a further v1074
+login-screen re-dump (V1/V2) would add little — **deprioritised**; the disposable working copy `F:\CO_Work\v1074_run` is kept but
+NOT launched. (An in-flight launch request for it was cancelled before any process started.)
+
+### Build fence (P2b) — DONE 2026-09-20
+`src/build_fence.h` (`kSupported` = v1074 only; v1078 deliberately NOT listed). Enforced in two places: `injector/main.cpp`
+reads the exe's PE stamp from the FILE before launching/injecting anything and refuses (`SessionState::Failed`, "Unsupported client
+build … bot disabled until re-verified", returns 1 so nothing relaunches), and `src/dllmain.cpp` checks the host process's own header
+before any init (no logging setup beyond the error, no HWID hooks, no game reads, no scans; DETACH skips `SaveConfig()` so a fenced
+load can never overwrite the user's settings with defaults). Tested: DLL injected into an unsupported `cmd.exe` logs
+`[fence] UNSUPPORTED CLIENT BUILD (PE stamp 0x789F4656, image 0x70000)` and does nothing else, target alive, config files unchanged;
+`map_tests` has 3 `buildfence_*` tests (synthetic headers, malformed headers, the real v1074 exe). To support a new build: re-derive +
+live-verify first, then add it to `kSupported`.
+
+### Status update
+- [x] P2a registry + matcher · [x] P2b build fence · [x] v1078 identity + file diff recorded
+- [ ] N3  capture the NEW client: it is installed and was running at 23:28, so a full decrypted-image capture is possible NOW (needs an
+      elevated injection into the running elevated game — the user's call; risk = same class as every injected diagnostic DLL, but on a
+      client build whose anti-tamper hasn't been characterised)
+- [ ] N4  run `sigscan.py` on the new image, re-derive, re-verify, add to `kSupported`
