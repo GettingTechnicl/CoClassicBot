@@ -54,7 +54,17 @@ exactly +0x207E0, a good consistency check for the ones not yet value-confirmed.
 | CONNECTION_SINGLETON accessor | 0xB7320 | 0xB8F00 | shape-fuzzy (medium: byte-identical accessor template) |
 | CROLE_SET_COMMAND_REAL / HERO_ROLEMGR_ACCESSOR | 0x1B0660 / 0x181B30 | 0x1BC4E0 / 0x18A880 | exact32 (+callers for the accessor) |
 | COROUTINE_BF920 | 0xBF920 | 0xC1140 | exact32 |
-| COROUTINE_E9960 | 0xE9960 | not found | changed or moved beyond the locators |
+
+**Correction (2026-09-22): the earlier "COROUTINE_E9960/BF920 are the protected subset" framing was wrong** - both are
+ordinary decoded x86 on both builds, on the same non-ciphertext pages as everything else measured by `regime_classify.py`
+("protected"/"hook-resistant" in `docs/investigation/CONNECTION_DECIPHER_PREP.md` refers to something else - anti-tamper
+resistance to a live hook, not signature-invisibility). `COROUTINE_BF920` relocates cleanly by exact bytes, exactly like any
+other function (row above). `COROUTINE_E9960` genuinely does not relocate confidently on THIS pair: no exact32 match, no
+shape match, and its one caller-anchor candidate (0x39C0C0, call ordinal 12 -> 0xEB620) is correctly REJECTED by `sigscan`'s
+shape-sanity gate (similarity 0.15, threshold 0.5) - the candidate's prologue, branch sense and call sequence are all
+different from the old function, so either it or its caller changed substantially between builds. That is a measured
+"this one function needs live re-derivation," not a packing effect. Moot for the bot either way: per
+`CONNECTION_DECIPHER_PREP.md`, our packets enqueue directly via `SEND_MSG_REAL` and never traverse this coroutine.
 None of the code addresses is behaviour-tested on v1078 (no game function has been called; read-only).
 
 ## Lessons recorded (they changed the tooling)
@@ -98,11 +108,17 @@ cross-reference (no offset was assumed, every hop was a value found in the dump)
 Two distinct Stancher instances (different `id`, same `idType`) is consistent with drop-then-pickup minting a new instance
 and the old one being a still-resident, about-to-be-freed duplicate - not investigated further, not load-bearing for anything.
 
-**Bottom line for the bot:** `m_deqItem` at `0xB98` and `m_equipment` at `0xC00` are both real on v1078 (name/id confirmed
-for every slot checked). The equipment array can be read directly at those fixed offsets. The bag must keep using a
-pointer-scan for items (as the v1074 code already does per `map_probe.h`), because its size/count is not at a trivial
-fixed suboffset in this MSVC deque layout - true on v1074 too, so no behaviour change is needed there, only the base
-offset used for the scan.
+**Bottom line for the bot - two separate things, one done, one deferred:**
+* **DONE, low risk (the bot can read the bag today):** `m_deqItem` at `0xB98` and `m_equipment` at `0xC00` are both real
+  on v1078, confirmed by item name/id for every slot checked, using the exact pointer-scan approach `map_probe.h`
+  already uses on v1074 - only the base offset changes. This is what the bot actually needs to read bag contents, and
+  it self-verifies against on-screen items the same way the HP/level/silver fields do.
+* **DEFERRED, feature-level only (not a port blocker):** "which of 40 numbered slots" / a literal capacity-40 field is a
+  harder, separate question - the pool looks like a hash/bucket table, not a sequential array (see the cross-check
+  below). Nothing in the bot's current action layer needs a specific empty-slot index. Do not spend time on the bucket
+  addressing scheme until the core port is armed and a feature (e.g. "stop looting when the bag is full") actually
+  needs it - then do the bounded dig at that point.
+
 
 ## Bag enumeration cross-check (user-reported: 6 of 40 slots in use)
 

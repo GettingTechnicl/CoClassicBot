@@ -4,6 +4,15 @@ Capture: `imgdump.dll` loaded into the live client by the user (System Informer)
 `C:\Users\Public\coclassic_capture\session_20260921_073000\cp01_first_contact` (client state at capture unknown). Whole 44 MB
 image read, 0 bytes skipped, 0.7 s, client stayed responsive. Identity: PE stamp 0x6AB0822B, SizeOfImage 0x2A26000.
 
+## Confirmed on the merged image (2026-09-22): the first checkpoint was already definitive
+Re-ran `tools/regime_classify.py` on all three checkpoints merged (`cp01_first_contact` + `cp02_idle_twincity` +
+`cp03_items_equip`, per-page union) instead of the single first dump. **Identical result** (74.4% exact32, 85% any
+tier). Checked why: the three dumps differ in only 27 of 10,790 non-empty pages, and every one of those is in the
+writable `.data`-style section (game state - hero stats, pointers, silver) per the section table below; the CODE
+section is byte-for-byte identical across all three captures, i.e. it was already fully decrypted at first contact.
+So this was not an artifact of partial decryption - merging more checkpoints will help fields/globals that depend on
+live pointer values (see V1078_OFFSET_FINDINGS.md), but the code-relocation verdict was already final at `cp01`.
+
 ## Verdict: regime A (same-toolchain recompile) - with real, specific changes
 `tools/regime_classify.py` (proxy calibration: A 90% / B 19% exact32; v1074-vs-itself ceiling 84%):
 
@@ -32,7 +41,7 @@ Exact-matched with smoothly increasing deltas (a strong consistency signal): `HE
 `CNETCLIENT_CONNECTION_SINGLETON` shape-fuzzy +0x1BE0 (accessor template, medium).
 **Changed / not relocatable:** `CNETCLIENT_SEND_MSG_REAL` (0x1DD450) and its neighbour `CNETCLIENT_POLLER_1DD860` - the send path
 was actually modified in this update. sigscan's shape match for SEND_MSG_REAL (0x1C70C0, delta -0x16390) is an **order
-violation** against its exact-matched neighbours and is rejected (new `sigscan` ordering check). `COROUTINE_E9960` not found.
+violation** against its exact-matched neighbours and is rejected (new `sigscan` ordering check). `COROUTINE_E9960` not found (see V1078_OFFSET_FINDINGS.md for why - not Themida, a genuinely low-confidence relocation).
 Consequence: anything that sends packets (pickup, movement commands via SEND_MSG_REAL) needs live re-derivation on v1078.
 
 ## Globals (single anchor each = candidates; deltas agree within 0x128, consistent with one shifted .data)
