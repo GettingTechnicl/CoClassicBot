@@ -64,6 +64,46 @@ None of the code addresses is behaviour-tested on v1078 (no game function has be
 3. Field-re-finding votes were wrong for m_nMaxHp (voted 0x3D0, real 0x3E0): windows can match a different field with the same shape.
    Value confirmation against known on-screen numbers is the arbiter; static votes only narrow the search.
 
+## Equipment + inventory checkpoint (`cp03_items_equip`, action: drop/repick a Stancher, unequip/re-equip bow+arrow)
+
+Same hero object (base 0x7ABA020, id 1174578); silver had dropped to 4349 by this point (durability repair or a shop
+interaction between checkpoints - the silver field tracked it correctly either way).
+
+**Equipment array, `CHero+0xC00` (v1074 `0xBD8`, +0x28) - VALUE-CONFIRMED.** Each of the 8 `EquipSlot`s is a 0x10-byte
+{item ptr, control ptr} pair, slot index = (offset-0xC00)/0x10, matching `src/CHero.h`'s `EquipSlot` enum exactly:
+
+| slot | offset | item found |
+|---|---|---|
+| ARMOR (2) | +0x20 | **Coat** (id 295829487, idType 132804) |
+| RWEAPON (3) | +0x30 | **LuckyBow** (id 295829486, idType 500301) |
+| LWEAPON (4) | +0x40 | **LuckyArrow** (id 295829494, idType 1050000, amount 200) |
+
+Exactly the loadout you reported (armor + bow + arrow) - this is a real value match, not a structural guess.
+
+**Bag / `m_deqItem`, `CHero+0xB98` (v1074 `0xB70`, +0x28) - the pointer chases to a real container, confirming the offset,
+but the *container itself* needs the scan approach already flagged in `src/map_probe.h` (`DebugFindInventory`), not a fixed
+sub-offset for size:** `[hero+0xB98]` is an MSVC `deque` control block whose second qword (`0x5ED50570` this run) is the
+deque's internal map; a pointer near it (`+0x58`) leads to the item-slot block, entries every 0x20 bytes ({item ptr, control
+ptr, small tag, packed header}), found by scanning outward from the string `"Stancher"` and confirming by raw-pointer
+cross-reference (no offset was assumed, every hop was a value found in the dump). That block holds, among others:
+
+| item | id | amount | note |
+|---|---|---|---|
+| LuckyBow | 295829486 | 1099 | mirrors the equipped weapon |
+| LuckyArrow | 295829498 | 200 | a second stack, alongside the equipped one (295829494) |
+| **Stancher** | 295829490 | 1 | the one you dropped and re-picked-up |
+| LuckyArrow | 295829494 | 200 | the equipped stack, also present here |
+| **Stancher** | 295829488 | 1 | a second, separate Stancher instance |
+
+Two distinct Stancher instances (different `id`, same `idType`) is consistent with drop-then-pickup minting a new instance
+and the old one being a still-resident, about-to-be-freed duplicate - not investigated further, not load-bearing for anything.
+
+**Bottom line for the bot:** `m_deqItem` at `0xB98` and `m_equipment` at `0xC00` are both real on v1078 (name/id confirmed
+for every slot checked). The equipment array can be read directly at those fixed offsets. The bag must keep using a
+pointer-scan for items (as the v1074 code already does per `map_probe.h`), because its size/count is not at a trivial
+fixed suboffset in this MSVC deque layout - true on v1074 too, so no behaviour change is needed there, only the base
+offset used for the scan.
+
 ## Next captures (each needs the state noted)
 Items on the ground near the hero (confirms MAP_ITEM_VEC and the item record layout), an equipped item and a learned skill
 (equipment / vecMagic / magic records), and a monster or NPC in view (role set records).
