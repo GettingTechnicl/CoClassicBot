@@ -120,6 +120,35 @@ and the old one being a still-resident, about-to-be-freed duplicate - not invest
   needs it - then do the bounded dig at that point.
 
 
+## Mana: max-mana field is simple, current-mana is NOT "same as HP" - it needs a different key first
+
+Started the value-confirmation the user asked for; got as far as the architecture allows without the on-screen number.
+
+* **`CHero::m_nMaxMana` / `m_bMaxManaValid` (`0xD20`/`0xD24` v1078, was `0xCF8`/`0xCFC`)** - a plain cached `CHero` field,
+  same shift-model class as max HP. Read at level 1 (no skills yet): both 0, which could mean "correctly zero" or
+  "cache never populated" - **not distinguishable without the real on-screen number**, unlike HP where 51 was
+  immediately recognisable as real data.
+* **Current mana is architecturally different from current HP, not a variant of the same fix.** HP's memory path is a
+  fixed two-hop pointer chase (`m_pStatTable` -> `[+0x10]` -> `[+0]`) that happens to land on the HP record because
+  that specific record's address is cached at a fixed struct offset. Current mana instead goes through
+  `CStatTable::GetValue(int statType)` (`src/CStatTable.h`, native RVA `CSTATTABLE_GET_VALUE` = `0x1F1490` on v1074) -
+  an integer-keyed lookup into what the dump shows is a red-black-tree-shaped node pool at the `CStatTable` object
+  (confirmed structurally: repeating ~0x20-byte node rows with plausible left/right/parent pointers, keyed records
+  each holding a small tagged value, at `0x5BD72A0` this run). **`statType`'s numeric value for mana is not known** -
+  it is not defined anywhere in this repo (`CStatTable.h` only declares the signature) and no CO-emulator source is
+  present locally to look it up (data-sourcing-ladder: checked next, none found). Finding it memory-only means
+  identifying which tree node holds a value matching the on-screen MP - the same kind of search that found HP, just
+  keyed differently, and it needs the real number to search for.
+* **What's needed to finish this:** S411's on-screen current AND max MP (two different states again helps, e.g. before/
+  after a mana potion or natural regen, the same way two HP states nailed down the HP record) - the dump already
+  captured is sufficient to search once that number is known; no new checkpoint is required first.
+* **CSTATTABLE_GET_VALUE / GETMAXMANA / GETCURRENTMANA are not added to the offset registry**: `src/game.h`'s own
+  comment on this RVA block says `CHERO_GET_MAX_HP` resolves to misaligned garbage on v1074 and "the rest were never
+  individually checked but ride the same stale dump and are equally unreliable" - building signatures from an
+  unverified v1074 address would just manufacture a confident-looking wrong answer. `CHero::GetCurrentMana()` already
+  has the same unverified-RVA safety guard that logs once and returns 0, mirroring the pre-fix HP bug class the user
+  flagged - so no mana-potion logic should trust it until this is resolved.
+
 ## Bag enumeration cross-check (user-reported: 6 of 40 slots in use)
 
 Widened the scan around the known item pool (+-40 slots at the 0x20 stride) instead of following string hits alone: found
