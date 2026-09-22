@@ -104,6 +104,19 @@ pointer-scan for items (as the v1074 code already does per `map_probe.h`), becau
 fixed suboffset in this MSVC deque layout - true on v1074 too, so no behaviour change is needed there, only the base
 offset used for the scan.
 
+## Bag enumeration cross-check (user-reported: 6 of 40 slots in use)
+
+Widened the scan around the known item pool (+-40 slots at the 0x20 stride) instead of following string hits alone: found
+8 populated entries, of which 2 are the equipped LuckyBow/LuckyArrow re-appearing in the same pool. The remaining **6 match
+the user's reported bag count exactly**: 2x Stancher (qty 1 each, distinct ids - likely the drop/pickup minted a fresh
+instance) + 4x LuckyArrow stacks (qty 200 each - consistent with a 200-per-stack cap). Populated-slot relative offsets from
+the pool anchor were irregular (-9, -2, 0, 1, 2, 5, 25, 37 in units of 0x20 bytes), which does not look like a plain
+sequential array - more consistent with a hash/bucket table keyed by item id or type. The exact indexing scheme (and thus a
+literal empty-slot / capacity-40 field) is NOT yet pinned down; only "which items are present" is confirmed, not "which of
+40 numbered slots each occupies." Needed before any bag-slot-aware bot feature (e.g. "use an empty slot"): find the bucket
+function (try `m_id % 40`, `m_idType`-based hashing, or a separate free-list) against a state where you know the true UI
+slot positions.
+
 ## Next captures (each needs the state noted)
 Items on the ground near the hero (confirms MAP_ITEM_VEC and the item record layout), an equipped item and a learned skill
 (equipment / vecMagic / magic records), and a monster or NPC in view (role set records).
