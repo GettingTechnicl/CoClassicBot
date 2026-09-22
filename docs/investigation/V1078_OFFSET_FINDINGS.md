@@ -149,6 +149,20 @@ Started the value-confirmation the user asked for; got as far as the architectur
   has the same unverified-RVA safety guard that logs once and returns 0, mirroring the pre-fix HP bug class the user
   flagged - so no mana-potion logic should trust it until this is resolved.
 
+## Second HP state confirms the path two-for-two (`cp04_hp_drop_33`)
+
+User: HP now 33/51, stamina still 100/100, character is an archer with no mana pool. Same hero object, same stat-table
+pointer chain (`CHero+0x978` -> `[+0x10]` -> `[+0]`) now reads **33**, exactly matching; max HP (0x3E0) and stamina
+(0x6F0/0x6F4) are unchanged as expected. Two different HP values now both confirmed on the same live object -
+this is the same two-state rigor the original v1074 HP fix used, not a single lucky match.
+
+**Max mana resolved, not ambiguous:** `m_nMaxMana`/`m_bMaxManaValid` (`0xD20`/`0xD24`) now read **0 / valid=1** -
+for an archer with no mana pool this is the correct value, not an unpopulated cache (the cache-valid flag being 1
+is what distinguishes "genuinely zero" from "never computed"). **Current-mana via `CStatTable::GetValue(statType)`
+remains unconfirmed** - this character has no mana stat to search for, so the stat-id-to-tree-node mapping described
+above still needs a caster-class account's on-screen MP to resolve. Not blocking: nothing in the current bot targets
+mana on this account, and the existing safety guard already prevents `GetCurrentMana()` from being trusted blind.
+
 ## Bag enumeration cross-check (user-reported: 6 of 40 slots in use)
 
 Widened the scan around the known item pool (+-40 slots at the 0x20 stride) instead of following string hits alone: found
