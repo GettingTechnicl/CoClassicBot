@@ -12,13 +12,14 @@ void CRole::SetCommand(CCommand* cmd)
         return;
 
 #if defined(COCLASSIC_TARGET_V1078)
-    // v1078: CROLE_SET_COMMAND_REAL is only signature-relocated, not live-tested (game.h
-    // GameRva::V1078_NATIVE_TESTED) — refuse until a real movement test flips it.
-    if (!GameRva::V1078_NATIVE_TESTED) {
+    // v1078: CROLE_SET_COMMAND_REAL is only armed once SET_COMMAND_TESTED is flipped
+    // (game.h) — a SEPARATE gate from SEND_MSG_TESTED (packets.cpp's SendPacket), because
+    // this is a different RVA the pickup test does not exercise at all.
+    if (!GameRva::SET_COMMAND_TESTED) {
         static bool warned = false;
         if (!warned) {
-            spdlog::error("[safety] CRole::SetCommand: v1078 native-call path unverified (see game.h "
-                          "GameRva::V1078_NATIVE_TESTED) — refusing to call, movement disabled on this build");
+            spdlog::error("[safety] CRole::SetCommand: v1078 SET_COMMAND_REAL path unverified (see game.h "
+                          "GameRva::SET_COMMAND_TESTED) — refusing to call, movement disabled on this build");
             warned = true;
         }
         return;

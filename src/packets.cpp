@@ -397,16 +397,14 @@ static bool CallSendMsgGuarded(GameCall::CNetClient_SendMsgRealFn sendMsg, void*
 bool SendPacket(const uint8_t* data, size_t size)
 {
 #if defined(COCLASSIC_TARGET_V1078)
-    // v1078: CNETCLIENT_CONNECTION_SINGLETON/CNETCLIENT_SEND_MSG_REAL below are only
-    // signature-relocated, not live-tested (game.h GameRva::V1078_NATIVE_TESTED). Refuse
-    // to call through until a real pickup test on v1078 flips this — see
-    // docs/investigation/V1078_OFFSET_FINDINGS.md. This is the ONE gate standing between
-    // "reads armed" and "the bot can act" on this build.
-    if (!GameRva::V1078_NATIVE_TESTED) {
+    // v1078: CNETCLIENT_CONNECTION_SINGLETON/CNETCLIENT_SEND_MSG_REAL below are only armed
+    // once SEND_MSG_TESTED is flipped (game.h) — its own gate, separate from
+    // SET_COMMAND_TESTED (CRole::SetCommand's RVA is a different, still-untested call).
+    if (!GameRva::SEND_MSG_TESTED) {
         static bool warned = false;
         if (!warned) {
-            spdlog::error("[safety] SendPacket: v1078 native-call path unverified (see game.h "
-                          "GameRva::V1078_NATIVE_TESTED) — refusing to send, bot cannot act on this build yet");
+            spdlog::error("[safety] SendPacket: v1078 SEND_MSG_REAL path unverified (see game.h "
+                          "GameRva::SEND_MSG_TESTED) — refusing to send, bot cannot act on this build yet");
             warned = true;
         }
         return false;

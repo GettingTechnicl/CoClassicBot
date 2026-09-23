@@ -17,6 +17,7 @@
 
 ULONG64 g_qwModuleBase = 0;
 HMODULE g_hModule = nullptr;
+static HANDLE g_singleInstanceMutex = nullptr;
 
 namespace {
 
@@ -93,6 +94,7 @@ void WriteLoggedInMarker()
 }  // namespace
 
 static bool g_fenced = false;
+static bool g_duplicateLoad = false;
 
 // POD-only so it may use __try (MSVC forbids __try in functions with unwindable C++ objects).
 static bool ReadHostBuildIdentity(uint32_t* stamp, uint32_t* imageSize)
@@ -247,13 +249,46 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 {
     switch (ul_reason_for_call)
     {
-    case DLL_PROCESS_ATTACH:
+    case DLL_PROCESS_ATTACH: {
         g_hModule = hModule;
         DisableThreadLibraryCalls(hModule);
+
+        // SINGLE-INSTANCE GUARD: refuse a second load of ANY coclassic build (coclassic.dll,
+        // coclassic_v1078.dll, or a second copy of the same one) into this same game process.
+        // A double load would run two full copies of everything — two entity heap-scan threads,
+        // two sets of Detour hooks (InitHooks/InitPacketHook aren't designed to be installed
+        // twice), two overlay D3D hooks — which is a real crash risk, not just wasted work. Named
+        // per PROCESS (PID), not globally, so multiple ImConquer.exe processes (multi-account) are
+        // each still allowed exactly one bot instance of their own. Checked before anything else
+        // is touched — no Log::Init(), no InitThread — so a refused duplicate load is inert.
+        char mutexName[64];
+        snprintf(mutexName, sizeof(mutexName), "Local\\CoClassicBot_Instance_%lu", GetCurrentProcessId());
+        g_singleInstanceMutex = CreateMutexA(nullptr, TRUE, mutexName);
+        if (!g_singleInstanceMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
+            g_duplicateLoad = true;
+            if (g_singleInstanceMutex) {
+                CloseHandle(g_singleInstanceMutex);
+                g_singleInstanceMutex = nullptr;
+            }
+            OutputDebugStringA("[coclassic] refusing to load: another coclassic build is already active in this process");
+            break;
+        }
+
         CreateThread(nullptr, 0, InitThread, nullptr, 0, nullptr);
         break;
+    }
 
     case DLL_PROCESS_DETACH:
+        if (g_duplicateLoad) {
+            // Nothing was ever touched for this load (see ATTACH above) — no mutex to release
+            // (never acquired one), no subsystems to tear down.
+            break;
+        }
+        if (g_singleInstanceMutex) {
+            ReleaseMutex(g_singleInstanceMutex);
+            CloseHandle(g_singleInstanceMutex);
+            g_singleInstanceMutex = nullptr;
+        }
         if (g_fenced) {
             // Nothing was initialised; running the normal teardown would SaveConfig() defaults over
             // the user's saved settings and touch subsystems that never started.

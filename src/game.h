@@ -133,19 +133,34 @@ namespace GameRva {
 
     // ---- The 3 RVAs the LIVE action layer actually depends on (see packets.cpp's
     // SendPacket(), CRole::SetCommand()) — all signature-relocated with real evidence
-    // (docs/investigation/V1078_OFFSET_FINDINGS.md), NONE live-tested yet:
+    // (docs/investigation/V1078_OFFSET_FINDINGS.md). Each gets its OWN gate, not one shared
+    // flag — SendPacket() and CRole::SetCommand() exercise DIFFERENT untested RVAs (the
+    // pickup test only proves SEND_MSG_REAL; movement may route through SetCommand, a
+    // separate address that a single combined flag would have unblocked without ever being
+    // tried). A primitive's flag flips to true only after that primitive is individually
+    // tried live and does not crash — see the test log this flag/comment pair to keep it
+    // honest about what has actually been executed, not just relocated.
     //   CNETCLIENT_CONNECTION_SINGLETON: shape-fuzzy, MEDIUM confidence (MSVC magic-static
     //     accessor template — byte-identical to its siblings, cannot be exact-matched)
     //   CNETCLIENT_SEND_MSG_REAL: shape-exact + 2 independent exact-matched callers agree,
     //     HIGH confidence (this is the one the "order violation" false alarm was about —
     //     the linker moved it BACKWARDS; the caller corroboration is what caught that)
     //   CROLE_SET_COMMAND_REAL: exact32, HIGH confidence
-    // V1078_NATIVE_TESTED gates all three independently of VERIFIED_V1074 (which stays
-    // false for the unrelated stale set above) — SendPacket() and CRole::SetCommand()
-    // both check it and refuse to call through until it is flipped to true, which must
-    // only happen after the pickup-test debug button (validates SEND_MSG_REAL + the
-    // connection singleton together, zero gameplay stakes) succeeds live on v1078.
-    constexpr bool V1078_NATIVE_TESTED = false;
+    //
+    // SEND_MSG_TESTED flipped 2026-09-22: read layer confirmed live first
+    // (coclassic_115824.log — hero "S411"/1174578 read correctly, entity heap-scan ran clean
+    // for 8+ minutes, every pickup attempt correctly REFUSED by this same flag pre-flip, no
+    // crash). This arms SendPacket() (pickup/movement-packet/attack-packet, all routed
+    // through CNETCLIENT_SEND_MSG_REAL) for its first genuine execution on v1078 — high
+    // confidence but never actually run before this. If wrong, the pickup test can crash the
+    // client. Requires a FRESH client restart + re-inject (see dllmain.cpp's single-instance
+    // guard — do not inject a second coclassic build into a process that already has one).
+    //
+    // SET_COMMAND_TESTED stays false: CRole::SetCommand() is a DIFFERENT native call (used by
+    // CHero::Walk()'s SetCommand-based path, per CHero.h) and has not been exercised at all
+    // yet, even indirectly. Flip only after a dedicated manual movement test.
+    constexpr bool SEND_MSG_TESTED = true;
+    constexpr bool SET_COMMAND_TESTED = false;
     constexpr uintptr_t CNETCLIENT_CONNECTION_SINGLETON = 0xB8F00;
     constexpr uintptr_t CNETCLIENT_SEND_MSG_REAL         = 0x1C70C0;
     constexpr uintptr_t CROLE_SET_COMMAND_REAL           = 0x1BC4E0;
@@ -318,7 +333,7 @@ namespace GameRva {
     // independently confirmed correct all session).
     constexpr uintptr_t CROLE_SET_COMMAND_REAL = 0x1B0660;
     // v1074's action layer is already live-confirmed (sessions 8/9 above), so there is no
-    // separate "tested" gate here — V1078_NATIVE_TESTED only exists in the v1078 branch.
+    // separate "tested" gates here — SEND_MSG_TESTED/SET_COMMAND_TESTED only exist in the v1078 branch.
     // Code that checks it (packets.cpp SendPacket(), CRole::SetCommand()) must therefore
     // guard with `#if defined(COCLASSIC_TARGET_V1078)` around the check itself, not just
     // read the flag unconditionally.

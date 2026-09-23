@@ -50,7 +50,7 @@ struct Build {
 // v1078: struct fields value-confirmed against character S411
 // (docs/investigation/V1078_OFFSET_FINDINGS.md); the action-critical native-call RVAs
 // (CNETCLIENT_CONNECTION_SINGLETON/SEND_MSG_REAL/CROLE_SET_COMMAND_REAL) are only
-// SIGNATURE-relocated, not yet live-tested — see game.h GameRva::V1078_NATIVE_TESTED,
+// SIGNATURE-relocated, not yet live-tested — see game.h GameRva::SEND_MSG_TESTED / SET_COMMAND_TESTED,
 // which independently gates SendPacket()/SetCommand() on this build until a real
 // pickup/movement/attack test passes. Listing v1078 here arms READS only.
 inline constexpr Build kSupported[] = {
