@@ -72,6 +72,29 @@ only calls a global/field "high" when >=2 sites agree. All of this is a *proxy* 
 Still open: capturing that image (needs the user's go for elevated injection of the read-only imgdump.dll), then run
 `sigscan.py --image <v1078> --fields` and check the exact32 hit-rate to learn which regime the update is in.
 
+### 2026-09-22 — dual-build support: coclassic_v1078.dll compiles, reads armed, actions still gated (commit 5252e05, pushed)
+
+Per the user's go-ahead to "arm reads now, validate native calls fast, then compose": added a SECOND DLL target,
+`coclassic_v1078.dll`, built from the exact same source tree as `coclassic.dll` with `COCLASSIC_TARGET_V1078` defined
+(struct field offsets and native-call RVAs are compile-time constants, so one binary can't serve two builds — see
+`src/field_offsets.h`'s header comment). `build_fence.h` now separates `IsSupported` (broad, launcher-facing: "do we
+have a DLL for this build") from `IsSelfBuild` (narrow, DLL-facing: "is this the ONE build I was compiled for") —
+this is what makes a wrong-build DLL refuse to initialise rather than fire a mismatched offset/RVA.
+`injector/main.cpp` now picks the right DLL by reading the game exe's own PE identity before launching.
+
+**Armed:** hero-state + item/bag reads (HP, level, stamina, silver, equipment, bag) on v1078 — all value-confirmed
+offsets, per `docs/investigation/V1078_OFFSET_FINDINGS.md`.
+**NOT armed:** the native-call action layer. `GameRva::V1078_NATIVE_TESTED = false` gates `packets.cpp`'s
+`SendPacket()` and `CRole::SetCommand()` — both refuse and log once until this flips. That must only happen after a
+real pickup-test (validates `CNETCLIENT_SEND_MSG_REAL` + the connection singleton together, zero gameplay stakes).
+**Also NOT armed:** CRole fields shared with every OTHER entity (monsters/NPCs) — only the hero's own fields are
+value-confirmed; a monster/NPC-in-view capture is still needed before entity reads (targeting, danger tiers) are
+trusted on v1078.
+
+Verified: both DLL targets compile clean, launcher + map_tests build, full test suite 39/39 pass (including 2 new/
+updated build-fence tests). Nothing has been live-tested against the running v1078 client since this commit — no
+injection was done with the new `coclassic_v1078.dll` this session. VM instance: no action, still v1074-only.
+
 ### 2026-09-21 (night) — v1078 offsets, value-confirmed offline from one in-world heap checkpoint (docs: V1078_OFFSET_FINDINGS.md)
 
 Correction to the entry below: the send path did NOT vanish - `CNETCLIENT_SEND_MSG_REAL` is at 0x1C70C0 (linker moved it backwards; two
