@@ -667,12 +667,24 @@ TEST(buildfence_supports_only_verified_builds) {
     EXPECT(BuildFence::ParsePeIdentity(v1074.data(), v1074.size(), &st, &sz));
     EXPECT(st == 0x6A51CFB9u && sz == 0x28C5000u);
     EXPECT(BuildFence::IsSupported(st, sz));
-    // v1078 (the update after v1074): NOT verified, must be refused.
-    EXPECT(!BuildFence::IsSupported(0x6AB0822Bu, 0x2A26000u));
+    // v1078: now has its own DLL target too (coclassic_v1078.dll) — IsSupported (the launcher's
+    // broad "do we have a DLL for this build at all" check) must accept it.
+    EXPECT(BuildFence::IsSupported(0x6AB0822Bu, 0x2A26000u));
     // both fields must match: same stamp with a different size, or vice versa, is a different build.
     EXPECT(!BuildFence::IsSupported(0x6A51CFB9u, 0x2A26000u));
     EXPECT(!BuildFence::IsSupported(0x6AB0822Bu, 0x28C5000u));
     EXPECT(!BuildFence::IsSupported(0, 0));
+}
+
+TEST(buildfence_self_build_is_narrower_than_supported) {
+    // This test binary is compiled WITHOUT COCLASSIC_TARGET_V1078 (same as coclassic.dll), so its
+    // kSelfBuild is v1074 — IsSelfBuild must accept ONLY v1074, even though IsSupported (the
+    // launcher-facing broad list) accepts both. This is the actual DLL-side self-check
+    // (dllmain.cpp) and is what prevents a v1078-targeted DLL from firing v1074 offsets or vice
+    // versa if ever injected into the wrong process — see build_fence.h's header comment.
+    EXPECT(BuildFence::IsSelfBuild(0x6A51CFB9u, 0x28C5000u));
+    EXPECT(!BuildFence::IsSelfBuild(0x6AB0822Bu, 0x2A26000u));
+    EXPECT(!BuildFence::IsSelfBuild(0, 0));
 }
 
 TEST(buildfence_rejects_malformed_headers) {
@@ -855,6 +867,7 @@ int main(int argc, char** argv)
 
     // Build fence
     RUN(buildfence_supports_only_verified_builds);
+    RUN(buildfence_self_build_is_narrower_than_supported);
     RUN(buildfence_rejects_malformed_headers);
     RUN(buildfence_real_v1074_exe_is_supported);
 

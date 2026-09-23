@@ -15,6 +15,34 @@ class CEntityInfo;
 // Verified in Ghidra on the 64-bit Scylla dump.
 // =====================================================================
 namespace Offsets {
+#if defined(COCLASSIC_TARGET_V1078)
+    // v1078 [VALUE-CONFIRMED 2026-09-21, character S411]: *(base+ROLE_MGR_PTR) dereferenced
+    // straight to the hero object found independently by its name string in a heap dump —
+    // see docs/investigation/V1078_OFFSET_FINDINGS.md. CURRENT_MAP_ID/_ALT corrected there
+    // too (sigscan's single-anchor proposal 0x6B9C30 was WRONG; the real pair reads 1002,
+    // Twin City, both slots, matching the map the capture was taken on).
+    constexpr uintptr_t ROLE_MGR_PTR       = 0x6BCEF0;
+    constexpr uintptr_t CURRENT_MAP_ID     = 0x6B9D40;
+    constexpr uintptr_t CURRENT_MAP_ID_ALT = 0x6B9D44;
+    constexpr uintptr_t MAP_ITEM_VEC       = 0x6B9CB8;  // STRUCTURE-OK only (begin==end, bag was empty of ground items at capture time)
+    // Vestigial on v1074 too (unverified/stale there, unused by any live code path —
+    // entities/roles are found by heap-scan instead, see entities.cpp) — carried over
+    // unchanged so both branches declare the same symbol set. Not used for v1078.
+    constexpr uintptr_t ROLE_MGR    = 0x4DF588;
+    constexpr uintptr_t ENTITY_INFO = 0x4DF590;
+    constexpr uintptr_t ENTITY_SET  = 0x4DF5F0;
+    constexpr uintptr_t GAME_MAP    = 0x4E02E0;
+    // registries.cpp signature-locates the real role-set object from ROLE_MGR_PTR every
+    // session and always re-validates before trusting it (see its own comment) — these two
+    // hop offsets and the two vector offsets are only meaningful relative to whatever that
+    // locator finds, so the v1074 numbers are carried over as a starting hypothesis; a
+    // struct-layout change just fails the re-validation and falls back to the signature
+    // scan that found them in the first place. NOT independently confirmed for v1078.
+    constexpr uintptr_t ROLE_SET_ROLES = 0x1348;
+    constexpr uintptr_t ROLE_SET_ALL   = 0x1318;
+    constexpr uintptr_t ROLE_MGR_TO_ROLESET_HOP1 = 0x4A98;
+    constexpr uintptr_t ROLE_MGR_TO_ROLESET_HOP2 = 0x9240;
+#else
     // v1074 (live-verified): the role manager is heap-allocated and reached via a
     // STATIC pointer in the image. roleMgr = *(base + ROLE_MGR_PTR); hero = *roleMgr.
     constexpr uintptr_t ROLE_MGR_PTR = 0x69C730;  // [LIVE-VERIFIED] pointer-to-CRoleMgr
@@ -60,9 +88,68 @@ namespace Offsets {
     constexpr uintptr_t ROLE_MGR_TO_ROLESET_HOP1 = 0x4A98;   // CRoleMgr+.. -> intermediate object
     constexpr uintptr_t ROLE_MGR_TO_ROLESET_HOP2 = 0x9240;   // intermediate+.. -> role-set object
     constexpr uintptr_t MAP_ITEM_VEC   = 0x6994D8;   // base+..   = vector<shared_ptr<CMapItem>> (GLOBAL, sole owner)
+#endif
 }
 
 namespace GameRva {
+#if defined(COCLASSIC_TARGET_V1078)
+    // v1078: this build declares the SAME symbol set as the v1074 branch below (every one
+    // is referenced, directly or via a GameCall:: wrapper, from code shared by both
+    // targets) but arms only what's actually been derived for v1078 so far.
+    //
+    // The "stale, never live-tested even on v1074" RVAs (from the old pre-v1074 Ghidra
+    // dump) have had NOTHING done for v1078 — zero attempt to relocate them — so they
+    // stay under the SAME VERIFIED_V1074 gate, doubly inapplicable here. Values carried
+    // over unchanged from the v1074 branch; they are meaningless numbers that are never
+    // dereferenced while the gate is false, same safety property as today.
+    constexpr bool VERIFIED_V1074 = false;
+
+    constexpr uintptr_t CENTITY_RENDER_VISUAL = 0x1AFD20;
+    constexpr uintptr_t CNETCLIENT_GET_INSTANCE = 0x0B9490;
+    constexpr uintptr_t CNETCLIENT_SEND_MSG   = 0x18EEA0;
+    constexpr uintptr_t CHERO_GET_MAX_HP       = 0x179980;
+    constexpr uintptr_t CHERO_GET_MAX_MANA     = 0x179B90;
+    constexpr uintptr_t CSTATTABLE_GET_VALUE   = 0x1F1490;
+    constexpr uintptr_t CHERO_GET_CURRENT_MANA = 0x1A58F0;
+    constexpr uintptr_t CHERO_FATAL_STRIKE     = 0x2297B0;
+    constexpr uintptr_t CHERO_WALK             = 0x229DF0;
+    constexpr uintptr_t CHERO_JUMP             = 0x22A0B0;
+    constexpr uintptr_t CHERO_START_MINING     = 0x18BB10;
+    constexpr uintptr_t MSGUPDATE_PROCESS      = 0x1E0870;
+    constexpr uintptr_t TRADEWINDOW_HANDLE_MESSAGE = 0x10B1F0;
+    constexpr uintptr_t CGAMEUI_SHOW_MSG           = 0x191960;
+
+    // Dead/historical-reference-only code path (CHero.cpp's SendPickupItemMsgNative /
+    // CallOwnStructPickupGuarded — retired session 7, never called from any live path;
+    // see its own comment). Relocated by signature anyway (docs/investigation/
+    // V1078_OFFSET_FINDINGS.md) since the exercise was cheap, but this is NOT what the
+    // live pickup path uses (that's SendPacket() -> CNETCLIENT_SEND_MSG_REAL below).
+    constexpr uintptr_t CNETCLIENT_SINGLETON_ACCESSOR = 0x96FE0;   // still WRONG regardless of build; dead code
+    constexpr uintptr_t CNETCLIENT_SEND_MAPITEM_MSG     = 0x1D71C0;  // exact32
+    constexpr uintptr_t CNETCLIENT_COMPUTE_MAPITEM_SIZE = 0x23CF30;  // exact32
+    constexpr uintptr_t CNETCLIENT_BEGIN_MSG            = 0x19A0A0;  // exact32
+    constexpr uintptr_t CNETCLIENT_COMMIT_STAGING       = 0x3DC860;  // shape-exact
+    constexpr uintptr_t MSGMAPITEM_VTABLE               = 0x5EE890;  // single-anchor candidate
+
+    // ---- The 3 RVAs the LIVE action layer actually depends on (see packets.cpp's
+    // SendPacket(), CRole::SetCommand()) — all signature-relocated with real evidence
+    // (docs/investigation/V1078_OFFSET_FINDINGS.md), NONE live-tested yet:
+    //   CNETCLIENT_CONNECTION_SINGLETON: shape-fuzzy, MEDIUM confidence (MSVC magic-static
+    //     accessor template — byte-identical to its siblings, cannot be exact-matched)
+    //   CNETCLIENT_SEND_MSG_REAL: shape-exact + 2 independent exact-matched callers agree,
+    //     HIGH confidence (this is the one the "order violation" false alarm was about —
+    //     the linker moved it BACKWARDS; the caller corroboration is what caught that)
+    //   CROLE_SET_COMMAND_REAL: exact32, HIGH confidence
+    // V1078_NATIVE_TESTED gates all three independently of VERIFIED_V1074 (which stays
+    // false for the unrelated stale set above) — SendPacket() and CRole::SetCommand()
+    // both check it and refuse to call through until it is flipped to true, which must
+    // only happen after the pickup-test debug button (validates SEND_MSG_REAL + the
+    // connection singleton together, zero gameplay stakes) succeeds live on v1078.
+    constexpr bool V1078_NATIVE_TESTED = false;
+    constexpr uintptr_t CNETCLIENT_CONNECTION_SINGLETON = 0xB8F00;
+    constexpr uintptr_t CNETCLIENT_SEND_MSG_REAL         = 0x1C70C0;
+    constexpr uintptr_t CROLE_SET_COMMAND_REAL           = 0x1BC4E0;
+#else
     // v1074 [CONFIRMED STALE — 2026-08-22, disasm of the decrypted in-memory .text dump]:
     // these RVAs are inherited from the pre-v1074 Ghidra dump. The client update shifted
     // code NON-uniformly (unlike the flat +0x50 data-field shift), so none of them land on
@@ -230,6 +317,12 @@ namespace GameRva {
     // null-checks cmd, then bulk-copies it into this+0x188 (m_cmdAction,
     // independently confirmed correct all session).
     constexpr uintptr_t CROLE_SET_COMMAND_REAL = 0x1B0660;
+    // v1074's action layer is already live-confirmed (sessions 8/9 above), so there is no
+    // separate "tested" gate here — V1078_NATIVE_TESTED only exists in the v1078 branch.
+    // Code that checks it (packets.cpp SendPacket(), CRole::SetCommand()) must therefore
+    // guard with `#if defined(COCLASSIC_TARGET_V1078)` around the check itself, not just
+    // read the flag unconditionally.
+#endif
 }
 
 namespace GameVtableIndex {

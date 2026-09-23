@@ -1,5 +1,6 @@
 #pragma once
 #include "CMapObj.h"
+#include "field_offsets.h"
 
 // =====================================================================
 // User status flags
@@ -189,14 +190,16 @@ private:
 public:
     CCommand m_cmdAction;           // +0x188  current action command
 private:
-    BYTE _pad290[0x3D0 - 0x290];    // +0x290
+    // v1078: this gap grows by the same amount m_nMaxHp shifts (+0x10) — computed from
+    // FieldOffsets so the shift is automatic; see field_offsets.h.
+    BYTE _pad290[FieldOffsets::CRole_MaxHp - 0x290];    // FieldOffsets::CRole_MaxHp
 public:
-    int   m_nMaxHp;                // +0x3D0 cached max HP
+    int   m_nMaxHp;                // FieldOffsets::CRole_MaxHp — cached max HP
 private:
-    BYTE _pad3D4[0x6E0 - 0x3D4];  // +0x3D4
+    BYTE _pad3D4[FieldOffsets::CRole_Stamina - FieldOffsets::CRole_MaxHp - sizeof(int)];
 public:
-    int   m_nStamina;              // +0x6E0 current stamina (PP)
-    int   m_nMaxStamina;           // +0x6E4 max stamina
+    int   m_nStamina;              // FieldOffsets::CRole_Stamina — current stamina (PP)
+    int   m_nMaxStamina;           // FieldOffsets::CRole_MaxStamina — max stamina
     // Session 13: found via a full-range (+0x20..+0x71C) live memory scan
     // correlated against user-confirmed green/white/red/black monster-name
     // tiers -- zero variance across hundreds of samples per monster type,
@@ -209,12 +212,12 @@ public:
     // CHero publicly inherits CRole and doesn't touch this offset (its own
     // fields start at +0x71C), so this also reads the HERO's own level for
     // free -- unblocks the discordOnLevelUp TODO in hunt_stats.h.
-    int32_t m_nLevel;              // +0x6E8
+    int32_t m_nLevel;              // FieldOffsets::CRole_Level
 private:
-    BYTE _pad6EC[0x714 - 0x6EC];  // +0x6EC
+    BYTE _pad6EC[FieldOffsets::CRole_Syndicate - FieldOffsets::CRole_Level - sizeof(int32_t)];
 public:
-    OBJID m_idSyndicate;           // +0x714  syndicate/guild ID (0 = none)
-    int   m_nSyndicateRank;        // +0x718  syndicate rank (100=Leader, 90=Deputy, 50=Member)
+    OBJID m_idSyndicate;           // FieldOffsets::CRole_Syndicate — syndicate/guild ID (0 = none)
+    int   m_nSyndicateRank;        // FieldOffsets::CRole_SyndicateRank — rank (100=Leader, 90=Deputy, 50=Member)
 
     // ── Helpers ──
     OBJID GetID() const { return m_id; }
@@ -294,21 +297,26 @@ public:
 };
 #pragma pack(pop)
 
-static_assert(offsetof(CRole, m_nStatusFlag) == 0x30, "CRole::m_nStatusFlag");
-static_assert(offsetof(CRole, m_id)          == 0x68, "CRole::m_id");
-static_assert(offsetof(CRole, m_szName)      == 0x94, "CRole::m_szName");
-static_assert(offsetof(CRole, m_posMap)      == 0xD8, "CRole::m_posMap");
-static_assert(offsetof(CRole, m_posWorld)    == 0xE0, "CRole::m_posWorld");
-static_assert(offsetof(CRole, m_posScr)      == 0xE8, "CRole::m_posScr");
-static_assert(offsetof(CRole, m_posMoveStart) == 0x108, "CRole::m_posMoveStart");
-static_assert(offsetof(CRole, m_posMoveDest)  == 0x110, "CRole::m_posMoveDest");
-static_assert(offsetof(CRole, m_cmdAction)   == 0x188, "CRole::m_cmdAction");
-static_assert(offsetof(CRole, m_nMaxHp)      == 0x3D0, "CRole::m_nMaxHp");
-static_assert(offsetof(CRole, m_nStamina)     == 0x6E0, "CRole::m_nStamina");
-static_assert(offsetof(CRole, m_nMaxStamina)  == 0x6E4, "CRole::m_nMaxStamina");
-static_assert(offsetof(CRole, m_nLevel)       == 0x6E8, "CRole::m_nLevel");
-static_assert(offsetof(CRole, m_idSyndicate)  == 0x714, "CRole::m_idSyndicate");
-static_assert(offsetof(CRole, m_nSyndicateRank) == 0x718, "CRole::m_nSyndicateRank");
+// Checked against field_offsets.h (per-build), not bare literals, so a wrong pad
+// computation for either build fails the BUILD rather than silently misreading memory.
+static_assert(offsetof(CRole, m_nStatusFlag) == FieldOffsets::CRole_StatusFlag, "CRole::m_nStatusFlag");
+static_assert(offsetof(CRole, m_id)          == FieldOffsets::CRole_Id, "CRole::m_id");
+static_assert(offsetof(CRole, m_szName)      == FieldOffsets::CRole_Name, "CRole::m_szName");
+static_assert(offsetof(CRole, m_posMap)      == FieldOffsets::CRole_PosMap, "CRole::m_posMap");
+static_assert(offsetof(CRole, m_posWorld)    == FieldOffsets::CRole_PosWorld, "CRole::m_posWorld");
+static_assert(offsetof(CRole, m_posScr)      == FieldOffsets::CRole_PosScr, "CRole::m_posScr");
+static_assert(offsetof(CRole, m_posMoveStart) == FieldOffsets::CRole_PosMoveStart, "CRole::m_posMoveStart");
+static_assert(offsetof(CRole, m_posMoveDest)  == FieldOffsets::CRole_PosMoveDest, "CRole::m_posMoveDest");
+static_assert(offsetof(CRole, m_cmdAction)   == FieldOffsets::CRole_CmdAction, "CRole::m_cmdAction");
+static_assert(offsetof(CRole, m_nMaxHp)      == FieldOffsets::CRole_MaxHp, "CRole::m_nMaxHp");
+static_assert(offsetof(CRole, m_nStamina)     == FieldOffsets::CRole_Stamina, "CRole::m_nStamina");
+static_assert(offsetof(CRole, m_nMaxStamina)  == FieldOffsets::CRole_MaxStamina, "CRole::m_nMaxStamina");
+static_assert(offsetof(CRole, m_nLevel)       == FieldOffsets::CRole_Level, "CRole::m_nLevel");
+static_assert(offsetof(CRole, m_idSyndicate)  == FieldOffsets::CRole_Syndicate, "CRole::m_idSyndicate");
+static_assert(offsetof(CRole, m_nSyndicateRank) == FieldOffsets::CRole_SyndicateRank, "CRole::m_nSyndicateRank");
+// CRole's total data size — CHero.h's own first pad is computed from this, so a shift
+// here (e.g. m_nSyndicateRank moving) automatically repositions every CHero field too.
+constexpr size_t kCRoleDataEnd = offsetof(CRole, m_nSyndicateRank) + sizeof(int);
 
 using PRole = Ref<CRole>;
 
@@ -332,5 +340,5 @@ public:
 };
 #pragma pack(pop)
 
-static_assert(offsetof(CRoleMgr, m_pHero)   == 0x00, "CRoleMgr::m_pHero");
-static_assert(offsetof(CRoleMgr, m_deqRole) == 0x70, "CRoleMgr::m_deqRole");
+static_assert(offsetof(CRoleMgr, m_pHero)   == FieldOffsets::CRoleMgr_Hero, "CRoleMgr::m_pHero");
+static_assert(offsetof(CRoleMgr, m_deqRole) == FieldOffsets::CRoleMgr_DeqRole, "CRoleMgr::m_deqRole");

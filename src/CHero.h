@@ -3,6 +3,7 @@
 #include "CItem.h"
 #include "CMagic.h"
 #include "CStatTable.h"
+#include "field_offsets.h"
 #include <algorithm>
 
 struct CMapItem;
@@ -78,86 +79,94 @@ public:
     static int ClampBagThreshold(int value) { return std::clamp(value, 1, MAX_BAG_ITEMS); }
 
 private:
-    BYTE _pad71C[0x968 - 0x71C]; // +0x71C  hero runtime fields
+    // Every pad here is computed from field_offsets.h's per-build constants (+ a
+    // sizeof() for the preceding field) — see CRole.h's matching comment. On v1078
+    // most of these gaps come out numerically unchanged even though the ABSOLUTE
+    // offsets shift, because both of a gap's neighbouring fields moved by the same
+    // amount; a couple genuinely grew (silver-vs-stat-table, active-npc-vs-vecMagic) —
+    // see docs/investigation/V1078_OFFSET_FINDINGS.md for the measured deltas.
+    BYTE _pad71C[FieldOffsets::CHero_StatTable - kCRoleDataEnd]; // hero runtime fields
 
 public:
-    CStatTable* m_pStatTable;      // +0x968 current HP/stat table
+    CStatTable* m_pStatTable;      // FieldOffsets::CHero_StatTable — current HP/stat table
 
 private:
     // v1074: a ~0x50-byte field was inserted between +0x968 and the old +0xA30,
     // shifting every field below by +0x50. Live-verified against character "Kinux"
     // (silver, equipped GoldCoronet/Lathee, 18 skills). See coclassicbot-live-offsets.
-    BYTE _pad970[0xA80 - 0x970];   // +0x970 gap to silver slot (v1074 +0x50)
+    BYTE _pad970[FieldOffsets::CHero_Silver - FieldOffsets::CHero_StatTable - sizeof(CStatTable*)];
 
 public:
-    uint64_t m_qwRuntimeA30;       // +0xA80 (v1074) silver in low 32 bits [LIVE-VERIFIED =7681]
+    uint64_t m_qwRuntimeA30;       // FieldOffsets::CHero_Silver — silver in low 32 bits [v1074 LIVE-VERIFIED =7681; v1078 VALUE-CONFIRMED =4800/4349, character S411]
 
 private:
-    BYTE _padA88[0xB70 - 0xA88];   // +0xA88 gap to inventory deque
+    BYTE _padA88[FieldOffsets::CHero_DeqItem - FieldOffsets::CHero_Silver - sizeof(uint64_t)];
 
 public:
-    std::deque<PItem> m_deqItem;   // +0xB70 (v1074) inventory items [inferred from equip offset]
+    std::deque<PItem> m_deqItem;   // FieldOffsets::CHero_DeqItem — inventory items [v1074 inferred from equip offset; v1078 base VALUE-CONFIRMED by pointer-scan, see map_probe.h's DebugFindInventory for why the deque's OWN size/count is not trusted on either build]
 
 private:
-    BYTE _padDeq[0xBD8 - 0xB70 - sizeof(std::deque<PItem>)]; // gap between deque end and equipment
+    BYTE _padDeq[FieldOffsets::CHero_Equipment - FieldOffsets::CHero_DeqItem - sizeof(std::deque<PItem>)]; // gap between deque end and equipment
 
 public:
-    PItem m_equipment[EquipSlot::COUNT]; // +0xBD8 (v1074) equipped items [LIVE-VERIFIED: GoldCoronet/Lathee]
+    PItem m_equipment[EquipSlot::COUNT]; // FieldOffsets::CHero_Equipment — equipped items [v1074 LIVE-VERIFIED: GoldCoronet/Lathee; v1078 VALUE-CONFIRMED: Coat/LuckyBow/LuckyArrow in the right slots, character S411]
 
 private:
-    BYTE _padC58[0xCF8 - 0xC58];   // +0xC58 gap to max mana cache
+    BYTE _padC58[FieldOffsets::CHero_MaxMana - FieldOffsets::CHero_Equipment - sizeof(PItem) * EquipSlot::COUNT];
 
 public:
-    int32_t m_nMaxMana;            // +0xCF8 (v1074) cached max MP [inferred]
-    uint8_t m_bMaxManaValid;       // +0xCFC max MP cache-valid byte
+    int32_t m_nMaxMana;            // FieldOffsets::CHero_MaxMana — cached max MP [v1074 inferred; v1078 VALUE-CONFIRMED =0, correct for an archer with no mana pool]
+    uint8_t m_bMaxManaValid;       // FieldOffsets::CHero_MaxManaValid — max MP cache-valid byte [v1078 VALUE-CONFIRMED =1]
 
 private:
-    BYTE _padCFD[0x1050 - 0xCFD];  // +0xCFD
+    BYTE _padCFD[FieldOffsets::CHero_NpcActive - FieldOffsets::CHero_MaxManaValid - sizeof(uint8_t)];
 
 public:
-    // +0x1050 [LIVE-VERIFIED 2026-09-02]: 0 -> 1 when a dialog opens (the only
-    // 0/1 flip in a closed-vs-open hero dump) — but STICKY: it stays 1 after
-    // the dialog is closed, and a bot-sent ActivateNpc packet on a session
-    // that never had a manual click leaves it 0 even though the dialog
+    // FieldOffsets::CHero_NpcActive [v1074 LIVE-VERIFIED 2026-09-02; v1078 MODEL, not yet
+    // read at all]: 0 -> 1 when a dialog opens (the only 0/1 flip in a closed-vs-open hero
+    // dump) — but STICKY: it stays 1 after the dialog is closed, and a bot-sent ActivateNpc
+    // packet on a session that never had a manual click leaves it 0 even though the dialog
     // renders. So it answers "has a dialog ever been opened by a click", not
     // "is one open now". Do not gate on it alone. See m_pNpcDialog.
-    BOOL m_bNpcActive;             // +0x1050 (v1074)
+    BOOL m_bNpcActive;
 
 private:
-    BYTE _pad1054[0x1060 - 0x1054];
+    BYTE _pad1054[FieldOffsets::CHero_NpcDialog - FieldOffsets::CHero_NpcActive - sizeof(BOOL)];
 
 public:
-    // +0x1060 [LIVE-VERIFIED 2026-09-02, npctest v3]: pointer to the current
-    // NPC dialog object. Sticky across a close too — but it is REPLACED with a
-    // fresh object every time a dialog is created, including dialogs opened by
-    // the bot's own ActivateNpc packet (observed 0AAC01A0 -> 08F45D50 within
+    // FieldOffsets::CHero_NpcDialog [v1074 LIVE-VERIFIED 2026-09-02, npctest v3; v1078
+    // MODEL]: pointer to the current NPC dialog object. Sticky across a close too — but it
+    // is REPLACED with a fresh object every time a dialog is created, including dialogs
+    // opened by the bot's own ActivateNpc packet (observed 0AAC01A0 -> 08F45D50 within
     // 300 ms of the send). That change is the only client-side signal found
     // that says "a dialog appeared just now" for a packet-opened dialog, which
     // is what the confirm-open gates in hunt_town.cpp need. Compare against
     // the value captured immediately before sending the activate.
-    uintptr_t m_pNpcDialog;        // +0x1060 (v1074)
+    uintptr_t m_pNpcDialog;
 
 private:
-    BYTE _pad1068[0x1968 - 0x1068]; // +0x1068 gap to magic vector
+    BYTE _pad1068[FieldOffsets::CHero_VecMagic - FieldOffsets::CHero_NpcDialog - sizeof(uintptr_t)];
 
 public:
-    std::vector<PMagic> m_vecMagic; // +0x1968 (v1074) learned skills [LIVE-VERIFIED: count 18]
+    std::vector<PMagic> m_vecMagic; // FieldOffsets::CHero_VecMagic [v1074 LIVE-VERIFIED: count 18; v1078 MODEL]
 
 private:
-    BYTE _pad1980[0x3774 - 0x1980]; // +0x1980 gap to active NPC UID
+    BYTE _pad1980[FieldOffsets::CHero_ActiveNpc - FieldOffsets::CHero_VecMagic - sizeof(std::vector<PMagic>)];
 
 public:
-    // +0x3774 [LIVE-VERIFIED 2026-09-02]: id of the NPC the client's own click
-    // path last opened (101545 -> 101395 when MillionaireLee was clicked).
-    // Same caveat as m_bNpcActive: set by the click path, sticky, not updated
-    // by a bot-sent activate on a cold session.
-    OBJID m_idActiveNpc;            // +0x3774 (v1074)
+    // FieldOffsets::CHero_ActiveNpc [v1074 LIVE-VERIFIED 2026-09-02; v1078 MODEL — a
+    // plausible NPC id (100122) was seen structurally nearby on v1078 but this exact field
+    // was never individually value-confirmed]: id of the NPC the client's own click path
+    // last opened (101545 -> 101395 when MillionaireLee was clicked). Same caveat as
+    // m_bNpcActive: set by the click path, sticky, not updated by a bot-sent activate on a
+    // cold session.
+    OBJID m_idActiveNpc;
 
 private:
-    BYTE _pad3778[0x3790 - 0x3778]; // +0x3778 gap to VIP flag
+    BYTE _pad3778[FieldOffsets::CHero_Vip - FieldOffsets::CHero_ActiveNpc - sizeof(OBJID)];
 
 public:
-    BOOL m_bVip;                    // +0x3790 (v1074) VIP status flag [inferred]
+    BOOL m_bVip;                    // FieldOffsets::CHero_Vip — VIP status flag [v1074 inferred; v1078 MODEL]
 
     // ── Helpers ──
     bool IsBagFull() const { return m_deqItem.size() >= MAX_BAG_ITEMS; }
@@ -244,16 +253,17 @@ public:
 };
 #pragma pack(pop)
 
-static_assert(offsetof(CHero, m_pStatTable) == 0x968, "CHero::m_pStatTable");
-static_assert(offsetof(CHero, m_qwRuntimeA30) == 0xA80, "CHero::m_qwRuntimeA30");   // v1074 +0x50
-static_assert(offsetof(CHero, m_nMaxMana) == 0xCF8, "CHero::m_nMaxMana");           // v1074 +0x50
-static_assert(offsetof(CHero, m_bMaxManaValid) == 0xCFC, "CHero::m_bMaxManaValid"); // v1074 +0x50
-static_assert(offsetof(CHero, m_bNpcActive) == 0x1050, "CHero::m_bNpcActive");      // v1074 +0x50
-static_assert(offsetof(CHero, m_pNpcDialog) == 0x1060, "CHero::m_pNpcDialog");      // live-verified 2026-09-02
-static_assert(offsetof(CHero, m_deqItem) == 0xB70, "CHero::m_deqItem");             // v1074 +0x50
-static_assert(offsetof(CHero, m_equipment) == 0xBD8, "CHero::m_equipment");         // v1074 +0x50
-static_assert(offsetof(CHero, m_vecMagic) == 0x1968, "CHero::m_vecMagic");          // v1074 +0x50
-static_assert(offsetof(CHero, m_idActiveNpc) == 0x3774, "CHero::m_idActiveNpc");    // v1074 +0x50
-static_assert(offsetof(CHero, m_bVip) == 0x3790, "CHero::m_bVip");                  // v1074 +0x50
+// Checked against field_offsets.h (per-build) — see CRole.h's matching comment.
+static_assert(offsetof(CHero, m_pStatTable) == FieldOffsets::CHero_StatTable, "CHero::m_pStatTable");
+static_assert(offsetof(CHero, m_qwRuntimeA30) == FieldOffsets::CHero_Silver, "CHero::m_qwRuntimeA30");
+static_assert(offsetof(CHero, m_nMaxMana) == FieldOffsets::CHero_MaxMana, "CHero::m_nMaxMana");
+static_assert(offsetof(CHero, m_bMaxManaValid) == FieldOffsets::CHero_MaxManaValid, "CHero::m_bMaxManaValid");
+static_assert(offsetof(CHero, m_bNpcActive) == FieldOffsets::CHero_NpcActive, "CHero::m_bNpcActive");
+static_assert(offsetof(CHero, m_pNpcDialog) == FieldOffsets::CHero_NpcDialog, "CHero::m_pNpcDialog");
+static_assert(offsetof(CHero, m_deqItem) == FieldOffsets::CHero_DeqItem, "CHero::m_deqItem");
+static_assert(offsetof(CHero, m_equipment) == FieldOffsets::CHero_Equipment, "CHero::m_equipment");
+static_assert(offsetof(CHero, m_vecMagic) == FieldOffsets::CHero_VecMagic, "CHero::m_vecMagic");
+static_assert(offsetof(CHero, m_idActiveNpc) == FieldOffsets::CHero_ActiveNpc, "CHero::m_idActiveNpc");
+static_assert(offsetof(CHero, m_bVip) == FieldOffsets::CHero_Vip, "CHero::m_bVip");
 
 #define g_objHero (*CHero::GetSingletonPtr())

@@ -113,7 +113,7 @@ static DWORD WINAPI InitThread(LPVOID)
     {
         uint32_t stamp = 0, imageSize = 0;
         const bool ok = ReadHostBuildIdentity(&stamp, &imageSize);
-        if (!ok || !BuildFence::IsSupported(stamp, imageSize)) {
+        if (!ok || !BuildFence::IsSelfBuild(stamp, imageSize)) {
             g_fenced = true;
             Log::Init();
             spdlog::error("[fence] UNSUPPORTED CLIENT BUILD (PE stamp 0x{:08X}, image 0x{:X}{}). Bot fully disabled: "

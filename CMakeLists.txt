@@ -35,8 +35,15 @@ set(IMGUI_SOURCES
 )
 set_source_files_properties(${DETOURS_SOURCES} ${IMGUI_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
 
-# ── Main DLL ────────────────────────────────────────────────────────
-add_library(coclassic SHARED
+# ── Main DLL(s) ─────────────────────────────────────────────────────
+# Two client builds are supported, each its OWN compiled binary from this exact same
+# source tree (see src/field_offsets.h's header comment for why a single binary can't do
+# runtime dual-build: struct field offsets are fixed at compile time). `coclassic` is the
+# v1074 target (default, unchanged); `coclassic_v1078` defines COCLASSIC_TARGET_V1078 to
+# pick the v1078 struct offsets / native-call RVAs instead. build_fence.h in each only
+# lists its OWN build, so injecting the wrong one into the wrong process just refuses to
+# initialise — see docs/investigation/V1078_OFFSET_FINDINGS.md.
+set(COCLASSIC_SOURCES
     src/log.cpp
     src/dllmain.cpp
     src/hwid_spoof.cpp
@@ -93,43 +100,60 @@ add_library(coclassic SHARED
     ${DETOURS_SOURCES}
     ${IMGUI_SOURCES}
 )
-target_include_directories(coclassic PRIVATE
-    src
-    src/plugins
-    vendor/Detours/src
-    vendor/imgui
-    vendor/imgui/backends
-    vendor/json/include
-    vendor/spdlog/include
-)
-target_link_libraries(coclassic PRIVATE
-    psapi          # GetMappedFileNameW — identifies the active map by its file
-    d3d11.lib
-    dxgi.lib
-    d3dcompiler.lib
-    winhttp.lib
-    crypt32.lib    # CryptProtectData/CryptUnprotectData — Discord webhook URL at rest (config.cpp)
-    ws2_32.lib     # recv/WSARecv Detour hooks (net_recv_hook.cpp)
-)
-set_target_properties(coclassic PROPERTIES
-    OUTPUT_NAME "coclassic"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
 
-# Session 11: emit a PDB alongside the Release DLL so a crash address can be
-# symbolized directly against the exact binary that's actually running,
-# instead of having to reconstruct a matching build after the fact (which
-# turned out to be unreliable — a from-scratch worktree rebuild with /Zi
-# added via an overridden CMAKE_CXX_FLAGS_RELEASE came out roughly 2x the
-# size with a totally different code layout, because MSVC's linker disables
-# /OPT:REF,ICF by default once /DEBUG is present unless re-enabled — so a
-# naive debug rebuild silently stops folding/stripping code the same way,
-# and its addresses no longer correspond to the shipping binary at all).
-# /Zi + /DEBUG + explicit /OPT:REF,ICF keeps codegen and layout identical to
-# a plain Release build, just with debug records added on top — this has no
-# runtime behavior or performance cost, only extra disk space for the PDB.
-target_compile_options(coclassic PRIVATE $<$<CONFIG:Release>:/Zi>)
-target_link_options(coclassic PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
+# Both DLL targets get identical include dirs / link libs / properties / PDB settings —
+# defined once here so the two targets can't silently drift apart.
+function(coclassic_configure_target target_name output_name)
+    target_include_directories(${target_name} PRIVATE
+        src
+        src/plugins
+        vendor/Detours/src
+        vendor/imgui
+        vendor/imgui/backends
+        vendor/json/include
+        vendor/spdlog/include
+    )
+    target_link_libraries(${target_name} PRIVATE
+        psapi          # GetMappedFileNameW — identifies the active map by its file
+        d3d11.lib
+        dxgi.lib
+        d3dcompiler.lib
+        winhttp.lib
+        crypt32.lib    # CryptProtectData/CryptUnprotectData — Discord webhook URL at rest (config.cpp)
+        ws2_32.lib     # recv/WSARecv Detour hooks (net_recv_hook.cpp)
+    )
+    set_target_properties(${target_name} PROPERTIES
+        OUTPUT_NAME "${output_name}"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
+    # Session 11: emit a PDB alongside the Release DLL so a crash address can be
+    # symbolized directly against the exact binary that's actually running,
+    # instead of having to reconstruct a matching build after the fact (which
+    # turned out to be unreliable — a from-scratch worktree rebuild with /Zi
+    # added via an overridden CMAKE_CXX_FLAGS_RELEASE came out roughly 2x the
+    # size with a totally different code layout, because MSVC's linker disables
+    # /OPT:REF,ICF by default once /DEBUG is present unless re-enabled — so a
+    # naive debug rebuild silently stops folding/stripping code the same way,
+    # and its addresses no longer correspond to the shipping binary at all).
+    # /Zi + /DEBUG + explicit /OPT:REF,ICF keeps codegen and layout identical to
+    # a plain Release build, just with debug records added on top — this has no
+    # runtime behavior or performance cost, only extra disk space for the PDB.
+    target_compile_options(${target_name} PRIVATE $<$<CONFIG:Release>:/Zi>)
+    target_link_options(${target_name} PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
+endfunction()
+
+add_library(coclassic SHARED ${COCLASSIC_SOURCES})
+coclassic_configure_target(coclassic "coclassic")
+
+# v1078 target — same source, same flags, one extra compile definition (field_offsets.h /
+# build_fence.h / game.h all branch on it). Struct-field offsets are VALUE-CONFIRMED
+# against character S411; the 3 action-critical native-call RVAs are signature-relocated
+# but gated OFF (GameRva::V1078_NATIVE_TESTED = false) until a live pickup/movement/attack
+# test passes — see docs/investigation/V1078_OFFSET_FINDINGS.md.
+add_library(coclassic_v1078 SHARED ${COCLASSIC_SOURCES})
+target_compile_definitions(coclassic_v1078 PRIVATE COCLASSIC_TARGET_V1078)
+coclassic_configure_target(coclassic_v1078 "coclassic_v1078")
 
 add_executable(launcher WIN32
     injector/main.cpp

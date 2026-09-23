@@ -11,6 +11,20 @@ void CRole::SetCommand(CCommand* cmd)
     if (!cmd)
         return;
 
+#if defined(COCLASSIC_TARGET_V1078)
+    // v1078: CROLE_SET_COMMAND_REAL is only signature-relocated, not live-tested (game.h
+    // GameRva::V1078_NATIVE_TESTED) — refuse until a real movement test flips it.
+    if (!GameRva::V1078_NATIVE_TESTED) {
+        static bool warned = false;
+        if (!warned) {
+            spdlog::error("[safety] CRole::SetCommand: v1078 native-call path unverified (see game.h "
+                          "GameRva::V1078_NATIVE_TESTED) — refusing to call, movement disabled on this build");
+            warned = true;
+        }
+        return;
+    }
+#endif
+
     auto fn = GameCall::CRole_SetCommandReal();
     if (!fn)
         return;

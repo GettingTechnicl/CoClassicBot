@@ -1263,8 +1263,12 @@ int CHero::GetCurrentHp() const
 
 int CHero::GetGameKillCount() const
 {
+    // v1078's offset (FieldOffsets::CHero_GameKillCount) is the shift-model's UNTESTED
+    // prediction, not live-confirmed the way the original v1074 +0xA30 was (session 15) —
+    // see field_offsets.h. SEH-guarded either way, so a wrong offset fails safe (0), same
+    // as any other bad read.
     __try {
-        return *reinterpret_cast<const int*>(reinterpret_cast<uintptr_t>(this) + 0xA30);
+        return *reinterpret_cast<const int*>(reinterpret_cast<uintptr_t>(this) + FieldOffsets::CHero_GameKillCount);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
     }

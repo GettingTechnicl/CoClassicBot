@@ -1986,18 +1986,34 @@ void HandleLoginClick(AccountSession* session)
     char exePathBuf[MAX_PATH];
     GetModuleFileNameA(nullptr, exePathBuf, MAX_PATH);
     const std::string exePath = exePathBuf;
-    const fs::path dllPath = fs::path(exePath).parent_path() / DLL_NAME;
-
-    if (!fs::exists(dllPath)) {
-        session->SetStatus("coclassic.dll not found next to launcher.exe -- build it first");
-        session->state = SessionState::Failed;
-        return;
-    }
 
     const std::string gameDir = ResolveGameDir();
     const std::string gamePathStr = (fs::path(gameDir) / "bin" / "64" / GAME_EXE).string();
     if (!fs::exists(gamePathStr)) {
         session->SetStatus("Game not found -- set COCLASSIC_GAME_DIR or game_dir.txt");
+        session->state = SessionState::Failed;
+        return;
+    }
+
+    // Pick the DLL that matches the game's OWN build (build_fence.h: coclassic.dll for v1074,
+    // coclassic_v1078.dll for v1078 — each compiled from the same source with different struct
+    // offsets/RVAs baked in, see field_offsets.h). The later BUILD FENCE check inside
+    // RunAccountSupervisionLoop re-reads this identity and refuses to proceed on an unsupported
+    // build either way; this lookup just decides WHICH DLL to hand it if it does proceed.
+    std::string dllName = DLL_NAME;
+    {
+        uint32_t stamp = 0, imageSize = 0;
+        if (const BuildFence::Build* b = BuildFence::ReadPeIdentityFromFile(gamePathStr.c_str(), &stamp, &imageSize)
+                ? BuildFence::FindSupported(stamp, imageSize) : nullptr) {
+            dllName = b->dllName;
+        }
+        // else: leave dllName at the v1074 default — the build fence below will refuse to launch
+        // on an unrecognised build anyway, so this only matters for a build we DO recognise.
+    }
+    const fs::path dllPath = fs::path(exePath).parent_path() / dllName;
+
+    if (!fs::exists(dllPath)) {
+        session->SetStatus("missing DLL for this client build: " + dllName + " -- build it first");
         session->state = SessionState::Failed;
         return;
     }
