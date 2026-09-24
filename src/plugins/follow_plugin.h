@@ -6,7 +6,13 @@ struct FollowSettings
     bool enabled            = false;
     char targetName[16]     = "";
     int  followDistance     = 3;
-    int  dodgeRadius       = 5;
+    // Floor is 2, not 1: at dodgeRadius==1 the trigger (mobDist <= dodgeRadius) only fires once
+    // a monster is ALREADY adjacent, which is already within melee range for most monsters and
+    // too late to be a preemptive dodge. 2 gives at least one tile of buffer before melee range
+    // and also covers the 2-tile-reach monsters the game has (see follow_plugin.cpp's UI note —
+    // there's no per-monster attack-range data available client-side to do better than one
+    // global floor right now).
+    int  dodgeRadius       = 2;
 };
 
 FollowSettings& GetFollowSettings();

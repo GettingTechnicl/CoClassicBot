@@ -1193,8 +1193,8 @@ static void LoadFollowSection(const char* file, const char* section)
     follow.followDistance = ReadInt(file, section, "followDistance", 3);
     if (follow.followDistance < 1) follow.followDistance = 1;
     if (follow.followDistance > 30) follow.followDistance = 30;
-    follow.dodgeRadius = ReadInt(file, section, "dodgeRadius", 5);
-    if (follow.dodgeRadius < 1) follow.dodgeRadius = 1;
+    follow.dodgeRadius = ReadInt(file, section, "dodgeRadius", 2);
+    if (follow.dodgeRadius < 2) follow.dodgeRadius = 2;   // see follow_plugin.h's comment on the floor
     if (follow.dodgeRadius > 15) follow.dodgeRadius = 15;
 }
 

@@ -227,8 +227,11 @@ void FollowPlugin::RenderUI()
     ImGui::SliderInt("Follow Distance", &s.followDistance, 1, 30);
     ImGui::TextDisabled("Stop moving when within this tile distance of the target.");
 
-    ImGui::SliderInt("Dodge Radius", &s.dodgeRadius, 1, 15);
-    ImGui::TextDisabled("Emergency dodge when a mob is within this tile distance.");
+    ImGui::SliderInt("Dodge Radius", &s.dodgeRadius, 2, 15);
+    ImGui::TextDisabled("Emergency dodge when a mob is within this tile distance (in map "
+                         "coordinates, same units as Follow Distance). Floor is 2: most monsters "
+                         "only hit at 1 tile (adjacent), some reach 2 -- 1 would mean dodging "
+                         "only once already in melee range.");
 
     ImGui::Separator();
 
