@@ -320,3 +320,26 @@ specific *diff*, false of the *tree being compiled*, which still had both gates 
 immediately after, which was the right recovery, but the description before/during the build should have named the
 armed-but-unrun state plainly rather than only characterizing the new diff. If a build is paused for the user to run,
 treat that as still standing until they've actually run it — don't fold it into a later, unrelated build.
+
+### 2026-09-23 (later) — per-monster attack range: emulator-source search done, nothing found, upstream doesn't do it either
+
+Reviewer feedback said the earlier "no attack-range data" conclusion skipped the emulator-source rung of the
+data-sourcing ladder (game files -> emulator sources -> black-box -> live, in that order) after `ini/monster.json`
+came up empty. Did that search properly this time:
+* `shekohex/coemu` (Rust CO2.0 emulator) — SQLite migrations checked; no monster-type/combat-stats table at all.
+* `luckymouse0/Redux-Conquer-Online-Server` (pro4never's Redux, a long-established C# base) — its SQL backup has no
+  monster-type table either; `drop_rules` references `MonsterID` but carries no combat stats.
+* **`mdiab97/ClassicConquerBot`** — this is the ORIGINAL upstream bot this whole project was forked from (see
+  `coclassicbot-fork-audit` memory), for this exact server. `bot.h`: melee range comes from the hero's OWN weapon
+  (`itemtype.json`'s `attack_range`, for the hero, not monsters). Kiting/magic-safety distance is a single
+  **global configured threshold** (`kite_min_dist`, `magic_safe_dist`) — no per-monster attack-range modeling at
+  all. Independent, useful corroboration though: its proximity checks use `std::max(abs(dx), abs(dy))` — Chebyshev/
+  step distance, the same metric this session's fix moved `follow`/`dodge` to (see the commit fixing `CGameMap::
+  TileDist` vs `StepDist`), arrived at independently in a different codebase for the same game.
+
+Conclusion: no publicly-findable data source gives per-monster attack range for this game, and the most relevant
+prior art (the actual original bot for this exact server) doesn't attempt it either — it uses the same "one global
+tunable dodge distance" approach already shipped here. Recommendation: treat the current `dodgeRadius` (single
+setting, floor 2 steps) as adequate for now, matching established practice, rather than a gap. If real per-monster
+precision is wanted later, the only path is live observation (spot-check a few named monsters' actual hit range
+in play and hand-curate a short override list) — not something to build speculatively without that data.
