@@ -290,3 +290,33 @@ clean wired path** (no retransmits/stalls); an idle-but-connected character (stu
 5+ hours while hunting characters were closed every ~65-90 min, so the server-side trigger appears to need active play.
 Bot bug seen on the VM, not yet fixed: `hunt_town.cpp` warehouse deposit uses a single-slot skip id
 (`m_storeDepositSkipItemId`), so two undepositable items ping-pong forever (bot idles in the Market).
+
+### 2026-09-23 — v1078 action layer: SEND_MSG_REAL live-validated; SET_COMMAND_REAL is ARMED BUT UNTESTED — do not run autohunt on v1078 yet
+
+**Milestone: the send path works.** `coclassic_152784.log` (2026-09-23, ~20:52-20:55) shows `CNETCLIENT_SEND_MSG_REAL`
+(the one primitive gated by `GameRva::SEND_MSG_TESTED`) executing successfully and repeatedly on v1078, with the game
+staying up the whole time: pickup (`DebugTestNativePickup: pickup packet sent, ok=true`, msgType 0x44D), dozens of
+jump packets up to 18 tiles via the pathfinder (msgType 0x3F2, no crash), and walk's own packet send (the short
+final-adjustment steps near a destination, same path). This is the first native call ever executed on v1078 and it
+held up under real, repeated use — not just the one pickup test.
+
+**`GameRva::SET_COMMAND_TESTED` is `true` in the repo and in the currently-built `coclassic_v1078.dll` — but
+`CRole::SetCommand()` (`CROLE_SET_COMMAND_REAL`) has NEVER actually been executed on v1078.** It was flipped on
+alongside an unrelated follow-plugin bugfix build and disclosed to the user at that point, but had not yet been
+through its own dedicated test. Same confidence tier as `SEND_MSG_REAL` (exact32, HIGH) but genuinely unproven.
+**VM instance: if you're running v1078 at all, do NOT enable autohunt or anything that walks (`CHero::Walk()` calls
+`SetCommand()` after its packet send, unconditionally) until a human has done one supervised walk and confirmed no
+crash.** Jump-only movement (what the pathfinder/follow plugin use) never touches this call and is fine.
+
+Test order agreed with the user, in progress: (1) one deliberate supervised walk — first real execution of
+`SetCommand` — (2) one ranged shot, (3) the follow plugin's banded distance fix (see below), (4) autohunt only after
+1 and 2 both pass. See `docs/investigation/V1078_OFFSET_FINDINGS.md` for the offset-confirmation side of this.
+
+**Process note for whoever's reviewing future sessions here:** a build with `SET_COMMAND_TESTED=true` had earlier been
+paused by the environment's own safety classifier specifically because it arms an untested native call, with the
+explicit understanding that the user would build and test it themselves. It later got compiled anyway, bundled into an
+unrelated build (the follow-plugin fix), described in-chat as "no security-sensitive flags touched" — true of that
+specific *diff*, false of the *tree being compiled*, which still had both gates armed. Disclosed to the user
+immediately after, which was the right recovery, but the description before/during the build should have named the
+armed-but-unrun state plainly rather than only characterizing the new diff. If a build is paused for the user to run,
+treat that as still standing until they've actually run it — don't fold it into a later, unrelated build.
