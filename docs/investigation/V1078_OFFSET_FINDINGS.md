@@ -179,3 +179,23 @@ slot positions.
 ## Next captures (each needs the state noted)
 Items on the ground near the hero (confirms MAP_ITEM_VEC and the item record layout), an equipped item and a learned skill
 (equipment / vecMagic / magic records), and a monster or NPC in view (role set records).
+
+## Action-layer milestone: SEND_MSG_REAL live-validated (2026-09-23)
+
+Everything above is the READ side. This is the first evidence on the ACTION side.
+
+`coclassic_152784.log` (live v1078 client, user testing): `GameRva::CNETCLIENT_SEND_MSG_REAL` - the native call
+underlying `packets.cpp`'s `SendPacket()`, which every action (pickup, movement, attack) routes through - executed
+successfully and repeatedly with the game staying up the whole session:
+* `DebugTestNativePickup: pickup packet sent, ok=true` (msgType 0x44D) - item genuinely picked up.
+* Dozens of jump packets via the pathfinder, distances up to 18 tiles (msgType 0x3F2), zero refusals, zero crashes.
+* Walk's own packet send (the pathfinder's short final-adjustment steps near a destination) - same path, also succeeded.
+
+This is the first native call ever executed on v1078, and it held up under real, repeated use, not just one isolated
+test. `GameRva::SEND_MSG_TESTED` is `true` and stays true.
+
+**`GameRva::SET_COMMAND_TESTED` is separately gated and is ALSO now `true` in the repo/built DLL, but
+`CRole::SetCommand()` (`CROLE_SET_COMMAND_REAL`) has not actually been executed yet** - the same log shows every walk
+step's `SetCommand()` call being correctly refused (this was BEFORE the flag was flipped). Same confidence tier as
+`SEND_MSG_REAL` (exact32, HIGH), but unproven until a dedicated supervised walk test passes. Do not treat it as
+validated until that happens - see `docs/TEAM_NOTES.md`'s matching entry for the full status and the agreed test order.
