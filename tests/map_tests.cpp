@@ -461,6 +461,26 @@ TEST(tiledist_max_jump) {
     EXPECT(CGameMap::TileDist(0, 0, 19, 0) == 19);
 }
 
+// StepDist (Chebyshev / 8-directional step count) deliberately diverges from TileDist (rounded
+// Euclidean) on a diagonal -- this is the exact discrepancy a reviewer caught in follow_plugin.cpp:
+// a "5 steps away" band or "2 steps away" dodge trigger measured in TileDist instead would
+// under-react on a diagonal approach. Pinned here so it can't silently regress back to TileDist.
+TEST(stepdist_matches_tiledist_on_axis) {
+    EXPECT(CGameMap::StepDist(0, 0, 10, 0) == 10);
+    EXPECT(CGameMap::StepDist(0, 0, 0, 10) == 10);
+    EXPECT(CGameMap::StepDist(5, 5, 5, 5) == 0);
+}
+
+TEST(stepdist_diverges_from_tiledist_on_diagonal) {
+    // (7,7): 7 diagonal steps on this 8-directional grid, but TileDist rounds sqrt(98)=9.9 -> 10.
+    EXPECT(CGameMap::StepDist(0, 0, 7, 7) == 7);
+    EXPECT(CGameMap::TileDist(0, 0, 7, 7) == 10);
+    // (2,2): 2 steps, but TileDist rounds sqrt(8)=2.83 -> 3 -- the case that made a 2-tile-range
+    // monster on a diagonal read as "3 away, safe" when it was actually within range.
+    EXPECT(CGameMap::StepDist(0, 0, 2, 2) == 2);
+    EXPECT(CGameMap::TileDist(0, 0, 2, 2) == 3);
+}
+
 // =====================================================================
 // Dump file roundtrip test
 // =====================================================================
@@ -819,6 +839,8 @@ int main(int argc, char** argv)
     RUN(tiledist_cardinal);
     RUN(tiledist_diagonal);
     RUN(tiledist_max_jump);
+    RUN(stepdist_matches_tiledist_on_axis);
+    RUN(stepdist_diverges_from_tiledist_on_diagonal);
 
     // CanJump basics
     RUN(jump_same_tile_rejected);

@@ -576,7 +576,8 @@ static std::string BuildCurrentConfigSnapshot()
     snapshot += "[Follow]\n";
     AppendBoolSnapshot(snapshot, "enabled", follow.enabled);
     AppendStringSnapshot(snapshot, "targetName", follow.targetName);
-    AppendIntSnapshot(snapshot, "followDistance", follow.followDistance);
+    AppendIntSnapshot(snapshot, "followMin", follow.followMin);
+    AppendIntSnapshot(snapshot, "followMax", follow.followMax);
     AppendIntSnapshot(snapshot, "dodgeRadius", follow.dodgeRadius);
 
     const TravelSettings& travel = GetTravelSettings();
@@ -1180,7 +1181,8 @@ static void SaveFollowSection(const char* file, const char* section)
     FollowSettings& follow = GetFollowSettings();
     WriteInt(file, section, "enabled", follow.enabled ? 1 : 0);
     WritePrivateProfileStringA(section, "targetName", follow.targetName, file);
-    WriteInt(file, section, "followDistance", follow.followDistance);
+    WriteInt(file, section, "followMin", follow.followMin);
+    WriteInt(file, section, "followMax", follow.followMax);
     WriteInt(file, section, "dodgeRadius", follow.dodgeRadius);
 }
 
@@ -1190,9 +1192,14 @@ static void LoadFollowSection(const char* file, const char* section)
     follow = FollowSettings{};
     follow.enabled = ReadInt(file, section, "enabled", 0) != 0;
     ReadString(file, section, "targetName", "", follow.targetName, sizeof(follow.targetName));
-    follow.followDistance = ReadInt(file, section, "followDistance", 3);
-    if (follow.followDistance < 1) follow.followDistance = 1;
-    if (follow.followDistance > 30) follow.followDistance = 30;
+    // No migration from the old single "followDistance" key -- a saved config from before the
+    // band change (see follow_plugin.h) just falls back to the new followMin/followMax defaults,
+    // a perfectly reasonable outcome for a slider the user re-tunes visually anyway.
+    follow.followMin = ReadInt(file, section, "followMin", 5);
+    follow.followMax = ReadInt(file, section, "followMax", 10);
+    if (follow.followMin < 1) follow.followMin = 1;
+    if (follow.followMax > 30) follow.followMax = 30;
+    if (follow.followMin > follow.followMax) follow.followMax = follow.followMin;  // guard a hand-edited/corrupt config
     follow.dodgeRadius = ReadInt(file, section, "dodgeRadius", 2);
     if (follow.dodgeRadius < 2) follow.dodgeRadius = 2;   // see follow_plugin.h's comment on the floor
     if (follow.dodgeRadius > 15) follow.dodgeRadius = 15;

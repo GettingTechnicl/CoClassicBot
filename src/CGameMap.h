@@ -183,8 +183,24 @@ public:
         return layer ? layer->terrain : 0;
     }
 
-    // Rounded integer distance (matches game formula, size=1)
+    // Rounded integer distance (matches game formula, size=1) — this is a rounded EUCLIDEAN
+    // distance (sqrt(dx^2+dy^2)), used for jump-range/reachability validity checks below because
+    // it was reverse-engineered specifically to match the game's own math there. It is NOT the
+    // same thing as a "step" in an 8-directional grid, where diagonal and cardinal moves both
+    // cost 1: TileDist(0,0,7,7)==10 but that's 7 diagonal steps; TileDist(0,0,2,2)==3 but that's
+    // 2 steps. Use StepDist (below) for anything the user thinks of in "how many steps/tiles
+    // away", such as follow distance or dodge radius — using TileDist there under-counts a
+    // diagonal gap as bigger than it is, which for dodging means a monster that's actually
+    // within its attack range on a diagonal can read as farther away than it really is.
     static int TileDist(int x0, int y0, int x1, int y1);
+
+    // 8-directional step count (Chebyshev distance): max(|dx|, |dy|). What "N tiles/paces away"
+    // means to a player and to CO's own diagonal-costs-the-same-as-cardinal movement grid.
+    static int StepDist(int x0, int y0, int x1, int y1) {
+        const int dx = x0 > x1 ? x0 - x1 : x1 - x0;
+        const int dy = y0 > y1 ? y0 - y1 : y1 - y0;
+        return dx > dy ? dx : dy;
+    }
 
     // Bresenham line-of-sight: check altitude steps along the path
     bool CanReach(int ox, int oy, int tx, int ty, int altThreshold = 200) const;
