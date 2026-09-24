@@ -85,6 +85,8 @@ static int MinMobDist(int tx, int ty, const MobPos* mobs, int mobCount)
 // Pick the best jumpable tile — scored by mob avoidance + target proximity
 // ---------------------------------------------------------------------------
 
+static int AbsDiff(int a, int b) { return a > b ? a - b : b - a; }
+
 static Position FindBestJumpTile(CHero* hero, CGameMap* map,
     const MobPos* mobs, int mobCount,
     const Position* targetPos, int followDistance)
@@ -95,7 +97,7 @@ static Position FindBestJumpTile(CHero* hero, CGameMap* map,
 
     Position best = { hx, hy };
     int bestMinMob = -1;
-    int bestTDist = 999;
+    int bestTGap = 999999;
     int bestHDist = 999;
 
     for (int dx = -CGameMap::MAX_JUMP_DIST; dx <= CGameMap::MAX_JUMP_DIST; ++dx) {
@@ -123,13 +125,22 @@ static Position FindBestJumpTile(CHero* hero, CGameMap* map,
 
             int minMob = mobCount > 0 ? MinMobDist(cx, cy, mobs, mobCount) : 999;
 
-            // Pick: farthest from mobs, then closest to target, then shortest jump
+            // Session [FOLLOW-DISTANCE FIX]: this used to break ties by minimizing tDist
+            // directly, which — with no mobs nearby (the common case, so every candidate tied
+            // on minMob) — always picked the tile closest to the target, i.e. right on top of
+            // them, no matter what followDistance was set to. followDistance was only ever
+            // enforced as a ceiling (the reject-above check), never as the actual standoff the
+            // UI promises ("stop moving when within this tile distance"). Minimizing the GAP to
+            // followDistance instead lands the hero right at the edge of follow range.
+            int tGap = targetPos ? AbsDiff(tDist, followDistance) : 0;
+
+            // Pick: farthest from mobs, then closest to the follow-distance boundary, then shortest jump
             if (minMob > bestMinMob
-                || (minMob == bestMinMob && tDist < bestTDist)
-                || (minMob == bestMinMob && tDist == bestTDist && heroDist < bestHDist)) {
+                || (minMob == bestMinMob && tGap < bestTGap)
+                || (minMob == bestMinMob && tGap == bestTGap && heroDist < bestHDist)) {
                 best = Position(cx, cy);
                 bestMinMob = minMob;
-                bestTDist = tDist;
+                bestTGap = tGap;
                 bestHDist = heroDist;
             }
         }

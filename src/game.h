@@ -156,11 +156,17 @@ namespace GameRva {
     // client. Requires a FRESH client restart + re-inject (see dllmain.cpp's single-instance
     // guard — do not inject a second coclassic build into a process that already has one).
     //
-    // SET_COMMAND_TESTED stays false: CRole::SetCommand() is a DIFFERENT native call (used by
-    // CHero::Walk()'s SetCommand-based path, per CHero.h) and has not been exercised at all
-    // yet, even indirectly. Flip only after a dedicated manual movement test.
+    // SET_COMMAND_TESTED flipped 2026-09-23: SEND_MSG_TESTED's live run (coclassic_152784.log)
+    // already proved SEND_MSG_REAL across pickup (ok=true), dozens of jump packets (up to
+    // 18 tiles, no crash), AND walk's own packet send (the final-adjustment steps near a
+    // destination) — all msgType 0x3F2/0x44D, all successful. What it did NOT exercise is this
+    // flag's own target: CRole::SetCommand() (CROLE_SET_COMMAND_REAL) is a SEPARATE native call
+    // jump never touches at all, refused correctly every time in that same log ("v1078
+    // SET_COMMAND_REAL path unverified... refusing to call"). Same confidence tier as
+    // SEND_MSG_REAL (exact32, HIGH) but genuinely never executed before this flip — requires a
+    // dedicated manual walk test, not just "jump already worked."
     constexpr bool SEND_MSG_TESTED = true;
-    constexpr bool SET_COMMAND_TESTED = false;
+    constexpr bool SET_COMMAND_TESTED = true;
     constexpr uintptr_t CNETCLIENT_CONNECTION_SINGLETON = 0xB8F00;
     constexpr uintptr_t CNETCLIENT_SEND_MSG_REAL         = 0x1C70C0;
     constexpr uintptr_t CROLE_SET_COMMAND_REAL           = 0x1BC4E0;
