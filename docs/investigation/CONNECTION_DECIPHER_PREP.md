@@ -701,3 +701,14 @@ per-session question (which is settled).
   `read_conn_object_multi.ps1` (live memory read of the connection-object chain),
   `try_decrypt3.py` (TQCipher/Blowfish harness with positive controls + seal-aware scoring —
   the validated oracle to reuse against any future key-schedule candidate)
+
+### 2026-09-28 - stock Blowfish tables are absent from the decrypted v1078 client and its live heap
+Read-only scan of the v1078 image (`cp02_idle_twincity/image.bin`, code section ~97% decrypted) and the private-heap snapshots
+(`cp02`, `cp04`, ~360-420 MB each) for the standard Blowfish initial tables (P-array `243F6A88 85A308D3 13198A2E 03707344`, S-box0
+`D1310BA6 98DFB5AC 2FFD72DB D01ADFB7`), in little- and big-endian and as 2-word prefixes: **no hit anywhere.** So the client does not
+carry the stock Blowfish init tables as compiled-in data (it may generate/obfuscate them at runtime, sit them inside a protected region
+we did not capture, or use a different cipher). Consistent with the earlier negatives (Comet default seed, TQCipher default state)
+and with "custom, static-start stream cipher". Note this does NOT say where the key/state lives; the bounded private-heap key-schedule
+hunt listed as the next step above can now be run OFFLINE against those snapshots without touching the game.
+Also: routing the login leg through the local relay adds no decryption advantage - it carries the same ciphertext a passive `pktmon`
+capture already gets (which also covers the game leg the relay never sees).
