@@ -343,3 +343,11 @@ tunable dodge distance" approach already shipped here. Recommendation: treat the
 setting, floor 2 steps) as adequate for now, matching established practice, rather than a gap. If real per-monster
 precision is wanted later, the only path is live observation (spot-check a few named monsters' actual hit range
 in play and hand-curate a short override list) — not something to build speculatively without that data.
+
+### 2026-09-28 (later) — disconnect forensics tooling built; waiting for a real disconnect
+`tools/session_monitor.ps1` (no admin) + `tools/pktmon_ring.ps1` (admin) + `tools/pcap_tcp_summary.py` record everything observable
+from outside the game and freeze an incident bundle (with who-closed-first from the packets) on a drop. Proxy-mode login was
+diagnosed and works on v1078 (see `docs/investigation/PROXY_LOGIN_DIAGNOSIS_2026-09-28.md`). No disconnect has been captured yet;
+the user will run this again later. Full resume instructions and exact commands: the "RESUME HERE" section of
+`docs/investigation/SESSION_MONITOR.md`. VM instance: nothing required; if you see a disconnect on the VM, the same three tools
+work there (PowerShell 7 + Python needed).

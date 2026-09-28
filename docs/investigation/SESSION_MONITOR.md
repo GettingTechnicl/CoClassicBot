@@ -50,3 +50,37 @@ bundle, or the user says so.
 
 Note: the `walks/s` figures in `[actionrate]` lines count every real outbound packet from the game client (manual play
 included), not just the bot's own actions.
+
+## RESUME HERE - status as of 2026-09-28 and what to do next time
+
+**State left behind (verify before relying on any of it):** the monitor and pktmon ring were started 07:24 in an ELEVATED
+PowerShell window (`session_monitor.ps1 -PktmonSnapshot`, ring capture running). They do not survive a closed window or a
+reboot. `archer`'s saved proxy is still ON (`127.0.0.1:1080`) and the pass-through may or may not still be running.
+Nothing has been observed yet: no disconnect has happened since the tools were in place, so the incident path
+(trigger -> grace -> bundle -> automatic pktmon snapshot -> `tcp_summary_*.txt`) is unproven end to end on a REAL event. It was
+tested with a forced incident (`-TestIncident`) and the snapshot/decoder were tested separately, but not chained on a real drop.
+
+**Next session - start everything (repo root = `C:\Users\TerryGluff\Documents\Claude\CO99\CoClassicBot`):**
+1. Admin PowerShell 7 (Start menu -> PowerShell 7 -> right-click -> Run as administrator), then:
+   `cd C:\Users\TerryGluff\Documents\Claude\CO99\CoClassicBot`
+2. `pwsh -File .\tools\pktmon_ring.ps1 -Action Start`
+3. `pwsh -File .\tools\session_monitor.ps1 -PktmonSnapshot`   (leave this window open; it runs in the foreground)
+4. Proxy (only if wanted): `python C:\Users\TerryGluff\Documents\Claude\CO99\scratchpad\local_socks5_passthrough.py` in another
+   window, and `.\tools\toggle_proxy.ps1 -Label archer -On -HostPort 127.0.0.1:1080` (or `-Off` for a direct connection).
+   Note the proxy only carries the LOGIN leg, so it is not a variable for game-session disconnects.
+5. Log in via `launcher.exe` and play/idle normally.
+
+**When a disconnect happens (or after a long clean run):** read, in order, `monitor\incidents\<newest>\incident.txt` (who closed
+first per TCP state), `monitor\pktmon\tcp_summary_<time>.txt` (first FIN/RST: SERVER or CLIENT, silence before it, retransmits),
+`timeline.txt` (pings/NIC/process around it), then the launcher log's `[exit]` line (readable after the launcher exits).
+Interpretation: first close from the SERVER with clean pings and no retransmits = the server ended the session (not our network);
+first close from the CLIENT = something on this side; RST or long silence + retransmits = network path. Pings failing at the same
+moment = local network. Compare against the two launcher-detected disconnects on record (442 s, 665 s uptime, both direct).
+
+**Stop it all when done:** `Stop-Process -Name pwsh` is too broad - use Ctrl+C in the monitor window, then
+`pwsh -File .\tools\pktmon_ring.ps1 -Action Stop`. Ring is a fixed 256 MB circular file; monitor logs stay small.
+
+**Other threads still open (not part of this tooling):** first supervised WALK on v1078 (first real execution of
+`CRole::SetCommand`, gate `SET_COMMAND_TESTED` is on) -> one ranged shot -> banded-follow live test -> only then autohunt;
+Defender may re-quarantine `ImConquer.exe` (folder exclusion is the user's call); per-monster dodge range is parked
+(no data source found, upstream bot doesn't model it either).
