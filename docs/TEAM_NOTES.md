@@ -351,3 +351,11 @@ diagnosed and works on v1078 (see `docs/investigation/PROXY_LOGIN_DIAGNOSIS_2026
 the user will run this again later. Full resume instructions and exact commands: the "RESUME HERE" section of
 `docs/investigation/SESSION_MONITOR.md`. VM instance: nothing required; if you see a disconnect on the VM, the same three tools
 work there (PowerShell 7 + Python needed).
+
+### 2026-09-28 (later still) — containment Phase 0 built (firewall backstop + escape alarm); Phase 1 awaiting go-ahead
+Goal: relay sees/controls ALL game traffic, nothing escapes. Phase 0 = `tools/containment.ps1` (Windows Firewall per-program outbound
+BLOCK for every game-folder exe except loopback; Enable/Remove/Status/LogOn/LogOff/Report — Report lists every destination the game
+tries, from the firewall block log) + `session_monitor.ps1 -Containment` (escape alarm). launcher.exe and the pass-through python are
+deliberately NOT blocked (they are the egress). Expected while ON: login blocked at the game-server leg until Phase 1. The alarm was
+verified against the live game (it flagged 148.113.198.18:5816). Enable/LogOn/Report are unexercised (need admin). Design + commands:
+`docs/investigation/CONTAINMENT.md`. Phase 1 (SOCKS5 gateway w/ direct egress, ws2_32 connect-family hooks) is proposed there, NOT built.

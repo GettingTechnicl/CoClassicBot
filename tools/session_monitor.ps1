@@ -29,6 +29,11 @@
 .PARAMETER DurationSec   Stop after N seconds (0 = run until Ctrl+C).
 .PARAMETER TestIncident  After ~15 s, force one incident so you can inspect a bundle, then exit.
 .PARAMETER PktmonSnapshot  On incident, also snapshot the pktmon ring (requires elevation + a running ring).
+.PARAMETER Containment  ESCAPE ALARM. Treat ANY non-loopback TCP connection (including a SYN that a firewall is blocking) by a game-family
+                 process (ImConquer, crashpad_handler, ImLauncher, ImBootstrapper) as an escape from the relay: prints a loud
+                 "ESCAPE" line and raises a 'containment-escape' incident (deduped per process, 30 s). The game-server leg
+                 (5816) counts as an escape too, so use this once the relay carries it (Phase 1), or with the firewall
+                 containment (tools\containment.ps1) to see every attempt. TCP only -- UDP is covered by containment.ps1 -Action Report.
 #>
 param(
     [string]$OutDir = (Join-Path $PSScriptRoot '..\monitor'),
@@ -40,7 +45,8 @@ param(
     [int]$GamePort = 5816,
     [int]$DurationSec = 0,
     [switch]$TestIncident,
-    [switch]$PktmonSnapshot
+    [switch]$PktmonSnapshot,
+    [switch]$Containment
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -180,7 +186,7 @@ while ($true) {
     if ($DurationSec -gt 0 -and ($loopStart - $startedAt).TotalSeconds -ge $DurationSec) { break }
 
     # processes
-    $ps = @(Get-Process ImConquer, launcher -ErrorAction SilentlyContinue)
+    $ps = @(Get-Process ImConquer, launcher, crashpad_handler, ImLauncher, ImBootstrapper -ErrorAction SilentlyContinue)
     $seenIds = @{}
     foreach ($p in $ps) {
         $seenIds[$p.Id] = 1
@@ -196,11 +202,13 @@ while ($true) {
 
     # connections of the game process
     $ids = @($ps | Where-Object ProcessName -eq 'ImConquer' | ForEach-Object Id)
+    $watchIds = if ($Containment) { @($ps | Where-Object ProcessName -ne 'launcher' | ForEach-Object Id) } else { $ids }
     $cur = @{}
-    if ($ids.Count) {
-        foreach ($c in @(Get-NetTCPConnection -OwningProcess $ids)) {
+    if ($watchIds.Count) {
+        foreach ($c in @(Get-NetTCPConnection -OwningProcess $watchIds)) {
             if ($c.State -in 'Bound', 'Listen') { continue }
             $kind = Kind-Of $c
+            if ($Containment -and $c.RemoteAddress -notin '127.0.0.1', '::1', '0.0.0.0', '::') { $kind = 'escape' }
             if ($kind -eq 'ignore') { continue }
             $key = '{0}|{1}|{2}:{3}' -f $c.OwningProcess, $c.LocalPort, $c.RemoteAddress, $c.RemotePort
             $cur[$key] = $c
@@ -210,6 +218,11 @@ while ($true) {
                     Hist = [System.Collections.Generic.List[object]]::new(); Gone = $false }
                 $conns[$key].Hist.Add(@{ T = Get-Date; S = $st })
                 Emit "CONN new    [$kind] pid=$($c.OwningProcess) :$($c.LocalPort) -> $($c.RemoteAddress):$($c.RemotePort) $st"
+                if ($kind -eq 'escape') {
+                    $pn = if ($procs.ContainsKey([int]$c.OwningProcess)) { $procs[[int]$c.OwningProcess].Name } else { '?' }
+                    Emit "!!! ESCAPE  $pn pid=$($c.OwningProcess) opened a non-loopback connection -> $($c.RemoteAddress):$($c.RemotePort) ($st)  -- NOT going through the relay"
+                    Trigger 'containment-escape' $c.OwningProcess "$pn -> $($c.RemoteAddress):$($c.RemotePort)"
+                }
                 if ($kind -eq 'game') { $gameServerIp = [string]$c.RemoteAddress; Set-PingTarget 'game-server' $gameServerIp }
             } elseif ($conns[$key].State -ne $st) {
                 Emit "CONN state  [$kind] pid=$($c.OwningProcess) :$($c.LocalPort) $($conns[$key].State) -> $st"
