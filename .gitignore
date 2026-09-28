@@ -29,3 +29,5 @@ resume_hunt.flag
 
 # Session 12: Python bytecode cache from running tools/*.py locally.
 __pycache__/
+# session_monitor.ps1 output: local logs, incident bundles, packet captures
+monitor/
