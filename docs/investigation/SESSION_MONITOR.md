@@ -31,10 +31,13 @@ exit code and cause).
 `session_monitor.ps1 -PktmonSnapshot` does this automatically on an incident. **Untested elevated** (authoring session had no
 admin shell): run `Start` then `Snapshot` once by hand and check the .txt before relying on it.
 
-## First observation the monitor was built around
-Game sessions are ending abruptly about 7–11 minutes in, with and without the proxy: uptime 442 s (direct, 2026-09-28 00:19),
-665 s (direct, 2026-09-23), >=509 s (proxy, pid 110492, 06:54:58 -> bot log ends 07:03:27 mid-operation; launcher relaunched
-at 07:04:01). In each the launcher logged/acted on "login screen reappeared". Three data points, not a conclusion, but it
-points away from the proxy as the cause. The bot log for 110492 ends with no flight-recorder dump and no send failure.
-The `walks/s` figures in `[actionrate]` lines count every real outbound packet from the game client (manual play included),
-not just the bot's own actions.
+## Correction to an earlier version of this doc
+An earlier draft claimed sessions were "ending abruptly ~7-11 minutes in, with and without the proxy". That was wrong: the
+06:54:58 process (pid 110492) ended because the user closed it to fix the account password, not because of a disconnect, so it
+is not a data point. The only launcher-detected server-side disconnects on record are the two direct-connection sessions
+(uptime 442 s on 2026-09-28 00:19 and 665 s on 2026-09-23) - two cases, no pattern, and nothing yet says anything about the proxy.
+Lesson kept for whoever reads this next: a process ending is not a disconnect until the launcher log, the monitor's incident
+bundle, or the user says so.
+
+Note: the `walks/s` figures in `[actionrate]` lines count every real outbound packet from the game client (manual play
+included), not just the bot's own actions.
