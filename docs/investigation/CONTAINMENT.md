@@ -53,3 +53,15 @@ which egress Phase 1 must route (login, game, telemetry, anything else, TCP or U
    rewriting non-loopback destinations to the gateway with the real destination handed over in the SOCKS5 CONNECT; fail closed if the relay is unreachable.
 3. Early-connect gap: the DLL is injected ~6 s after launch; connects before that (telemetry) rely on the firewall. Option: suspended-launch injection.
 4. Fallback if hooks prove unstable in the Themida client: WinDivert/WFP redirect driver (a signed kernel component — larger step, propose separately).
+
+## Phase 0 discovery result (2026-09-28 08:56-08:58, two launches, user ran Enable+LogOn+Report)
+Blocked outbound attempts by the game (all from `ImConquer.exe`; nothing from crashpad_handler/ImLauncher/ImBootstrapper):
+
+| Destination | Proto | Seen | Meaning |
+|---|---|---|---|
+| `34.160.81.0:443` | TCP | once per launch, ~9 s BEFORE the game-server attempt | telemetry/crash-reporting-style HTTPS (Google Cloud IP); fires early, likely before the DLL is injected |
+| `148.113.198.18:5816` | TCP | after the login leg, 1-2 SYNs per launch (both launches) | game-server leg; the address arrives dynamically in MsgConnectEx |
+
+No UDP, no IPv6, no other host was attempted. Login leg (`127.0.0.1:9959`, loopback) is not in the log by design. Both game processes then exited
+(game leg blocked, as expected). Caveat: the game never got in-world, so anything it would only do AFTER login (in-game web calls, a second server, etc.)
+is not covered by this observation; re-run Report after Phase 1 routes the game leg. This does NOT say which ws2_32 function issues the connects.
