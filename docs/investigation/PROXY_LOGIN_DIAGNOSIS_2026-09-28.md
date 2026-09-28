@@ -3,7 +3,31 @@
 Bar: with the launcher's proxy mode on and pointed at the local 127.0.0.1:1080 pass-through, game login must succeed.
 Scope: proxy-mode login only (no system-wide routing / capture). Diagnose first, fix only after a go-ahead.
 
-## Verdict so far: the failing attempt is NOT on disk, and today the client can't even launch
+## UPDATE (same day, live attempt): proxy-mode login WORKS on v1078 — the bar is met, no code fix needed
+
+After the user restored the quarantined exe (verified v1078: stamp 0x6AB0822B / 0x2A26000, so the fence accepts it; `version.json` 1079 was
+just the new login-screen server entry, not a new client), the account's proxy was enabled (`tools\toggle_proxy.ps1`), the pass-through
+started, and one login was run from `launcher.exe` with a connection watcher. Evidence (relay log, pass-through log, watcher trace,
+bot logs) — two launches, both reached in-world:
+
+* **Account leg (through both hops):** `ImConquer -> 127.0.0.1:9959` (relay) `-> 127.0.0.1:1080` (pass-through) `-> 148.113.160.82:9959`
+  (login server). Relay log: `Accepted client connection` -> `SOCKS5 tunnel established` -> `client->target 202 bytes` ->
+  `target->client 6 bytes` -> `Connection closed`. This is the normal short account exchange.
+* **Game leg:** immediately after the account leg the client dials the game server **directly** (`172.16.2.13 -> 148.113.198.18:5816`),
+  bypassing the relay — the known behavior (address delivered dynamically, not in `servers.json`).
+* **In-world:** bot log `Hero: S411 (ID=1174578)` in both processes (35916 at 06:53:22, 110492 at 06:55:32); game stayed up.
+* **Bad password:** in launch 110492 two account-leg connections got the same 6-byte reply and closed with no game-leg connection
+  (the rejection path, matching the user's mistyped password); the third connection succeeded and went on to :5816.
+* **Kill-switch:** the text `KILL-SWITCH: Proxied game connection closed` still prints after each account-leg close but is inert
+  (`m_killSwitch=false`) — the game was not terminated.
+* Source IP is identical on both legs (pass-through egresses from this machine), so no IP-mismatch between login and game legs.
+  With a REAL remote proxy that would differ (login leg from the proxy's IP, game leg from the user's own) — untested, not needed here.
+
+So the earlier "fails" is not reproducible with the prerequisites met. What actually stood in the way today, from the evidence above:
+Defender quarantine of the exe (launch dies, `CreateProcess 0xE1`), the pass-through not running (the launcher's pre-launch SOCKS5 test
+fails and the game is not launched), and the account's saved proxy flag being off. Which one the user originally hit is unconfirmed.
+
+## Earlier findings (before the live attempt): the failing attempt was NOT on disk, and the client couldn't launch
 
 No v1078 proxy-on attempt exists in `launcher.log` (the proxy blocks in it are all pre-timestamp, i.e. v1074-era, and in the
 last of them login *did* succeed through the relay: pre-launch SOCKS5 test OK -> relay listening -> `Login confirmed`).
