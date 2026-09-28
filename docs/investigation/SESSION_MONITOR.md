@@ -25,11 +25,20 @@ FIN_WAIT/TIME_WAIT => we closed first; Established -> gone with neither => RST/a
 Not captured: `launcher.log` (exclusively locked while the launcher runs — read it after it exits; its `[exit]` line has the
 exit code and cause).
 
-## `tools/pktmon_ring.ps1` (ELEVATED) — rolling packet capture
-`Start` keeps a 256 MB circular pktmon capture of tcp 5816 + 9959 running; `Snapshot` freezes it to
-`snapshot_<time>.etl/.pcapng/.txt` plus `last_packets` and `close_flags` (every FIN/RST in order) and restarts the ring;
-`session_monitor.ps1 -PktmonSnapshot` does this automatically on an incident. **Untested elevated** (authoring session had no
-admin shell): run `Start` then `Snapshot` once by hand and check the .txt before relying on it.
+## `tools/pktmon_ring.ps1` (ELEVATED) - rolling packet capture
+`Start` keeps a 256 MB circular pktmon capture of tcp 5816 + 9959 running; `Snapshot` freezes it to `snapshot_<time>.etl` and
+`.pcapng`, writes `tcp_summary_<time>.txt`, and restarts the ring. `session_monitor.ps1 -PktmonSnapshot` does this automatically
+on an incident. Verified 2026-09-28 (user ran Start + Snapshot elevated; monitor restarted with `-PktmonSnapshot` in the same
+admin window): the `.pcapng` decodes cleanly - 138 frames, of which the decodable Ethernet/IPv4/TCP ones are the game flow
+`148.113.198.18:5816 <-> 172.16.2.13:<port>` (`PA` data + `A` acks; server sends small 10-12 byte packets every ~1.5-5 s).
+The other ~90 frames are the same packets seen at the Wi-Fi layer, encrypted, with junk ethertypes - ignored.
+
+**Read the `.pcapng`, not the `.txt`.** `pktmon etl2txt` output is UTF-16 and full of those encrypted Wi-Fi copies; the first
+version of the snapshot step grepped it for FIN/RST and could never have found any. `tools/pcap_tcp_summary.py` decodes the
+pcapng instead (stdlib only): per flow it reports who sent the first FIN/RST (SERVER vs CLIENT), how long the flow was silent
+before it, retransmits (same seq/len repeated >5 ms later; near-simultaneous repeats are the same packet at two capture points and
+are dropped), and the last packets. Run by hand: `python tools\pcap_tcp_summary.py monitor\pktmon\snapshot_<time>.pcapng`.
+Timestamps in the summary are UTC (local = UTC-5 in CDT).
 
 ## Correction to an earlier version of this doc
 An earlier draft claimed sessions were "ending abruptly ~7-11 minutes in, with and without the proxy". That was wrong: the

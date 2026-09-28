@@ -17,14 +17,15 @@
   Actions (all require an ELEVATED PowerShell; pktmon needs admin):
     Start     clear filters, filter tcp port 5816 + 9959, start the circular capture
     Status    pktmon status
-    Snapshot  stop the ring, save ring.etl as snapshot_<time>.etl, convert to .pcapng + a readable .txt with
-              TCP flags, extract last_packets.txt / close_flags.txt, then RESTART the ring (gap ~1-2 s)
+    Snapshot  stop the ring, save ring.etl as snapshot_<time>.etl, convert to .pcapng, write tcp_summary_<time>.txt
+              (tools\pcap_tcp_summary.py: who sent the first FIN/RST, silence before it, retransmits, last
+              packets), then RESTART the ring (gap ~1-2 s)
     Stop      stop the capture
 
   tools\session_monitor.ps1 -PktmonSnapshot calls Snapshot automatically when it detects an incident.
 
-  NOTE: written but only its non-elevated refusal path has been exercised so far (the authoring session had no
-  elevated shell). Run `Start` then `Snapshot` once by hand and check the .txt before relying on it.
+  STATUS: Start + Snapshot were run elevated by the user on 2026-09-28 and produced .etl/.pcapng; the .pcapng decodes
+  cleanly (see pcap_tcp_summary.py). The Snapshot step that runs the summary is new since that run.
 #>
 param(
     [Parameter(Mandatory)][ValidateSet('Start', 'Stop', 'Status', 'Snapshot')][string]$Action,
@@ -62,15 +63,18 @@ switch ($Action) {
         $snap = Join-Path $OutDir "snapshot_$stamp.etl"
         Copy-Item $ring $snap
         try { pktmon etl2pcap $snap -o (Join-Path $OutDir "snapshot_$stamp.pcapng") | Out-Null } catch { Write-Host "[pktmon_ring] etl2pcap failed: $_" }
-        $txt = Join-Path $OutDir "snapshot_$stamp.txt"
-        try { pktmon etl2txt $snap -o $txt | Out-Null } catch { Write-Host "[pktmon_ring] etl2txt failed: $_" }
-        if (Test-Path $txt) {
-            Get-Content $txt -Tail 120 | Set-Content (Join-Path $OutDir "last_packets_$stamp.txt")
-            # any FIN / RST in the capture, in order: the first one after the last data is who closed first.
-            Select-String -Path $txt -Pattern 'Flags \[[^\]]*[FR][^\]]*\]' | ForEach-Object { $_.Line } |
-                Set-Content (Join-Path $OutDir "close_flags_$stamp.txt")
-        }
-        Write-Host "[pktmon_ring] snapshot saved: $snap (+ .pcapng, .txt, last_packets, close_flags)"
+        # NOTE: `pktmon etl2txt` output is UTF-16 and mixes in encrypted Wi-Fi-layer copies of every packet, so it is
+        # NOT used for analysis (an earlier version tried to grep it for FIN/RST and found nothing, wrongly). The .pcapng
+        # is decoded by tools\pcap_tcp_summary.py instead: per flow, who sent the first FIN/RST, silence before it,
+        # retransmits, last packets.
+        $pcap = Join-Path $OutDir "snapshot_$stamp.pcapng"
+        $summary = Join-Path $OutDir "tcp_summary_$stamp.txt"
+        $py = Get-Command python -ErrorAction SilentlyContinue
+        if ($py -and (Test-Path $pcap)) {
+            & $py.Source (Join-Path $PSScriptRoot 'pcap_tcp_summary.py') $pcap 2>&1 | Set-Content $summary
+            Write-Host "[pktmon_ring] TCP summary: $summary"
+        } else { Write-Host '[pktmon_ring] python not found - run tools\pcap_tcp_summary.py on the .pcapng manually' }
+        Write-Host "[pktmon_ring] snapshot saved: $snap (+ .pcapng, tcp_summary)"
         Start-Ring
     }
 }
