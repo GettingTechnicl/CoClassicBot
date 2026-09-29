@@ -115,3 +115,21 @@ off for this step) both predate the hook, so they were never observed (a hook on
 attaches -- expected, not a bug). No connect events logged yet. Next: a fresh connect made AFTER injection (relaunch
 via launcher.exe + inject connectfinder as early as possible, or any other action that opens a new outbound
 connection) is needed to actually capture which function the client calls.
+
+## Phase 1 Step 1 RESULT (2026-09-28, relaunch + reinject): the client uses plain `connect()` only
+Two connect events captured post-injection, both via the bare `connect` export — WSAConnect, WSAConnectByNameA/W,
+WSAConnectByList and ConnectEx were all hooked (see interim status above) but NEVER called:
+
+| api | dest | game-module call frames (RVA, shallow→deep) |
+|---|---|---|
+| connect | 127.0.0.1:9959 (login leg, via relay) | 0x1C6F85 → 0x199E06 → 0x10CC7D1 → 0xE8CB5 → 0xC1656 → 0xEB678 → 0x39C1C9 |
+| connect | 148.113.198.18:5816 (game leg, direct) | 0x1C6F85 → 0x199E06 → 0x1F236A → 0x199CF8 → 0xC1368 → 0xEB678 → 0x39C1C9 |
+
+Both share the same shallow two frames (0x1C6F85, 0x199E06 — almost certainly a thin connect-wrapper and its caller,
+one level above raw `connect()`), diverge at the login-specific vs game-specific call site (0x10CC7D1 vs 0x1F236A),
+then reconverge at 0xEB678 → 0x39C1C9 — a shared outer dispatcher both paths route through. Not yet correlated
+against netfinder's send-path RVAs; worth doing before Phase 1 Step 2 if a stable network-layer landmark is wanted.
+
+**Conclusion for Phase 1 Step 2:** the real redirect hook needs to cover `connect()` as the confirmed, evidence-backed
+primary target. Recommend keeping the other 5 hooked too (already built, zero extra cost, and a future client update
+could switch APIs) but `connect()` is what actually matters today for both the login and game legs.
