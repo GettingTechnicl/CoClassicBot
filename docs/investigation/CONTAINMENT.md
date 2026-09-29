@@ -75,3 +75,19 @@ is not covered by this observation; re-run Report after Phase 1 routes the game 
 0 failures on either target. This is raw TCP-handshake RTT with no relay involved -- the number the relay's own added
 overhead (Step 2 gate: median <=1ms, p99<=3ms, measured once the gateway exists) sits on top of. At these WAN numbers,
 a 1-3ms relay hop is well under 10% of even the median, i.e. in the noise.
+
+## Phase 1 Step 1: connectfinder.dll (observe-only connect hook) — built, not yet run live
+`src/connectfinder.cpp` (new standalone diagnostic DLL, same pattern as `netfinder`/`recvfinder`): Detour-hooks every ws2_32 export
+that can originate an outbound connect — `connect`, `WSAConnect`, `WSAConnectByNameA`, `WSAConnectByNameW`, `WSAConnectByList` — plus
+`ConnectEx`, caught indirectly via a `WSAIoctl` hook watching for `SIO_GET_EXTENSION_FUNCTION_POINTER` + `WSAID_CONNECTEX`, then
+Detoured once. Every hook calls straight through with unmodified args/results — zero behavior change, nothing is redirected.
+Logs one JSON line per connect attempt to `C:\Users\Public\coclassic_connectfinder.json`: api name, socket, destination `ip:port`
+(or hostname/service for the ByName variants), calling thread id, and every return-address frame that lands inside the game
+module (RVA), so the call site is visible too. Built clean (`build\bin\Release\connectfinder.dll`), not yet injected/run live.
+
+Test plan (needs the user driving the live game — not run yet): inject into `ImConquer.exe` via `tools\inject_dll.ps1` AFTER
+launching via `launcher.exe` with the proxy on and firewall containment OFF (containment would block the game leg before this
+hook gets to see the redirect target), log in, get in-world, do a few actions, then read `coclassic_connectfinder.json` for which
+function(s) fired for the login leg and the game leg, plus whatever else connects post-login. Run `session_monitor.ps1
+-Containment` alongside it (no conflict — it just watches, and it now also catches anything post-login the earlier
+firewall-only Report couldn't see, per that section's caveat above).

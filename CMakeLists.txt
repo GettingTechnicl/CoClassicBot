@@ -256,6 +256,21 @@ set_target_properties(netfinder PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ── Connect finder (standalone, OBSERVE-ONLY; Phase 1 Step 1 of containment --
+#    Detour-hooks every ws2_32 connect-family export to find which one(s) the game
+#    actually calls, before Step 2 builds the real redirect -- see
+#    docs/investigation/CONTAINMENT.md) ──
+add_library(connectfinder SHARED
+    src/connectfinder.cpp
+    ${DETOURS_SOURCES}
+)
+target_include_directories(connectfinder PRIVATE vendor/Detours/src)
+target_link_libraries(connectfinder PRIVATE ws2_32 psapi)
+set_target_properties(connectfinder PROPERTIES
+    OUTPUT_NAME "connectfinder"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ── Recv finder (standalone; Detour-hooks Winsock recv/WSARecv -- inbound
 #    counterpart to netfinder, checking whether server->client traffic is
 #    plaintext-framed the way outbound turned out to be) ──
