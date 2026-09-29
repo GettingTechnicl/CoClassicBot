@@ -84,6 +84,7 @@ set(COCLASSIC_SOURCES
     src/packets.cpp
     src/net_recv_hook.cpp
     src/net_connect_hook.cpp
+    src/plaintext_log.cpp
     src/pathfinder.cpp
     src/plugins/plugin_mgr.cpp
     src/plugins/base_hunt_plugin.cpp

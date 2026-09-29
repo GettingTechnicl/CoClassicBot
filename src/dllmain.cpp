@@ -5,6 +5,7 @@
 #include "hwid_spoof.h"
 #include "hooks.h"
 #include "packets.h"
+#include "plaintext_log.h"
 #include "net_recv_hook.h"
 #include "net_connect_hook.h"
 #include "game.h"
@@ -242,6 +243,7 @@ static DWORD WINAPI InitThread(LPVOID)
                  hero ? hero->GetName() : "?", sender.c_str(), message.c_str());
         SendDiscordNotification(buf);
     });
+    PlaintextLog::Init();
     InitPacketHook();
     InitNetRecvHook();
 
@@ -321,6 +323,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         CleanupPacketHook();
         CleanupNetRecvHook();
         CleanupNetConnectHook();
+        PlaintextLog::Shutdown();
         CleanupHooks();
         HwidSpoof::Shutdown();
         spdlog::info("[shutdown] Cleanup complete");

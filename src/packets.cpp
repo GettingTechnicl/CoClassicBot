@@ -3,6 +3,7 @@
 #include "config.h"
 #include "game.h"
 #include "log.h"
+#include "plaintext_log.h"
 #include <detours.h>
 
 static PacketLog g_packetLog;
@@ -284,6 +285,12 @@ static void TrackOutgoingPacket(const uint8_t* data, size_t size)
 {
     if (!data || size < 4)
         return;
+
+    // [CONNECTION-DECIPHER 2026-09-28] Persists the exact plaintext HkSendMsgReal was
+    // called with -- see plaintext_log.h. This is the "read the client's own plaintext
+    // instead of cracking the wire cipher" thread; tools/plaintext_ciphertext_align.py
+    // cross-checks this against relay_packets.log's ciphertext for the same session.
+    PlaintextLog::LogOutbound(data, static_cast<uint32_t>(size));
 
     const uint16_t msgType = *(const uint16_t*)(data + 2);
     if (msgType == 0x1B5C) {

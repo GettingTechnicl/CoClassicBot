@@ -712,3 +712,75 @@ and with "custom, static-start stream cipher". Note this does NOT say where the 
 hunt listed as the next step above can now be run OFFLINE against those snapshots without touching the game.
 Also: routing the login leg through the local relay adds no decryption advantage - it carries the same ciphertext a passive `pktmon`
 capture already gets (which also covers the game leg the relay never sees).
+
+## 2026-09-28 (late) — "read the client's own plaintext" thread: point 1 shipped, point 2 checked negative
+
+Per the containment project's spillover into decipher work: read the client's own plaintext at both
+ends instead of attacking the wire cipher.
+
+### Point 1 (outbound plaintext, pre-cipher) — DONE, built, compiled clean
+Turned out to already half-exist: `HkSendMsgReal` in `src/packets.cpp` already Detours the confirmed
+real `CNetClient::SendMsg` (live-verified on v1078), seeing every outbound packet's plaintext --
+the bot's own sends AND the game's own native ones -- before any cipher. It only fed an in-memory,
+capacity-capped ring (`PacketLog`, overlay Packets tab) with no timestamp/persistence.
+
+Added `src/plaintext_log.{h,cpp}` (new, in `COCLASSIC_SOURCES`, both DLL targets): persists every
+outbound call as `plaintext_<pid>.log`, one entry per `SendMsg` call, each carrying a per-process
+sequence number + timestamp + `msg_types.h`-labeled type + the exact wire size + hex dump (same
+16-per-line format as `RelayLogger`, for easy side-by-side diffing). Flags a mismatch between the
+packet's own `[u16 size]` header field and the actual wire size it was called with, in-line, as soon
+as it's written -- not something you'd have to notice later by hand.
+
+Wired into `TrackOutgoingPacket()` (`packets.cpp`) and `dllmain.cpp`'s init/shutdown. Compiles clean
+on `coclassic_v1078`; link is pending (the DLL is locked by the currently-running test session --
+normal, compiling-while-running is the established workflow here).
+
+`tools/plaintext_ciphertext_align.py` (new): reads a `plaintext_<pid>.log` alongside
+`relay_packets.log` for the same connection, aligns entries in order, and reports per-pair whether
+the plaintext wire size matches the corresponding ciphertext chunk size. A match confirms the
+"no framing added downstream of SendMsg" model (this doc's own v1074 finding) for v1078 too, and
+means the XOR keystream for that stretch (plaintext ^ ciphertext) is valid, since the cipher is a
+confirmed static-start positional stream -- printed as a byproduct, not pursued as a goal. A
+mismatch is flagged rather than silently producing a wrong keystream. **Not yet run against a real
+capture** -- needs a fresh session with the rebuilt DLL (pending the link above) plus
+`relay_packets.log` from the same session (Phase 1's gateway already captures the ciphertext side).
+
+### Point 2 (inbound plaintext / dispatcher) — offline scan run, honest checked negative
+`tools/find_dispatcher.py` (new): capstone-based linear-sweep disassembly of the already-decrypted
+v1078 image dump (`C:\Users\Public\coclassic_capture\session_20260921_073000\cp02_idle_twincity\
+image.bin` -- the same one used for the earlier stock-Blowfish-table search), looking for `cmp`
+instructions with an immediate matching one of `msg_types.h`'s 241 known IDs, clustered by proximity
+and ranked by distinct-ID count. Pre-check per the reviewer's request: the ID space match is already
+live-confirmed for v1078 specifically (not just inherited from v1074) -- the server has accepted
+hand-built `0x3F2`/`MsgAction` packets in live jump/walk/pickup testing on this exact build, which
+would not work if v1078 used a different ID space.
+
+Ran against the main code section (rva 0x1000, ~5.6MB) plus every other non-`.themida` section:
+192 raw hits, best cluster only 7 distinct IDs over a ~15KB span. **Spot-checked the top 3 clusters
+by hand-disassembling the surrounding code directly (not just trusting the tool's own count)** --
+all three are false positives, mechanically confirmed:
+- `cmp rbx, 0x400` (1024=MsgAllot) sits in floating-point/SIMD code (`movd xmm8`, `cvtdq2pd`) --
+  0x400=1024 is a bog-standard power-of-two buffer/loop bound, coincidental.
+- `cmp eax, 0x3ff` (1023=MsgTeam) is immediately followed by comparisons against `0x5c` (`\`) and
+  `0x75` (`u`) -- a Unicode surrogate-range check (0x3FF is the standard 10-bit surrogate mask)
+  inside what looks like a string-escape parser, not message dispatch.
+- The top-ranked cluster's own reported address didn't even correspond to a real instruction
+  boundary when re-disassembled independently -- a linear-sweep artifact (code/data misalignment
+  in a section that mixes both), not a real hit at all.
+
+**Root cause, not just "didn't find it":** individual `cmp`-against-literal-ID chains are the wrong
+signature to search for a 241+-entry sparse ID space -- a real implementation almost certainly uses
+a jump table indexed directly by type, a hash lookup, or a binary-search tree with a very different
+shape than what this pass searched for, and a 5.6MB code section has more than enough coincidental
+small-integer matches to bury a real signal at this cluster size/window.
+
+**Proposed next offline attempt** (not yet built, needs go-ahead): flip the search to a STRUCTURAL
+signature instead of a numeric-coincidence one -- search for `movzx r32, word ptr [reg+2]` (loading
+the u16 type field at the confirmed `[u16 size][u16 type]` header offset), which is a much rarer,
+more specific pattern than any individual immediate value, then use nearby msg-type-ID immediates as
+SECONDARY corroboration on the resulting candidate list rather than as the primary search key.
+
+If that also comes up empty, the reviewer's own designated fallback -- tracing forward from the
+confirmed `recv()` hook through to whatever consumes the decrypted bytes -- is the next rung, but
+that's live instrumentation (a step up the risk ladder) and needs its own explicit go-ahead, not
+something to slide into from an offline scan running dry.
