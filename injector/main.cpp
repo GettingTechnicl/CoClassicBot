@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -1265,6 +1266,22 @@ private:
         }
     };
 
+    // Phase 2 (docs/investigation/CONTAINMENT.md): one of these exists per currently-open
+    // gateway connection, registered in m_connections so the control port's LIST/KILL/DELAY/
+    // PAUSE/RESUME commands can find and act on it by id. `paused`/`delayMs` are read on every
+    // iteration of GatewayPump from whichever thread is pumping that direction -- plain
+    // atomics are enough since nothing else about a Connection changes after construction.
+    struct Connection
+    {
+        std::string host;
+        uint16_t port = 0;
+        ManagedSocketPtr client;
+        ManagedSocketPtr upstream;
+        std::atomic<bool> paused{false};
+        std::atomic<int> delayMs{0};
+        std::chrono::steady_clock::time_point startedAt;
+    };
+
     void ControlAcceptLoop()
     {
         while (m_running) {
@@ -1277,8 +1294,15 @@ private:
         }
     }
 
-    // "CONNECT host:port\n" -> "PORT nnnn\n" / "ERR reason\n". Trusted local
-    // protocol (loopback only, one line, bounded read) -- no framing beyond the newline.
+    // One line in, one reply out, then close -- trusted local protocol (loopback only,
+    // no auth: anything that can reach this port already runs as this user). Commands:
+    //   CONNECT host:port     -> "PORT nnnn\n" / "ERR reason\n"           (used by the DLL's redirect hook)
+    //   LIST                  -> one "id host:port paused=0/1 delayMs=N age=S.Ss" line per
+    //                            open connection, or "(no active connections)\n"
+    //   KILL id FIN|RST       -> "OK\n" / "ERR reason\n"                  (Phase 2, protocol research)
+    //   DELAY id ms           -> "OK\n" / "ERR reason\n"  (applied symmetrically, both directions)
+    //   PAUSE id / RESUME id  -> "OK\n" / "ERR reason\n"
+    // See tools/relay_control.py for the operator-facing CLI over this protocol.
     void HandleControl(SOCKET c)
     {
         char buf[256] = {};
@@ -1290,46 +1314,127 @@ private:
             buf[total++] = ch;
             if (ch == '\n') break;
         }
+        std::string line(buf, total);
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+            line.pop_back();
 
-        std::string host;
-        uint16_t port = 0;
-        if (!ParseControlRequest(std::string(buf, total), host, port)) {
-            send(c, "ERR bad request\n", 17, 0);
-            closesocket(c);
-            return;
+        std::istringstream iss(line);
+        std::string cmd;
+        iss >> cmd;
+
+        std::string reply;
+        if (cmd == "CONNECT") {
+            std::string hostport;
+            iss >> hostport;
+            Endpoint ep;
+            if (!ParseEndpoint(hostport, &ep)) {
+                reply = "ERR bad request\n";
+            } else {
+                uint16_t tunnelPort = 0;
+                reply = GetOrCreateTunnel(ep.host, ep.port, tunnelPort)
+                    ? ("PORT " + std::to_string(tunnelPort) + "\n")
+                    : "ERR could not create tunnel\n";
+            }
+        } else if (cmd == "LIST") {
+            reply = HandleList();
+        } else if (cmd == "KILL") {
+            uint64_t id = 0; std::string mode;
+            iss >> id >> mode;
+            reply = id ? HandleKill(id, mode == "RST") : "ERR bad request\n";
+        } else if (cmd == "DELAY") {
+            uint64_t id = 0; int ms = -1;
+            iss >> id >> ms;
+            reply = (id && ms >= 0) ? HandleDelay(id, ms) : "ERR bad request\n";
+        } else if (cmd == "PAUSE") {
+            uint64_t id = 0; iss >> id;
+            reply = id ? HandlePauseResume(id, true) : "ERR bad request\n";
+        } else if (cmd == "RESUME") {
+            uint64_t id = 0; iss >> id;
+            reply = id ? HandlePauseResume(id, false) : "ERR bad request\n";
+        } else {
+            reply = "ERR unknown command\n";
         }
 
-        uint16_t tunnelPort = 0;
-        if (!GetOrCreateTunnel(host, port, tunnelPort)) {
-            send(c, "ERR could not create tunnel\n", 29, 0);
-            closesocket(c);
-            return;
-        }
-
-        char reply[32];
-        int len = sprintf_s(reply, "PORT %u\n", tunnelPort);
-        send(c, reply, len, 0);
+        send(c, reply.c_str(), static_cast<int>(reply.size()), 0);
         closesocket(c);
     }
 
-    static bool ParseControlRequest(const std::string& line, std::string& host, uint16_t& port)
+    std::shared_ptr<Connection> FindConnection(uint64_t id)
     {
-        if (line.rfind("CONNECT ", 0) != 0)
-            return false;
-        size_t colon = line.find_last_of(':');
-        if (colon == std::string::npos || colon <= 8)
-            return false;
-        host = line.substr(8, colon - 8);
-        std::string portStr = line.substr(colon + 1);
-        while (!portStr.empty() && !isdigit(static_cast<unsigned char>(portStr.back())))
-            portStr.pop_back();
-        if (host.empty() || portStr.empty())
-            return false;
-        uint16_t parsed = 0;
-        if (!ParseUInt16(portStr, &parsed))
-            return false;
-        port = parsed;
-        return true;
+        std::lock_guard lock(m_connMutex);
+        auto it = m_connections.find(id);
+        return it != m_connections.end() ? it->second : nullptr;
+    }
+
+    std::string HandleList()
+    {
+        std::ostringstream out;
+        std::lock_guard lock(m_connMutex);
+        for (auto& kv : m_connections) {
+            auto& conn = kv.second;
+            const double ageSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - conn->startedAt).count();
+            out << kv.first << " " << conn->host << ":" << conn->port
+                << " paused=" << (conn->paused.load() ? 1 : 0)
+                << " delayMs=" << conn->delayMs.load()
+                << " age=" << std::fixed << std::setprecision(1) << ageSec << "s\n";
+        }
+        const std::string result = out.str();
+        return result.empty() ? "(no active connections)\n" : result;
+    }
+
+    // Closes both sockets directly from the control thread -- FIN just closes normally
+    // (SO_LINGER left at its default, so any queued data drains and a normal FIN goes out);
+    // RST sets SO_LINGER{1,0} on both ends first, forcing an immediate hard reset instead.
+    // The connection's own pump threads notice the now-closed socket on their next recv/send
+    // and unwind normally (same path an organic disconnect takes), so this doesn't need a
+    // separate "please stop" flag -- closing the socket IS the stop signal.
+    std::string HandleKill(uint64_t id, bool rst)
+    {
+        auto conn = FindConnection(id);
+        if (!conn)
+            return "ERR unknown connection id\n";
+        if (rst) {
+            linger l{1, 0};
+            for (const auto& sockPtr : { conn->client, conn->upstream }) {
+                SOCKET s = GetSocketValue(sockPtr);
+                if (s != INVALID_SOCKET)
+                    setsockopt(s, SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&l), sizeof(l));
+            }
+        }
+        if (m_logger)
+            m_logger->LogEvent(id, std::string("Gateway: OPERATOR KILL (") + (rst ? "RST" : "FIN") + ") -- deliberate test disconnect, not organic");
+        CloseManagedSocket(conn->client);
+        CloseManagedSocket(conn->upstream);
+        return "OK\n";
+    }
+
+    // Applied symmetrically (both directions read the same atomic) so it models added
+    // network latency on the whole round trip, which is what protocol/timeout research
+    // actually wants to observe -- not just one leg of it.
+    std::string HandleDelay(uint64_t id, int ms)
+    {
+        auto conn = FindConnection(id);
+        if (!conn)
+            return "ERR unknown connection id\n";
+        conn->delayMs = ms;
+        if (m_logger)
+            m_logger->LogEvent(id, "Gateway: OPERATOR DELAY set to " + std::to_string(ms) + "ms");
+        return "OK\n";
+    }
+
+    // Pausing stops this connection's pumps from reading at all -- it does NOT fake a pause
+    // by holding data in a buffer. The peer's own TCP receive window fills up naturally and
+    // its OS-level flow control stalls it for real, which is exactly the observable condition
+    // protocol research wants (a genuine stall), not a synthetic approximation of one.
+    std::string HandlePauseResume(uint64_t id, bool pause)
+    {
+        auto conn = FindConnection(id);
+        if (!conn)
+            return "ERR unknown connection id\n";
+        conn->paused = pause;
+        if (m_logger)
+            m_logger->LogEvent(id, pause ? "Gateway: OPERATOR PAUSE" : "Gateway: OPERATOR RESUME");
+        return "OK\n";
     }
 
     bool GetOrCreateTunnel(const std::string& host, uint16_t port, uint16_t& outTunnelPort)
@@ -1373,7 +1478,7 @@ private:
         const std::string dest = host;
         const uint16_t destPort = port;
         RelayLogger* logger = m_logger;
-        raw->acceptThread = std::thread([raw, dest, destPort, logger]() {
+        raw->acceptThread = std::thread([this, raw, dest, destPort, logger]() {
             while (raw->running) {
                 SOCKET client = accept(raw->listenSocket, nullptr, nullptr);
                 if (client == INVALID_SOCKET) {
@@ -1381,8 +1486,8 @@ private:
                     continue;
                 }
                 std::lock_guard lock(raw->sessionsMutex);
-                raw->sessionThreads.emplace_back([client, dest, destPort, logger]() {
-                    ServeOneConnection(client, dest, destPort, logger);
+                raw->sessionThreads.emplace_back([this, client, dest, destPort, logger]() {
+                    ServeOneConnection(this, client, dest, destPort, logger);
                 });
             }
         });
@@ -1398,7 +1503,7 @@ private:
         return true;
     }
 
-    static void ServeOneConnection(SOCKET client, const std::string& host, uint16_t port, RelayLogger* logger)
+    static void ServeOneConnection(ConnectGateway* self, SOCKET client, const std::string& host, uint16_t port, RelayLogger* logger)
     {
         // Offset well clear of Socks5Relay's own m_nextConnectionId (starts at 1, and a
         // session has few login connections) so relay_packets.log's shared "[conn N]"
@@ -1424,11 +1529,22 @@ private:
         setsockopt(upstream, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
         ManagedSocketPtr upstreamMs = std::make_shared<ManagedSocket>(upstream);
 
+        auto conn = std::make_shared<Connection>();
+        conn->host = host;
+        conn->port = port;
+        conn->client = clientMs;
+        conn->upstream = upstreamMs;
+        conn->startedAt = std::chrono::steady_clock::now();
+        {
+            std::lock_guard lock(self->m_connMutex);
+            self->m_connections[connectionId] = conn;
+        }
+
         if (logger)
             logger->LogEvent(connectionId, "Gateway: direct tunnel established -> " + host + ":" + std::to_string(port));
 
-        std::thread fwd(GatewayPump, clientMs, upstreamMs, logger, connectionId, "client->target");
-        std::thread back(GatewayPump, upstreamMs, clientMs, logger, connectionId, "target->client");
+        std::thread fwd(GatewayPump, clientMs, upstreamMs, logger, connectionId, "client->target", conn);
+        std::thread back(GatewayPump, upstreamMs, clientMs, logger, connectionId, "target->client", conn);
         fwd.join();
         back.join();
 
@@ -1436,6 +1552,11 @@ private:
             logger->LogEvent(connectionId, "Gateway: connection closed");
         CloseManagedSocket(clientMs);
         CloseManagedSocket(upstreamMs);
+
+        {
+            std::lock_guard lock(self->m_connMutex);
+            self->m_connections.erase(connectionId);
+        }
     }
 
     // Same pumping shape as Socks5Relay::PumpTraffic, but propagates the REAL close type
@@ -1447,12 +1568,32 @@ private:
     // apart from "connection died" -- a gateway that always sent FIN would erase that
     // distinction for the one leg (the game server) that forensics investigation cares
     // about most.
+    //
+    // Phase 2 additions, both driven by `conn`'s atomics (set by HandleDelay/HandlePauseResume
+    // on the control thread, read here on every loop iteration -- no other synchronization
+    // needed since nothing else about `conn` changes after construction):
+    //   - PAUSE stops this loop from calling recv() at all until resumed. It does not buffer
+    //     or hold data -- the peer's own TCP receive window fills and its OS stalls the sender
+    //     for real, which is what protocol/timeout research wants to observe (a genuine stall).
+    //   - DELAY sleeps for the given ms AFTER a successful recv() but BEFORE forwarding it,
+    //     adding real one-way latency to whichever direction happens to be carrying that data
+    //     next (both directions read the same value, so a round trip sees it roughly twice).
+    // A kill (HandleKill) needs no flag here at all: it closes the sockets directly from the
+    // control thread, and this loop's own existing INVALID_SOCKET / recv-error handling
+    // notices and unwinds exactly as it would for an organic disconnect.
     static void GatewayPump(const ManagedSocketPtr& source, const ManagedSocketPtr& destination,
-                             RelayLogger* logger, uint64_t connectionId, const char* direction)
+                             RelayLogger* logger, uint64_t connectionId, const char* direction,
+                             std::shared_ptr<Connection> conn)
     {
         char buffer[8192];
         bool sawError = false;
         for (;;) {
+            while (conn->paused.load()) {
+                if (GetSocketValue(source) == INVALID_SOCKET || GetSocketValue(destination) == INVALID_SOCKET)
+                    goto done;
+                Sleep(100); // bounded poll so a kill/resume during a pause is still noticed promptly
+            }
+
             SOCKET sourceSocket = GetSocketValue(source);
             SOCKET destinationSocket = GetSocketValue(destination);
             if (sourceSocket == INVALID_SOCKET || destinationSocket == INVALID_SOCKET)
@@ -1465,6 +1606,10 @@ private:
                 sawError = true;
                 break; // reset/aborted/error
             }
+
+            const int delay = conn->delayMs.load();
+            if (delay > 0)
+                Sleep(static_cast<DWORD>(delay));
 
             if (logger)
                 logger->LogChunk(connectionId, direction, reinterpret_cast<const uint8_t*>(buffer),
@@ -1496,6 +1641,9 @@ private:
 
     std::mutex m_mutex;
     std::unordered_map<std::string, std::shared_ptr<Tunnel>> m_tunnels;
+
+    std::mutex m_connMutex;
+    std::unordered_map<uint64_t, std::shared_ptr<Connection>> m_connections;
 };
 
 // Guards the span from patching servers.json for a proxy-mode account

@@ -226,3 +226,33 @@ a difference between "blocked" and "routed/visible" for that one endpoint. Not f
 timing dependency; an explicit exclusion list in the hook would close it if ever wanted.
 
 **Phase 1 (both steps) is now confirmed working end-to-end, live, with firewall containment on.**
+
+## Phase 2: connection controls (kill/delay/pause) for protocol research — BUILT, compiled clean, not yet live-tested
+Scope, as agreed: a testing/research tool, not a gameplay feature. Extends the gateway's existing control port
+(same one the DLL already uses for `CONNECT`) with operator commands, plus a standalone CLI (`tools/relay_control.py`)
+to drive them. No `launcher.exe` GUI changes.
+
+**Protocol additions (`injector/main.cpp`, `ConnectGateway::HandleControl`):**
+| Command | Reply | Effect |
+|---|---|---|
+| `LIST` | one line per open connection: `id host:port paused=0/1 delayMs=N age=S.Ss` | read-only |
+| `KILL id FIN\|RST` | `OK` / `ERR` | closes both sockets from the control thread directly; FIN closes normally, RST sets `SO_LINGER{1,0}` on both ends first to force a hard reset. The connection's own pump threads notice the closed socket and unwind exactly like an organic disconnect -- no separate stop flag needed. |
+| `DELAY id ms` | `OK` / `ERR` | sets an atomic on the connection's state that `GatewayPump` sleeps for, AFTER `recv()` and before forwarding, on **both** directions -- models round-trip latency, not just one leg. `0` turns it back off. |
+| `PAUSE id` / `RESUME id` | `OK` / `ERR` | stops `GatewayPump` from calling `recv()` at all while paused. Deliberately NOT a buffering/fake pause -- the peer's own TCP receive window fills and its OS-level flow control stalls it for real, which is the actual observable condition protocol research wants. |
+
+Every one of these writes a `relay_packets.log` line prefixed `OPERATOR KILL/DELAY/PAUSE/RESUME`, clearly distinguishable
+from an organic event during later forensic reading. Connections are tracked in a new `ConnectGateway::Connection`
+registry (`m_connections`, keyed by the same connection id already used in the log) alongside the existing per-destination
+`Tunnel` map; `ServeOneConnection` registers on start and unregisters on close.
+
+**CLI (`tools/relay_control.py`):** `list` / `kill <id> [--rst]` / `delay <id> <ms>` / `pause <id>` / `resume <id>`.
+Discovers the control port itself by reading the last "Gateway control listening on 127.0.0.1:NNNNN" line out of
+`relay_packets.log` (`--port` to override). Talks the exact same loopback protocol the DLL uses -- no new attack
+surface, no auth needed (loopback + same user already, per the gateway's existing design).
+
+Build: clean, zero errors/warnings, `launcher.exe`.
+
+**NOT yet tested live.** Test plan: launch via launcher.exe as usual, `relay_control.py list` to find the game
+connection's id, then exercise `delay` (watch for lag matching the set value), `pause`/`resume` (watch for a stall
+that clears on resume), and `kill --fin` / `kill --rst` (confirm the client either reconnects cleanly or shows a
+harder failure depending on which, and that `pcap_tcp_summary.py` reads the right one back off the wire afterward).
