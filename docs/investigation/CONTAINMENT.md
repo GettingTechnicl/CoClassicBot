@@ -105,3 +105,13 @@ allow `pythonw.exe` (same folder as `python.exe`) alongside it, since that's now
 SOCKS5 CONNECT through the pass-through to the login server and verifies the SOCKS5 success reply, not just that
 the port is open. Verified live: Install → Test → PASS (166ms CONNECT to `login.conqueronline.net:9959`) → Status
 confirmed `Running` + listening + log shows the exact expected trace. Left running for use with the launcher.
+
+## Phase 1 Step 1 interim status (2026-09-28, live injection via System Informer)
+`connectfinder.dll` injected into a running `ImConquer.exe` (pid 27732) via System Informer. Hook install diag confirms
+clean attach: all 6 targets resolved, every `err_*` = 0 (connect, WSAConnect, WSAConnectByNameA/W, WSAConnectByList,
+WSAIoctl-for-ConnectEx). At the moment of injection the process was ALREADY connected in-world -- established
+connections to `148.113.198.18:5816` (game leg) and `34.160.81.0:443` (telemetry, unblocked since containment is
+off for this step) both predate the hook, so they were never observed (a hook only sees calls made after it
+attaches -- expected, not a bug). No connect events logged yet. Next: a fresh connect made AFTER injection (relaunch
+via launcher.exe + inject connectfinder as early as possible, or any other action that opens a new outbound
+connection) is needed to actually capture which function the client calls.
