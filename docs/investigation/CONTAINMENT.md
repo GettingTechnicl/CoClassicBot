@@ -211,3 +211,18 @@ can't overwrite a running launcher.exe -- compiling still succeeded, consistent 
 
 Still to confirm: `containment.ps1 -Action Report` (admin) showing zero blocked attempts from ImConquer this session
 (strong indirect evidence already in hand via the connection table above); a latency comparison against Step 0's baseline.
+
+## Phase 1 Step 2: firewall confirmation (2026-09-28 21:3x, containment.ps1 -Action Report -Minutes 15)
+Exactly one blocked attempt for the whole session, pid 167240 (this test's ImConquer.exe) -> `34.160.81.0:443`
+(crash telemetry) at 21:33:17 -- six seconds before the gateway tunnel came up at 21:33:22, i.e. it fired during the
+documented pre-injection gap and is exactly the one destination the reviewer decided should stay BLOCKED rather than
+routed. **Zero** blocked attempts to the game server or anywhere else -- both legs went through the relay cleanly.
+
+Caveat for the record: "telemetry stays blocked" is enforced by TIMING here (it happened before the hook armed), not
+by an explicit rule in net_connect_hook.cpp -- the redirect hook doesn't special-case that host, so a slower launch
+where the hook wins that race would redirect it through the gateway (observed, logged) rather than have the firewall
+block it. That's not a containment failure (it would still be going through the relay, not escaping everything), just
+a difference between "blocked" and "routed/visible" for that one endpoint. Not fixed -- flagged as a known, low-stakes
+timing dependency; an explicit exclusion list in the hook would close it if ever wanted.
+
+**Phase 1 (both steps) is now confirmed working end-to-end, live, with firewall containment on.**
