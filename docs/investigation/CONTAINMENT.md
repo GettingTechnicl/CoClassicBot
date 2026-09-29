@@ -65,3 +65,13 @@ Blocked outbound attempts by the game (all from `ImConquer.exe`; nothing from cr
 No UDP, no IPv6, no other host was attempted. Login leg (`127.0.0.1:9959`, loopback) is not in the log by design. Both game processes then exited
 (game leg blocked, as expected). Caveat: the game never got in-world, so anything it would only do AFTER login (in-game web calls, a second server, etc.)
 is not covered by this observation; re-run Report after Phase 1 routes the game leg. This does NOT say which ws2_32 function issues the connects.
+
+## Phase 1 Step 0 result: WAN latency baseline (2026-09-28, tools/latency_baseline.py, 30 samples/target)
+| target | median | p95 | p99 | max |
+|---|---|---|---|---|
+| login-server 148.113.160.82:9959 | 36.42ms | 63.45ms | 77.51ms | 82.06ms |
+| game-server 148.113.198.18:5816 | 34.67ms | 52.28ms | 55.19ms | 56.08ms |
+
+0 failures on either target. This is raw TCP-handshake RTT with no relay involved -- the number the relay's own added
+overhead (Step 2 gate: median <=1ms, p99<=3ms, measured once the gateway exists) sits on top of. At these WAN numbers,
+a 1-3ms relay hop is well under 10% of even the median, i.e. in the noise.
