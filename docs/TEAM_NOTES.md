@@ -369,3 +369,16 @@ pure TCP-handshake RTT to login/game servers, no relay involved yet) is built an
 observe-only ws2_32 connect-family hook (src/net_connect_hook.*), run it live in-world with containment OFF + the
 session_monitor -Containment alarm ON, to settle which connect function(s) to hook for the real redirect and to catch
 anything the client does post-login that the earlier blocked-only Report couldn't see.
+
+### 2026-09-28 (evening) — Phase 2 (gateway connection controls) built + live-tested; containment project's core work is done
+Containment goal (relay sees/controls ALL game traffic, nothing escapes) is now fully realized and live-verified:
+Phase 0 (firewall backstop) + Phase 1 (redirect hook + direct-connect gateway carrying both login and game legs) +
+Phase 2 (`tools/relay_control.py`: LIST/KILL/DELAY/PAUSE/RESUME on any gateway connection, loopback control
+protocol, no admin needed) all built, compiled clean, and live-tested against a real in-world session. Notable
+research results from tonight's Phase 2 session: movement is client-predicted (unaffected by added delay, but
+DOES freeze completely under a real pause/data-stop); combat round-trips more than once per attack (ping scales
+super-linearly with delay during combat vs. idle); FIN and RST disconnects are indistinguishable to this client's
+reconnect logic. Full writeup: docs/investigation/CONTAINMENT.md. This closes out the containment project's
+originally-scoped phases -- future work here would be user-directed (e.g. packet-level FIN/RST confirmation via
+pktmon, or using relay_control.py's kill for on-demand disconnect-forensics testing instead of waiting for a real
+drop).
