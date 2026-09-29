@@ -854,3 +854,46 @@ real `SendMsg` function for the outbound side: a live Detour on `recv`/`WSARecv`
 `net_recv_hook.cpp`) extended to capture a stack backtrace on each real inbound read, the same way
 `netfinder.cpp`'s live backtrace sweep found `SendMsg`'s real address originally -- this is live
 instrumentation and needs its own explicit go-ahead, not something to slide into from here.
+
+## 2026-09-29 — live backtrace sweep: located the exact decrypt chokepoint, hit Themida at it (evidenced, not assumed)
+
+Ran the authorized live backtrace sweep (`net_recv_hook.cpp` addition, bounded 60 samples/60s) during
+a normal bot session (autohunt running, over a minute of real traffic). Two stable, distinct call
+chains, not noise -- same shallow-to-deep RVA sequence repeating across dozens of samples:
+
+- **1-byte reads:** `0x1c76d4 -> 0x199bed -> 0xc1368 -> 0xeb678 -> 0x39c1c9`
+- **N-byte reads (the payload):** `0x1c74d0 -> 0x1c72fe -> 0x199c75 -> 0xc1368 -> 0xeb678 -> 0x39c1c9`
+
+Both share the exact tail `0xc1368, 0xeb678, 0x39c1c9` -- matches Step 1's `connect()` capture almost
+exactly, an independent cross-confirmation the backtrace resolution is sound. Both call sites sit
+within ~0x600 bytes of the confirmed `SendMsg` (`0x1c70c0`) -- same networking-class source region.
+
+**Disassembled both call sites in the (already-decrypted, unobfuscated at this point) image.** Chain A
+turned out to be a `recv(socket, buf, 1, MSG_PEEK)` -- a readiness peek, NOT a length-prefix byte as
+first hypothesized from the "1 byte then N more" shape; correcting that guess against the real
+disassembly caught it before it went further. Chain B is the real read, into a 64KB ring buffer at
+`obj+0x2064` (`obj+0x12068`=fill position, `obj+0x12070`=another position field, `obj+0x30`=cumulative
+bytes-received counter) -- ordinary, legible, unobfuscated socket code.
+
+**Immediately after that real recv(), the code calls `0x1EC700`, passing `(obj+0x12088, buffer_ptr,
+bytes_received)`** -- an exact, natural signature for "process the N bytes just received." This is the
+single call site standing between raw ciphertext and whatever comes next.
+
+**Disassembled `0x1EC700`: 4 instructions (spill args to stack), then `jmp 0x7974C9` -- directly into
+the `.themida` section (rva `0x778000`-`0x2196000`).** Confirmed this is not a transient unpacking
+artifact: byte-identical across all 4 available checkpoints of this same session (`cp01_first_contact`
+through `cp04_hp_drop_33`, spanning ~10.5 hours of real session time and multiple gameplay actions) --
+a permanent trampoline, not something that self-decrypts after first execution.
+
+**This is the decrypt chokepoint, precisely located, with static analysis conclusively exhausted right
+at its boundary** -- not a shrug, a specific function address with a literal jump into VM-obfuscated
+code confirmed stable across the whole session. Going further statically means Themida VM
+devirtualization, an entirely different and much larger undertaking, not proportionate here.
+
+**Proposed live step (crosses the boundary, needs go-ahead):** Detour `0x1EC700` itself. Its inputs are
+already known from the caller (context pointer, buffer pointer, length) -- log them, call through to
+the real function unmodified, then re-read the SAME buffer memory immediately after it returns. If the
+bytes differ before vs. after, that's direct, minimal proof this function (or something it calls,
+however deep inside Themida's VM) decrypts in place -- and the after-bytes are the plaintext, obtained
+without ever needing to understand what happens inside the VM itself. This is a single, narrowly-scoped
+hook on one already-precisely-identified address, not a broad new instrumentation surface.
