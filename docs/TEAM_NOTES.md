@@ -359,3 +359,13 @@ tries, from the firewall block log) + `session_monitor.ps1 -Containment` (escape
 deliberately NOT blocked (they are the egress). Expected while ON: login blocked at the game-server leg until Phase 1. The alarm was
 verified against the live game (it flagged 148.113.198.18:5816). Enable/LogOn/Report are unexercised (need admin). Design + commands:
 `docs/investigation/CONTAINMENT.md`. Phase 1 (SOCKS5 gateway w/ direct egress, ws2_32 connect-family hooks) is proposed there, NOT built.
+
+### 2026-09-28 (Phase 1 kickoff) — latency baseline tool built; observe-only connect hook proposed next
+Reviewer accepted Phase 1 scope: observe-only connect hook first (log which ws2_32 function the client uses, zero behavior
+change) -> redirect the game leg through a direct-connect relay gateway (both directions logged) -> measure added latency
+vs. this baseline. Telemetry to 34.160.81.0:443 stays BLOCKED (Sentry/Crashpad risk of leaking the injected DLL — see
+coclassicbot-game-protection memory), not routed; no suspended-launch injection. `tools/latency_baseline.py` (no admin,
+pure TCP-handshake RTT to login/game servers, no relay involved yet) is built and smoke-tested. Next: propose+build the
+observe-only ws2_32 connect-family hook (src/net_connect_hook.*), run it live in-world with containment OFF + the
+session_monitor -Containment alarm ON, to settle which connect function(s) to hook for the real redirect and to catch
+anything the client does post-login that the earlier blocked-only Report couldn't see.
