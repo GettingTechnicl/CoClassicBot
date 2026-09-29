@@ -256,3 +256,44 @@ Build: clean, zero errors/warnings, `launcher.exe`.
 connection's id, then exercise `delay` (watch for lag matching the set value), `pause`/`resume` (watch for a stall
 that clears on resume), and `kill --fin` / `kill --rst` (confirm the client either reconnects cleanly or shows a
 harder failure depending on which, and that `pcap_tcp_summary.py` reads the right one back off the wire afterward).
+
+## Phase 2 LIVE TEST RESULTS (2026-09-28 22:00-22:08): protocol research, all four controls exercised
+First real use of `relay_control.py` against a live in-world session. Summary, most to least novel:
+
+**DELAY -- movement is client-predicted; interactive actions are round-trip-gated:**
+| delayMs set | in-game ping shown | user's report |
+|---|---|---|
+| 150 | (not checked) | "slightly laggy, only here and there" |
+| 500 | 1077 (sitting still) | movement/jump unaffected; NPC interaction and attacking clearly slower |
+| 1500 | 3507 resting / 4513 attacking | still functional but heavy lag on interactive actions |
+
+At 500ms the ping math is exact: 1077 ~= 2x500 (round trip pays the one-way delay twice, once per direction)
++ ~35-55ms real baseline RTT (matches Step 0's measured baseline). At 1500ms the numbers run HIGHER than simple
+2x scaling (3507 resting vs ~3050 predicted; 4513 attacking, ~1000ms more than resting) -- checked the raw packet
+timestamps in relay_packets.log to rule out a queueing bug in the gateway itself (none found: forwarded-packet
+gaps stayed right at ~1.5s, no runaway backlog), so this is a genuine protocol finding: an attack round-trips
+MORE than once (e.g. command ack + a separate result/damage exchange), which is why the ping display keeps
+climbing beyond the flat per-packet delay during combat specifically. Movement/jump were unaffected at every
+delay level tested -- strong evidence movement is purely client-side predicted and does not wait on the server
+round trip the way NPC/combat interactions do.
+
+**PAUSE/RESUME -- a real TCP stall, not a fake one, confirmed by contrast with DELAY:**
+Pausing (stops the gateway from calling `recv()` at all -- see the code comment) produced a COMPLETE client
+freeze: "frozen, no response to inputs, ping climbing" -- qualitatively different from DELAY, where movement kept
+working. This confirms movement's client prediction has a limit: it tolerates added latency but not a total data
+stop. On resume, the peer's TCP-buffered backlog drained in a burst (a brief ping spike), then normal operation
+resumed immediately -- lossless, clean recovery exactly as real TCP guarantees predict.
+
+**KILL FIN vs KILL RST -- no observable difference to the client or the user:**
+Both were run against a live connection (two separate real disconnects). Both times: the game disconnected, the
+launcher's EXISTING auto-relaunch/auto-relogin supervision loop (unrelated to this project's containment work --
+it was already there) brought up a fresh `ImConquer.exe` and logged back in within ~10-30s, and the
+gateway picked up the new session cleanly (fresh connection id, normal traffic immediately). The user reported
+"disconnected same as before, relogged fine" for RST -- indistinguishable from the FIN case. Conclusion: this
+client's reconnect logic does not appear to treat a hard reset differently from a graceful close, at least not
+in any user-visible way. (Independent packet-level confirmation of the actual FIN/RST bytes on the wire, via
+pktmon_ring.ps1 + pcap_tcp_summary.py, was offered but not done this session -- optional future confirmation.)
+
+**Everything exercised without needing the user to run a single command** -- `relay_control.py` needs no admin,
+so once the account was logged in, every kill/delay/pause/resume/list call was driven directly, with the user
+only reporting what they observed on screen.
