@@ -46,10 +46,13 @@ $ErrorActionPreference = 'Stop'
 $Group = 'CoClassicBot-Containment'
 $MonitorDir = [IO.Path]::GetFullPath($MonitorDir)
 $StateFile = Join-Path $MonitorDir 'containment_state.json'
-# Everything except loopback (127.0.0.0/8 and ::1). Windows Firewall already exempts loopback, but excluding it
-# explicitly means the relay hop can never be caught by these rules even if that default ever changed.
-$V4 = @('0.0.0.0-126.255.255.255', '128.0.0.0-255.255.255.255')
-$V6 = @('::', '::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')
+# RemoteAddress is deliberately just 'Any', not a hand-built exclusion range: loopback traffic (127.0.0.0/8, ::1)
+# never reaches the Windows Filtering Platform layer that firewall rules act on -- it's short-circuited by the
+# TCP/IP stack before any firewall rule can see it, on every supported Windows version. A custom start-end range
+# meant to spell out "everything except 127.0.0.0/8" is unnecessary AND was the actual bug in an earlier version
+# of this script: the IPv6 half of that range ("::2-ffff:...") isn't accepted by New-NetFirewallRule and made the
+# ENTIRE rule creation fail with an unrelated-looking "system cannot find the file specified" error -- so every
+# single blocked-program rule silently failed to get created. 'Any' has no such edge case and is exactly correct.
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ($Action -ne 'Status' -and -not $WhatIf -and -not $isAdmin) {
@@ -97,14 +100,12 @@ switch ($Action) {
         foreach ($p in $progs) {
             $name = "$Group : $(Split-Path $p -Leaf) [$(([IO.Path]::GetDirectoryName($p)).GetHashCode().ToString('x'))]"
             $args1 = @{ DisplayName = $name; Group = $Group; Direction = 'Outbound'; Action = 'Block'; Program = $p
-                        RemoteAddress = ($V4 + $V6); Protocol = 'Any'; Profile = 'Any'; Enabled = 'True'
+                        RemoteAddress = 'Any'; Protocol = 'Any'; Profile = 'Any'; Enabled = 'True'
                         Description = 'Fail-closed containment: game process may only talk to loopback (the relay). Remove: tools\containment.ps1 -Action Remove' }
-            try { if ($WhatIf) { New-NetFirewallRule @args1 -WhatIf } else { New-NetFirewallRule @args1 | Out-Null } }
-            catch {
-                Write-Host "[containment] range syntax rejected for $(Split-Path $p -Leaf): $($_.Exception.Message)"
-                Write-Host '[containment] retrying with RemoteAddress Any (loopback is exempt from Windows Firewall filtering by default)'
-                $args1.RemoteAddress = 'Any'
-                if ($WhatIf) { New-NetFirewallRule @args1 -WhatIf } else { New-NetFirewallRule @args1 | Out-Null }
+            if ($WhatIf) { New-NetFirewallRule @args1 -WhatIf }
+            else {
+                try { New-NetFirewallRule @args1 | Out-Null }
+                catch { Write-Host "[containment] FAILED to create rule for $(Split-Path $p -Leaf): $($_.Exception.Message)" }
             }
         }
         if ($blockDefault) {
@@ -116,7 +117,10 @@ switch ($Action) {
             }
         }
         Write-Host "`n[containment] ENABLED. Egress that stays open (not blocked): $((Get-EgressPrograms) -join '; ')"
-        Write-Host '[containment] Expect game login to stall at the game-server handoff until Phase 1. Undo: pwsh -File .\tools\containment.ps1 -Action Remove'
+        Write-Host '[containment] If the account is launched WITHOUT proxy mode (or before Phase 1 step 2), expect login to stall at the'
+        Write-Host '[containment] game-server handoff -- ImConquer.exe would be dialing it directly, which this now blocks. With proxy mode'
+        Write-Host '[containment] on and the redirect hook armed, that connect goes through loopback instead and login should work normally.'
+        Write-Host '[containment] Undo: pwsh -File .\tools\containment.ps1 -Action Remove'
         Write-Host '[containment] To see what the game tries: -Action LogOn, launch the game, then -Action Report'
     }
 
