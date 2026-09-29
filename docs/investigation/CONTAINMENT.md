@@ -91,3 +91,17 @@ hook gets to see the redirect target), log in, get in-world, do a few actions, t
 function(s) fired for the login leg and the game leg, plus whatever else connects post-login. Run `session_monitor.ps1
 -Containment` alongside it (no conflict — it just watches, and it now also catches anything post-login the earlier
 firewall-only Report couldn't see, per that section's caveat above).
+
+## Pass-through as an on-demand Scheduled Task (2026-09-28)
+Per user request, the local SOCKS5 pass-through now runs as Windows Scheduled Task `CoClassicBot-Passthrough`
+(`tools\passthrough_task.ps1`: Install/Uninstall/Start/Stop/Status/Test) instead of a manually-run console window.
+No trigger — on-demand only, starts only via `-Action Start`/`Test` or manually from Task Scheduler. Runs as the
+current user, standard rights; Install/Start/Test/Status all worked with **no admin needed**. The task's actual
+process is `pythonw.exe` running `tools\passthrough_wrapper.py` directly (no `cmd.exe` layer), so `Stop` reliably
+kills the real listening process rather than orphaning it. pythonw has no console, so the wrapper redirects
+stdout/stderr to `monitor\passthrough.log` (git-ignored). `containment.ps1`'s egress carve-out was updated to
+allow `pythonw.exe` (same folder as `python.exe`) alongside it, since that's now the actual egress process.
+`tools\socks5_selftest.py` (new, recreates the now-gone `tunnel_probe.py` check as a permanent tool) does a real
+SOCKS5 CONNECT through the pass-through to the login server and verifies the SOCKS5 success reply, not just that
+the port is open. Verified live: Install → Test → PASS (166ms CONNECT to `login.conqueronline.net:9959`) → Status
+confirmed `Running` + listening + log shows the exact expected trace. Left running for use with the launcher.

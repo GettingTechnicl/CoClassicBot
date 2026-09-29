@@ -69,7 +69,11 @@ function Get-EgressPrograms {
     if ($AllowEgress.Count) { return $AllowEgress }
     $l = Join-Path $PSScriptRoot '..\build\bin\Release\launcher.exe'
     $py = (Get-Command python -ErrorAction SilentlyContinue).Source
-    @($l, $py) | Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { [IO.Path]::GetFullPath($_) }
+    # pythonw.exe (same folder as python.exe) is what tools\passthrough_task.ps1 runs the
+    # pass-through under via Scheduled Task -- same egress process, different subsystem
+    # (no console window). Allow both, not just python.exe.
+    $pyw = if ($py) { Join-Path (Split-Path $py) 'pythonw.exe' } else { $null }
+    @($l, $py, $pyw) | Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { [IO.Path]::GetFullPath($_) }
 }
 
 switch ($Action) {
