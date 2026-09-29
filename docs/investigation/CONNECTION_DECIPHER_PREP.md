@@ -784,3 +784,73 @@ If that also comes up empty, the reviewer's own designated fallback -- tracing f
 confirmed `recv()` hook through to whatever consumes the decrypted bytes -- is the next rung, but
 that's live instrumentation (a step up the risk ladder) and needs its own explicit go-ahead, not
 something to slide into from an offline scan running dry.
+
+## 2026-09-28 (later still) — offline exhaustion of the dispatcher-signature thread, per the standing autonomy rule
+
+Ran every offline avenue in order without stopping in between, per the user's own standing rule
+(full autonomy for offline analysis; check in only at the live boundary or on a real find).
+
+### 1. Structural jump-table scan (`tools/find_jumptable.py`) — checked negative
+Sanity-checked first: `movzx reg, word ptr [reg+2]` (the confirmed outbound header shape, used as an
+inbound hypothesis) exists 135 times in the main code section, so the base pattern is real and common
+-- not a dead search space. Two follow-on checks, both negative:
+- **Indexed-jump pattern:** type-load followed (within a widened window, both same-register and
+  register-renamed variants checked) by a scale-4/8 SIB memory reference then an indirect `jmp`/`call`
+  through that same register -- **0 candidates**, even after broadening from the first pass's overly
+  narrow same-instruction-scale check.
+- **Static pointer-table scan:** 157 candidate runs of 20+ contiguous code-pointer-shaped qwords in
+  data sections (up to 784 entries). **Cross-referenced the top 5 by size against every instruction in
+  every executable section for a RIP-relative or absolute-address reference to that table's VA: zero
+  code references to any of them.** These are near-certainly C++ RTTI/exception-unwind metadata
+  (`.pdata`-style tables read only by the OS's own SEH dispatcher, never by an explicit instruction --
+  a well-known false-positive source for this exact scan shape), not a dispatch table.
+
+### 2. Heap dynamic-dispatch-table scan (`tools/find_heap_dispatch_table.py`) — checked negative
+Hypothesis: a modern engine might register message handlers into a runtime container
+(`std::unordered_map`/`std::vector<pair<id,fn>>`) at startup rather than compile a switch, which would
+only exist in HEAP memory, invisible to the static-image scans above. Scanned the full 360MB heap
+snapshot (same checkpoint) for both a `[u16 id][padding][8-byte code pointer]` entry-array shape and a
+plain contiguous code-pointer run. **Both zero results.** Sanity-checked the scanner itself before
+trusting the negative: counted ISOLATED (non-consecutive) code-pointer-shaped qwords across the whole
+heap -- 13,738 found (0.031%, consistent with real scattered vtable pointers), longest incidental
+consecutive run only 10 -- confirms the scan mechanics work and the "zero runs >=15/20" result is a
+real negative, not a bug swallowing everything.
+
+### 3. recv/WSARecv IAT-slot location — found the slot, hit Themida's protection boundary
+Hand-parsed the PE export table of the local `C:\Windows\System32\ws2_32.dll` (pure static file read,
+matching `modules.csv`'s recorded load base `0x7FFF4BB10000` for this exact captured session) to get
+real expected VAs for `recv`/`WSARecv`/`WSARecvFrom`/`recvfrom`, then searched the image and heap dumps
+for those exact resolved addresses:
+- **`recv`'s resolved address appears EXACTLY ONCE**, at image file-offset `0x56DC00` (a read-only
+  data section, not `.idata`). **`WSARecv`, `WSARecvFrom`, and `recvfrom` appear ZERO times anywhere**
+  -- incidental finding: this build's networking uses plain `recv()` only, not the `WSARecv` family
+  (consistent with `net_recv_hook.cpp` already hooking both defensively, but only `recv` would ever
+  actually fire).
+- Inspected the surrounding qwords: a mix of `0x7FFF...`-shaped values (other resolved system-DLL
+  imports, same address space as `ws2_32.dll`'s own base) interleaved with `0x140...`-shaped values
+  (pointers back into the GAME's own module) -- **this is a genuine, Themida-processed IAT-style array**,
+  not a coincidental match; the self-referencing entries are consistent with Themida's known pattern of
+  replacing some import slots with its own internal trampolines.
+- **Searched every disassemblable executable section (main code + `.boot`, ~20MB) for ANY reference
+  to that exact slot's VA** -- as a memory operand (RIP-relative or absolute) AND as a bare 64-bit
+  immediate (covering `mov reg, imm64` followed by a separate indirect call). **Zero references found
+  anywhere in plain x86 code.**
+
+**Conclusion, evidenced not assumed:** the actual call site that dereferences this IAT slot is almost
+certainly inside the `.themida` section's own VM-obfuscated bytecode (excluded from every scan above --
+it isn't real x86, capstone can't disassemble it meaningfully), not anywhere in the plain-x86 code this
+project can statically analyze. This is a genuine structural limit of static analysis on THIS specific
+Themida-protected binary, not a case of not looking hard enough -- and it retroactively explains why
+every prior success in this project (finding `SendMsg`'s real function, `connect()`'s usage, etc.) came
+from LIVE instrumentation (Detour + backtrace sweep), never static call-graph tracing.
+
+### Where this leaves it
+Offline avenues for locating the inbound dispatcher are genuinely exhausted: two independent static
+structural searches (jump-table shapes, cmp-chains) both checked negative with hand-verified false
+positives; a heap-based dynamic-table hypothesis checked negative with a sanity-verified scanner; and
+the one real, specific static finding (the `recv` IAT slot itself) dead-ends at Themida's protection
+boundary, not at a lack of effort. The natural next step is the SAME technique that already found the
+real `SendMsg` function for the outbound side: a live Detour on `recv`/`WSARecv` (already exists,
+`net_recv_hook.cpp`) extended to capture a stack backtrace on each real inbound read, the same way
+`netfinder.cpp`'s live backtrace sweep found `SendMsg`'s real address originally -- this is live
+instrumentation and needs its own explicit go-ahead, not something to slide into from here.
