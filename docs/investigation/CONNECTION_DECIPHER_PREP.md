@@ -897,3 +897,18 @@ bytes differ before vs. after, that's direct, minimal proof this function (or so
 however deep inside Themida's VM) decrypts in place -- and the after-bytes are the plaintext, obtained
 without ever needing to understand what happens inside the VM itself. This is a single, narrowly-scoped
 hook on one already-precisely-identified address, not a broad new instrumentation surface.
+
+## Point 1 result (same session, 2026-09-29): mostly clean matches, real keystream, one honest caveat
+Ran `plaintext_ciphertext_align.py` against `plaintext_222500.log` (623 outbound entries) vs
+`relay_packets.log` connection 1000010 (587 chunks). A large fraction align cleanly 1:1 by size and
+yield real, valid keystream bytes (e.g. `OUT #14`, `#16`, `#19-35` mostly clean runs) -- confirms the
+"no framing added downstream of SendMsg" model holds on v1078 for most traffic, same as the v1074
+finding. A meaningful fraction show size mismatches that drift for a few entries then self-correct --
+the tool does a naive 1:1 zip with no resync, so this reads as occasional TCP-layer coalescing (two
+small consecutive `SendMsg` calls landing in one relay-observed `recv()` chunk) desyncing the simple
+pairing until sizes coincidentally line back up, not evidence the cipher itself adds framing. A smarter
+resync (try summing adjacent plaintext sizes against a mismatched chunk) would recover more pairs and
+confirm this directly -- not done tonight, not urgent; the clean-matched pairs already provide valid
+keystream material. Also incidentally confirmed Phase 1/2 containment still working correctly mid-session:
+the gateway caught and redirected a second, unrelated connection (`185.93.1.250:80`, likely telemetry)
+with zero manual intervention.
