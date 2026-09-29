@@ -133,3 +133,55 @@ against netfinder's send-path RVAs; worth doing before Phase 1 Step 2 if a stabl
 **Conclusion for Phase 1 Step 2:** the real redirect hook needs to cover `connect()` as the confirmed, evidence-backed
 primary target. Recommend keeping the other 5 hooked too (already built, zero extra cost, and a future client update
 could switch APIs) but `connect()` is what actually matters today for both the login and game legs.
+
+## Phase 1 Step 2: direct-connect gateway + redirect hook — BUILT, compiled clean, NOT yet live-tested
+Implements the design agreed after Step 1's result: the game leg now gets carried by the relay too.
+
+**Gateway (`injector/main.cpp`, new `ConnectGateway` class, right after `Socks5Relay`):** one per account's worker
+thread, alongside the existing `Socks5Relay relay;`. Listens on an ephemeral loopback control port. Protocol:
+DLL sends `CONNECT host:port\n`, gateway replies `PORT nnnn\n`, DLL then connects to `127.0.0.1:nnnn` itself — a
+per-destination loopback listener, created on first request and reused for repeat connects to the same destination
+(each accepted connection still gets its own fresh direct dial to the real target). Egress is DIRECT (no upstream
+SOCKS5) — this is what retires the Python pass-through's reason for existing on the game leg; the pass-through
+itself is untouched and still carries the login leg / would carry a real upstream proxy. `GatewayPump` fixes the
+FIN/RST propagation gap noted in the original Phase 1 proposal: a real socket error (reset/aborted) now produces a
+real RESET on the other side (`SO_LINGER 0`) instead of always turning every close into an orderly FIN — matters
+because `pcap_tcp_summary.py`'s disconnect forensics reads FIN-vs-RST off the wire.
+
+**Wiring:** `ConnectGateway* gateway` added to `SupervisionParams`; started right after `relay.Start()` succeeds,
+stopped at all three teardown sites (build-fence-unsupported, CreateProcess-failed, normal end-of-session) alongside
+`relay.Stop()`. `COCLASSIC_GW=127.0.0.1:<controlPort>` is set on the launcher's own process environment (inherited by
+`CreateProcessA` since `lpEnvironment=nullptr`) immediately before EVERY `CreateProcessA` call — including relaunches
+— guarded by a new `g_envVarMutex`, since multiple accounts can be launching concurrently and the environment block is
+shared process-wide. A non-gateway launch explicitly clears it too, so a prior gateway-mode account's stale value can
+never leak into an unrelated later launch.
+
+**Redirect hook (`src/net_connect_hook.{h,cpp}`, new, added to `COCLASSIC_SOURCES` — both DLL targets):** hooks the
+same 6 targets `connectfinder.dll` proved out in Step 1. `connect()`, `WSAConnect()`, `ConnectEx()` all take a plain
+`sockaddr` destination and get REAL redirect logic (ask the gateway for a loopback port, rewrite the destination,
+call through). `WSAConnectByNameA/W` and `WSAConnectByList` resolve a hostname internally with no sockaddr to
+rewrite — consistent with "nothing escapes over everything works", these three FAIL CLOSED (refuse + log loudly)
+if the gateway is armed and they're ever called, rather than passing an unrouted connection through silently. Every
+redirect failure (gateway unreachable, control protocol timeout/error) also fails closed (`WSAECONNREFUSED`), never
+falls through to the real address. Loopback destinations (the login leg, already patched to `127.0.0.1:9959`) are
+always left untouched. Gated on the `COCLASSIC_GW` env var — unset (manual injection, or proxy off) means every hook
+is pure pass-through, identical in effect to `connectfinder.dll`'s observe-only build.
+
+**Timing (why this isn't the same trap Step 1 hit):** `InitNetConnectHook()` is called as the FIRST line of
+`InitThread` in `dllmain.cpp` — before even the build-fence check (it's a generic ws2_32 hook with zero game-offset
+dependence, so it stays armed even on a build the fence would otherwise refuse) and long before the hero-UID wait
+that gates everything else. This mirrors `HwidSpoof::Init`'s existing precedent (also must run before login, also
+done via this same async `InitThread` rather than synchronously in `DllMain`) — and by construction, `launcher.exe`'s
+`Inject()` call only returns once `DllMain`/`DLL_PROCESS_ATTACH` has fully completed, and auto-login (which is what
+actually triggers the account-server connect) only proceeds after `Inject()` returns — so for a normal
+launcher-driven launch, this hook has already had time to install before the game makes its first connect. (This is
+why Step 1's manual System-Informer injection, done well after the game was already in-world, needed a relaunch to
+observe anything — that was a manual-injection artifact, not a property of the real launch path.)
+
+Build: clean, zero errors/warnings, `coclassic_v1078.dll` + `launcher.exe`, both DLL targets get the hook (shared
+`COCLASSIC_SOURCES`).
+
+**NOT yet done:** no live test. Needs: launch via `launcher.exe` with proxy mode on, confirm login still works and
+gets in-world, confirm `relay_packets.log` now shows both legs (not just login), confirm `containment.ps1 -Action
+Report` / `session_monitor.ps1 -Containment` show zero escapes with Phase 0's firewall back on, and a latency
+comparison against Step 0's baseline.

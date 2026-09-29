@@ -6,6 +6,7 @@
 #include "hooks.h"
 #include "packets.h"
 #include "net_recv_hook.h"
+#include "net_connect_hook.h"
 #include "game.h"
 #include "config.h"
 #include "plugin_mgr.h"
@@ -108,7 +109,21 @@ static bool ReadHostBuildIdentity(uint32_t* stamp, uint32_t* imageSize)
 
 static DWORD WINAPI InitThread(LPVOID)
 {
-    // BUILD FENCE (src/build_fence.h): before ANY init — no Log/HWID hooks/game reads/scans/threads —
+    // CONTAINMENT (docs/investigation/CONTAINMENT.md, Phase 1 step 2): installed as the
+    // VERY FIRST thing, before even the build fence below, for the same reason HwidSpoof::Init
+    // further down has to run before login despite ALSO being deferred to this same async
+    // thread rather than done synchronously in DllMain (see that call's own comment) — the
+    // account-server connect() fires as soon as the launcher's auto-login proceeds, which by
+    // construction only happens after Inject() has already returned (this DLL's DLL_PROCESS_
+    // ATTACH has fully completed), giving this thread a real head start on that first connect.
+    // Fence-independent: this is a generic ws2_32 API hook with zero game-offset dependence
+    // (unlike everything gated below), so it installs -- and stays armed if COCLASSIC_GW is
+    // set -- even on a build the fence would otherwise refuse to touch; "nothing escapes"
+    // matters at least as much on an unverified build as a verified one. See the g_fenced
+    // branch in DLL_PROCESS_DETACH below for the matching cleanup.
+    InitNetConnectHook();
+
+    // BUILD FENCE (src/build_fence.h): before ANY OTHER init — no Log/HWID hooks/game reads/scans/threads —
     // check that the host process is a client build this bot has been verified against. On an
     // unknown build every RVA in game.h would be a jump into garbage. The launcher refuses earlier
     // (it reads the exe on disk); this is the second line, for any other way the DLL gets loaded.
@@ -290,9 +305,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             g_singleInstanceMutex = nullptr;
         }
         if (g_fenced) {
-            // Nothing was initialised; running the normal teardown would SaveConfig() defaults over
-            // the user's saved settings and touch subsystems that never started.
-            spdlog::info("[shutdown] fenced build - nothing to tear down");
+            // Nothing else was initialised; running the normal teardown would SaveConfig()
+            // defaults over the user's saved settings and touch subsystems that never started.
+            // InitNetConnectHook() is the one exception -- it runs before the fence check (see
+            // InitThread) specifically so containment still applies to an unsupported build.
+            CleanupNetConnectHook();
+            spdlog::info("[shutdown] fenced build - nothing else to tear down");
             Log::Shutdown();
             break;
         }
@@ -302,6 +320,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         ShutdownOverlay();
         CleanupPacketHook();
         CleanupNetRecvHook();
+        CleanupNetConnectHook();
         CleanupHooks();
         HwidSpoof::Shutdown();
         spdlog::info("[shutdown] Cleanup complete");

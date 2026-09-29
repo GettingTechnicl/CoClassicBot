@@ -18,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -1125,6 +1126,371 @@ private:
     std::vector<std::thread> m_sessionThreads;
 };
 
+// =====================================================================
+// ConnectGateway — Phase 1 Step 2 of the containment project
+// (docs/investigation/CONTAINMENT.md). Socks5Relay above only ever carried
+// the LOGIN leg (the address is patched into servers.json ahead of time);
+// the game-server address is handed over dynamically inside an encrypted
+// packet and the client dials it directly, bypassing the relay entirely.
+// This is the other half: a DIRECT-CONNECT egress gateway that
+// src/net_connect_hook.cpp's redirect hook sends the game leg through
+// instead, once Step 1's capture confirmed the client uses plain
+// connect() for it.
+//
+// Protocol (loopback-only, one gateway per account/process, so no auth is
+// needed — anything that can reach this control port already runs as this
+// user): the DLL opens a short-lived TCP connection to the control port,
+// sends one line "CONNECT host:port\n", and gets back one line
+// "PORT nnnn\n" (or "ERR reason\n"). It then connects to 127.0.0.1:nnnn
+// itself — a per-destination loopback listener, created on first request
+// and reused for repeat connects to the same destination (a relog
+// reconnecting to the same game server reuses the same listener; each
+// accepted connection still gets its own fresh dial to the real target,
+// since TCP connections can't be shared across sockets). No SOCKS5
+// handshake on the actual data connection — it's a plain TCP passthrough
+// once the loopback listener accepts, so this works for a blocking,
+// non-blocking, or overlapped connect() identically.
+//
+// Egress mode is DIRECT (no upstream SOCKS5) — this retires the Python
+// pass-through's reason for existing on this leg; the pass-through itself
+// is untouched and still available for the login leg / a real upstream
+// proxy.
+// =====================================================================
+class ConnectGateway
+{
+public:
+    bool Start(RelayLogger* logger)
+    {
+        m_logger = logger;
+
+        m_controlSocket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (m_controlSocket == INVALID_SOCKET) {
+            printf("[gateway] Failed to create control socket (0x%08X)\n", WSAGetLastError());
+            return false;
+        }
+
+        BOOL exclusive = TRUE;
+        setsockopt(m_controlSocket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                   reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
+
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = 0; // ephemeral -- one gateway per account/process, no fixed port to coordinate
+        InetPtonA(AF_INET, "127.0.0.1", &address.sin_addr);
+
+        if (bind(m_controlSocket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
+            printf("[gateway] control bind failed (0x%08X)\n", WSAGetLastError());
+            closesocket(m_controlSocket);
+            m_controlSocket = INVALID_SOCKET;
+            return false;
+        }
+
+        int addrLen = sizeof(address);
+        getsockname(m_controlSocket, reinterpret_cast<sockaddr*>(&address), &addrLen);
+        m_controlPort = ntohs(address.sin_port);
+
+        if (::listen(m_controlSocket, SOMAXCONN) != 0) {
+            printf("[gateway] control listen failed (0x%08X)\n", WSAGetLastError());
+            closesocket(m_controlSocket);
+            m_controlSocket = INVALID_SOCKET;
+            return false;
+        }
+
+        m_running = true;
+        m_acceptThread = std::thread([this]() { ControlAcceptLoop(); });
+
+        printf("[gateway] Direct-connect gateway control port 127.0.0.1:%u\n", m_controlPort);
+        if (m_logger)
+            m_logger->LogEvent(0, "Gateway control listening on 127.0.0.1:" + std::to_string(m_controlPort));
+        return true;
+    }
+
+    void Stop()
+    {
+        if (!m_running.exchange(false))
+            return;
+
+        if (m_controlSocket != INVALID_SOCKET) {
+            closesocket(m_controlSocket);
+            m_controlSocket = INVALID_SOCKET;
+        }
+        if (m_acceptThread.joinable())
+            m_acceptThread.join();
+
+        std::vector<std::shared_ptr<Tunnel>> tunnels;
+        {
+            std::lock_guard lock(m_mutex);
+            for (auto& kv : m_tunnels)
+                tunnels.push_back(kv.second);
+            m_tunnels.clear();
+        }
+        for (auto& t : tunnels)
+            t->Stop();
+
+        printf("[gateway] stopped\n");
+        if (m_logger)
+            m_logger->LogEvent(0, "Gateway stopped");
+    }
+
+    ~ConnectGateway() { Stop(); }
+
+    uint16_t GetControlPort() const { return m_controlPort; }
+
+private:
+    struct Tunnel
+    {
+        SOCKET listenSocket = INVALID_SOCKET;
+        uint16_t port = 0;
+        std::atomic<bool> running{true};
+        std::thread acceptThread;
+        std::mutex sessionsMutex;
+        std::vector<std::thread> sessionThreads;
+
+        void Stop()
+        {
+            running = false;
+            if (listenSocket != INVALID_SOCKET) {
+                closesocket(listenSocket);
+                listenSocket = INVALID_SOCKET;
+            }
+            if (acceptThread.joinable())
+                acceptThread.join();
+            std::vector<std::thread> threads;
+            {
+                std::lock_guard lock(sessionsMutex);
+                threads.swap(sessionThreads);
+            }
+            for (auto& t : threads)
+                if (t.joinable()) t.join();
+        }
+    };
+
+    void ControlAcceptLoop()
+    {
+        while (m_running) {
+            SOCKET c = accept(m_controlSocket, nullptr, nullptr);
+            if (c == INVALID_SOCKET) {
+                if (!m_running) break;
+                continue;
+            }
+            std::thread([this, c]() { HandleControl(c); }).detach();
+        }
+    }
+
+    // "CONNECT host:port\n" -> "PORT nnnn\n" / "ERR reason\n". Trusted local
+    // protocol (loopback only, one line, bounded read) -- no framing beyond the newline.
+    void HandleControl(SOCKET c)
+    {
+        char buf[256] = {};
+        int total = 0;
+        while (total < static_cast<int>(sizeof(buf)) - 1) {
+            char ch = 0;
+            int n = recv(c, &ch, 1, 0);
+            if (n <= 0) break;
+            buf[total++] = ch;
+            if (ch == '\n') break;
+        }
+
+        std::string host;
+        uint16_t port = 0;
+        if (!ParseControlRequest(std::string(buf, total), host, port)) {
+            send(c, "ERR bad request\n", 17, 0);
+            closesocket(c);
+            return;
+        }
+
+        uint16_t tunnelPort = 0;
+        if (!GetOrCreateTunnel(host, port, tunnelPort)) {
+            send(c, "ERR could not create tunnel\n", 29, 0);
+            closesocket(c);
+            return;
+        }
+
+        char reply[32];
+        int len = sprintf_s(reply, "PORT %u\n", tunnelPort);
+        send(c, reply, len, 0);
+        closesocket(c);
+    }
+
+    static bool ParseControlRequest(const std::string& line, std::string& host, uint16_t& port)
+    {
+        if (line.rfind("CONNECT ", 0) != 0)
+            return false;
+        size_t colon = line.find_last_of(':');
+        if (colon == std::string::npos || colon <= 8)
+            return false;
+        host = line.substr(8, colon - 8);
+        std::string portStr = line.substr(colon + 1);
+        while (!portStr.empty() && !isdigit(static_cast<unsigned char>(portStr.back())))
+            portStr.pop_back();
+        if (host.empty() || portStr.empty())
+            return false;
+        uint16_t parsed = 0;
+        if (!ParseUInt16(portStr, &parsed))
+            return false;
+        port = parsed;
+        return true;
+    }
+
+    bool GetOrCreateTunnel(const std::string& host, uint16_t port, uint16_t& outTunnelPort)
+    {
+        const std::string key = host + ":" + std::to_string(port);
+        {
+            std::lock_guard lock(m_mutex);
+            auto it = m_tunnels.find(key);
+            if (it != m_tunnels.end() && it->second->running) {
+                outTunnelPort = it->second->port;
+                return true;
+            }
+        }
+
+        auto tunnel = std::make_shared<Tunnel>();
+        tunnel->listenSocket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (tunnel->listenSocket == INVALID_SOCKET)
+            return false;
+
+        BOOL exclusive = TRUE;
+        setsockopt(tunnel->listenSocket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                   reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
+
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = 0;
+        InetPtonA(AF_INET, "127.0.0.1", &address.sin_addr);
+        if (bind(tunnel->listenSocket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
+            closesocket(tunnel->listenSocket);
+            return false;
+        }
+        int addrLen = sizeof(address);
+        getsockname(tunnel->listenSocket, reinterpret_cast<sockaddr*>(&address), &addrLen);
+        tunnel->port = ntohs(address.sin_port);
+        if (::listen(tunnel->listenSocket, SOMAXCONN) != 0) {
+            closesocket(tunnel->listenSocket);
+            return false;
+        }
+
+        Tunnel* raw = tunnel.get();
+        const std::string dest = host;
+        const uint16_t destPort = port;
+        RelayLogger* logger = m_logger;
+        raw->acceptThread = std::thread([raw, dest, destPort, logger]() {
+            while (raw->running) {
+                SOCKET client = accept(raw->listenSocket, nullptr, nullptr);
+                if (client == INVALID_SOCKET) {
+                    if (!raw->running) break;
+                    continue;
+                }
+                std::lock_guard lock(raw->sessionsMutex);
+                raw->sessionThreads.emplace_back([client, dest, destPort, logger]() {
+                    ServeOneConnection(client, dest, destPort, logger);
+                });
+            }
+        });
+
+        {
+            std::lock_guard lock(m_mutex);
+            m_tunnels[key] = tunnel;
+        }
+        printf("[gateway] %s -> 127.0.0.1:%u (direct egress)\n", key.c_str(), tunnel->port);
+        if (m_logger)
+            m_logger->LogEvent(0, "Gateway tunnel " + key + " -> loopback port " + std::to_string(tunnel->port));
+        outTunnelPort = tunnel->port;
+        return true;
+    }
+
+    static void ServeOneConnection(SOCKET client, const std::string& host, uint16_t port, RelayLogger* logger)
+    {
+        static std::atomic<uint64_t> nextId{0};
+        const uint64_t connectionId = nextId.fetch_add(1) + 1;
+        ManagedSocketPtr clientMs = std::make_shared<ManagedSocket>(client);
+
+        SOCKET upstream = INVALID_SOCKET;
+        if (!ConnectTcp(Endpoint{host, port}, &upstream)) {
+            if (logger)
+                logger->LogEvent(connectionId, "Gateway: direct dial FAILED to " + host + ":" + std::to_string(port));
+            CloseManagedSocket(clientMs);
+            return;
+        }
+
+        BOOL nodelay = TRUE;
+        setsockopt(client, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
+        setsockopt(upstream, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
+        ManagedSocketPtr upstreamMs = std::make_shared<ManagedSocket>(upstream);
+
+        if (logger)
+            logger->LogEvent(connectionId, "Gateway: direct tunnel established -> " + host + ":" + std::to_string(port));
+
+        std::thread fwd(GatewayPump, clientMs, upstreamMs, logger, connectionId, "client->target");
+        std::thread back(GatewayPump, upstreamMs, clientMs, logger, connectionId, "target->client");
+        fwd.join();
+        back.join();
+
+        if (logger)
+            logger->LogEvent(connectionId, "Gateway: connection closed");
+        CloseManagedSocket(clientMs);
+        CloseManagedSocket(upstreamMs);
+    }
+
+    // Same pumping shape as Socks5Relay::PumpTraffic, but propagates the REAL close type
+    // instead of always turning a close into a FIN: an orderly peer FIN (recv()==0) still
+    // becomes a graceful shutdown on the other side, but a socket ERROR (reset/aborted)
+    // now becomes a real RESET on the other side too (SO_LINGER 0), matching what actually
+    // happened. This matters here specifically because the disconnect-forensics tooling
+    // (pcap_tcp_summary.py) reads FIN-vs-RST off the wire to tell "server closed us"
+    // apart from "connection died" -- a gateway that always sent FIN would erase that
+    // distinction for the one leg (the game server) that forensics investigation cares
+    // about most.
+    static void GatewayPump(const ManagedSocketPtr& source, const ManagedSocketPtr& destination,
+                             RelayLogger* logger, uint64_t connectionId, const char* direction)
+    {
+        char buffer[8192];
+        bool sawError = false;
+        for (;;) {
+            SOCKET sourceSocket = GetSocketValue(source);
+            SOCKET destinationSocket = GetSocketValue(destination);
+            if (sourceSocket == INVALID_SOCKET || destinationSocket == INVALID_SOCKET)
+                break;
+
+            int received = recv(sourceSocket, buffer, static_cast<int>(sizeof(buffer)), 0);
+            if (received == 0)
+                break; // orderly peer FIN
+            if (received < 0) {
+                sawError = true;
+                break; // reset/aborted/error
+            }
+
+            if (logger)
+                logger->LogChunk(connectionId, direction, reinterpret_cast<const uint8_t*>(buffer),
+                                 static_cast<size_t>(received));
+
+            int sent = 0;
+            while (sent < received) {
+                int rc = send(destinationSocket, buffer + sent, received - sent, 0);
+                if (rc <= 0) { sawError = true; goto done; }
+                sent += rc;
+            }
+        }
+    done:
+        if (sawError) {
+            SOCKET s = GetSocketValue(destination);
+            if (s != INVALID_SOCKET) {
+                linger l{1, 0};
+                setsockopt(s, SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&l), sizeof(l));
+            }
+        }
+        ShutdownSend(destination);
+    }
+
+    std::atomic<bool> m_running{false};
+    SOCKET m_controlSocket = INVALID_SOCKET;
+    uint16_t m_controlPort = 0;
+    std::thread m_acceptThread;
+    RelayLogger* m_logger = nullptr;
+
+    std::mutex m_mutex;
+    std::unordered_map<std::string, std::shared_ptr<Tunnel>> m_tunnels;
+};
+
 // Guards the span from patching servers.json for a proxy-mode account
 // through that account's game process having had a chance to read it
 // (see RunAccountSupervisionLoop's use of this) — prevents two accounts'
@@ -1133,6 +1499,17 @@ private:
 // only for the FIRST launch of a proxy-mode session (relaunches never
 // re-Apply() the patch, so there's nothing new to protect there).
 static std::mutex g_serverConfigMutex;
+
+// Guards SetEnvironmentVariableA(COCLASSIC_GW, ...) immediately followed by CreateProcessA
+// (the child's environment block is a snapshot taken AT CreateProcess, since it's passed
+// lpEnvironment=nullptr to inherit the launcher's own current environment) -- see
+// RunAccountSupervisionLoop. Multiple accounts' worker threads can each be about to launch
+// their own game process concurrently; without this, one thread's SetEnvironmentVariableA
+// could race another's, handing account A's game process account B's gateway control port
+// (or vice versa). Every launch -- proxy/gateway mode or not -- takes this lock around the
+// set-or-clear + CreateProcessA pair, so a non-gateway launch reliably clears any stale
+// value a PRIOR account's gateway-mode launch left in this shared process-wide environment.
+static std::mutex g_envVarMutex;
 
 static bool Inject(DWORD pid, const char* dllPath)
 {
@@ -1243,6 +1620,7 @@ struct SupervisionParams
     ServerConfigPatch* serverPatch = nullptr;  // non-null only when proxyMode
     Socks5Relay* relay = nullptr;              // non-null only when proxyMode
     RelayLogger* activeLogger = nullptr;       // non-null only when proxyMode && packet logging is on
+    ConnectGateway* gateway = nullptr;         // non-null only when proxyMode -- carries the game leg (Phase 1 step 2)
 };
 
 // Sends auto-login keystrokes for `pid`, then waits (bounded) for
@@ -1378,6 +1756,8 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
                    params.gamePathStr.c_str(), stamp, imageSize);
             if (params.proxyMode) {
                 params.relay->Stop();
+                if (params.gateway)
+                    params.gateway->Stop();
                 params.serverPatch->Restore();
                 if (params.activeLogger)
                     params.activeLogger->Stop();
@@ -1415,11 +1795,31 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
 
-        if (!CreateProcessA(params.gamePathStr.c_str(), nullptr, nullptr, nullptr, FALSE, 0,
-                            nullptr, params.gameDir.c_str(), &si, &pi)) {
+        // COCLASSIC_GW (src/net_connect_hook.cpp's redirect gate): set-or-clear it and
+        // CreateProcessA (lpEnvironment=nullptr -> child inherits this process's CURRENT
+        // env, captured AT this call) under g_envVarMutex -- see that mutex's own comment
+        // for why: this is shared process-wide state and more than one account's launch
+        // can be in flight at once.
+        BOOL createOk;
+        DWORD createErr = 0;
+        {
+            std::lock_guard envLock(g_envVarMutex);
+            if (params.gateway)
+                SetEnvironmentVariableA("COCLASSIC_GW", ("127.0.0.1:" + std::to_string(params.gateway->GetControlPort())).c_str());
+            else
+                SetEnvironmentVariableA("COCLASSIC_GW", nullptr); // clear any prior account's leftover value
+            createOk = CreateProcessA(params.gamePathStr.c_str(), nullptr, nullptr, nullptr, FALSE, 0,
+                                       nullptr, params.gameDir.c_str(), &si, &pi);
+            if (!createOk) createErr = GetLastError();
+        }
+
+        if (!createOk) {
+            SetLastError(createErr);
             printf("[!] CreateProcess failed (0x%08lX)\n", GetLastError());
             if (params.proxyMode) {
                 params.relay->Stop();
+                if (params.gateway)
+                    params.gateway->Stop();
                 params.serverPatch->Restore();
                 if (params.activeLogger)
                     params.activeLogger->Stop();
@@ -1709,9 +2109,18 @@ static int RunAccountSupervisionLoop(AccountSession* session, const SupervisionP
 
     if (params.proxyMode) {
         params.relay->Stop();
+        if (params.gateway)
+            params.gateway->Stop();
         if (params.activeLogger)
             params.activeLogger->Stop();
         params.serverPatch->Restore();  // no-op if the !haveProfile path above already restored it
+        {
+            // Mutex-protected like every other touch of this shared process-wide variable
+            // (g_envVarMutex's comment) -- an unguarded clear here could otherwise land in
+            // the middle of another account's concurrent set+CreateProcessA sequence.
+            std::lock_guard envLock(g_envVarMutex);
+            SetEnvironmentVariableA("COCLASSIC_GW", nullptr); // don't leak this account's gateway port to whatever launches next
+        }
     }
 
     return injectionSucceeded ? 0 : 1;
@@ -2047,6 +2456,7 @@ void HandleLoginClick(AccountSession* session)
         // holds pointers into these for as long as proxy mode is active.
         ServerConfigPatch patch(fs::path(params.gameDir) / SERVER_CONFIG_NAME);
         Socks5Relay relay;
+        ConnectGateway gateway; // direct-connect egress for the GAME leg (Phase 1 step 2) -- relay above only ever carries login
         // [CONNECTION-DECIPHER 2026-09-18] RelayLogger was fully implemented
         // (both-direction hex dump, see PumpTraffic's fix above) but never
         // actually instantiated anywhere in this file -- relay.Start() was
@@ -2087,8 +2497,16 @@ void HandleLoginClick(AccountSession* session)
                         profileCopy.proxyUser, profileCopy.proxyPassword,
                         relayLoggerOk ? &relayLogger : nullptr);
                 }
+                // Direct-connect gateway for the GAME leg (Phase 1 step 2) -- independent
+                // of the login-leg relay above; started only once the relay is confirmed up.
+                if (proxyOk) {
+                    proxyOk = gateway.Start(relayLoggerOk ? &relayLogger : nullptr);
+                    if (!proxyOk)
+                        relay.Stop(); // relay came up but the gateway didn't -- don't leave it running for a session we're about to fail
+                }
                 if (proxyOk && !patch.Apply(listen.host, relay.GetListenPort())) {
                     relay.Stop();
+                    gateway.Stop();
                     proxyOk = false;
                 }
 
@@ -2103,6 +2521,7 @@ void HandleLoginClick(AccountSession* session)
                 params.proxyMode = true;
                 params.serverPatch = &patch;
                 params.relay = &relay;
+                params.gateway = &gateway;
                 params.activeLogger = relayLoggerOk ? &relayLogger : nullptr;
             }
         }
