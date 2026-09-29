@@ -185,3 +185,29 @@ Build: clean, zero errors/warnings, `coclassic_v1078.dll` + `launcher.exe`, both
 gets in-world, confirm `relay_packets.log` now shows both legs (not just login), confirm `containment.ps1 -Action
 Report` / `session_monitor.ps1 -Containment` show zero escapes with Phase 0's firewall back on, and a latency
 comparison against Step 0's baseline.
+
+## Phase 1 Step 2 LIVE TEST RESULT (2026-09-28 21:33, first real run): SUCCESS
+Launched via launcher.exe with proxy mode on, firewall containment ON (5 rules active). `relay_packets.log` shows the
+complete expected sequence for the first time ever:
+
+```
+Relay listening on 127.0.0.1:9959 -> login.conqueronline.net:9959 via SOCKS5 127.0.0.1:1080
+Gateway control listening on 127.0.0.1:61391
+[conn 1] Accepted client connection -> SOCKS5 tunnel established -> (login handshake, 202/33/19 bytes) -> Connection closed
+Gateway tunnel 148.113.198.18:5816 -> loopback port 61398        <-- the redirect hook caught the game-server connect()
+[conn 1] Gateway: direct tunnel established -> 148.113.198.18:5816
+... continuous target->client/client->target traffic (14-1603 byte packets, ~every 1-2s) for 2+ minutes and counting
+```
+
+Confirmed independently via live connection table: `ImConquer.exe` (this run's pid) has **exactly one** TCP connection —
+loopback to `launcher.exe`, nothing else. `launcher.exe` is the only process with a connection to `148.113.198.18:5816`.
+This is the goal, achieved: the game process itself now never touches the internet directly; the relay carries both legs.
+
+Minor fix applied post-test: `ConnectGateway::ServeOneConnection`'s connection-id counter now starts at 1,000,000 (was 0) --
+it and `Socks5Relay`'s own counter both independently started at 1 and both landed on "[conn 1]" in the shared log during
+this run (harmless here since the login connection had already closed, but would be ambiguous if a relay and a gateway
+connection were ever open at once). Source fix committed; rebuild deferred until the game/launcher session ends (linker
+can't overwrite a running launcher.exe -- compiling still succeeded, consistent with the project's normal build workflow).
+
+Still to confirm: `containment.ps1 -Action Report` (admin) showing zero blocked attempts from ImConquer this session
+(strong indirect evidence already in hand via the connection table above); a latency comparison against Step 0's baseline.

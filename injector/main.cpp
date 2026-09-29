@@ -1400,7 +1400,14 @@ private:
 
     static void ServeOneConnection(SOCKET client, const std::string& host, uint16_t port, RelayLogger* logger)
     {
-        static std::atomic<uint64_t> nextId{0};
+        // Offset well clear of Socks5Relay's own m_nextConnectionId (starts at 1, and a
+        // session has few login connections) so relay_packets.log's shared "[conn N]"
+        // numbering can't collide between the two systems -- live-observed both landing on
+        // "conn 1" independently in the same log during the first end-to-end test, which
+        // was harmless there (the login connection had already closed) but would be
+        // genuinely ambiguous if a relay connection and a gateway connection were ever open
+        // at the same time.
+        static std::atomic<uint64_t> nextId{1'000'000};
         const uint64_t connectionId = nextId.fetch_add(1) + 1;
         ManagedSocketPtr clientMs = std::make_shared<ManagedSocket>(client);
 
