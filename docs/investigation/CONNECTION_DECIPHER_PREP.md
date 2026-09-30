@@ -948,3 +948,22 @@ the real fix landed. All four changes are now in one build: `coclassic_v1078.dll
 **Process lesson:** when a caught risk ("this is timing-dependent, not enforced") turns out to have a much worse
 failure mode than assumed, that's worth re-flagging with the real severity the moment it's discovered live, not
 left as a footnote from an earlier, lower-stakes framing.
+
+## 2026-09-29 (later still) — the login failure is a SERVER-SIDE ACCOUNT THROTTLE, not a code issue
+User ruled out every client-side variable directly: proxy off, firewall off, launched normally (no injection
+implied), and tried from a COMPLETELY DIFFERENT MACHINE (different IP) -- same "please try again later" every time.
+This is conclusive: not this project's code, not this machine's network, not proxy/firewall config. The failure
+follows the ACCOUNT, not the IP or the client -- a server-side login/account-server throttle or cooldown, not a ban
+(the wording is temporary-cooldown phrasing, not a suspension notice).
+
+**How it connects to the net_connect_hook fix above:** every time that telemetry-fail-closed bug crashed the
+client, the launcher's own crash-recovery loop immediately relaunched and retried login -- compounding the total
+login/reconnect attempt count against the server on top of tonight's deliberate Phase 2 kill/reconnect testing and
+several decipher-work relaunches. That fix is still correct and worth keeping (removes one real source of extra
+attempts going forward), but it cannot undo a cooldown the account has already tripped -- that's purely server-side.
+
+**Resolution: wait it out, don't retry repeatedly** -- some throttle implementations reset their timer on every
+additional attempt, so continued hammering could prolong rather than shorten it. No further code action indicated;
+this is not a bug to chase. If it recurs after normal, moderate play (not heavy testing), that would be worth
+investigating as a real server-side sensitivity to something else -- but tonight's volume of deliberate
+reconnects is a sufficient, mundane explanation on its own.
