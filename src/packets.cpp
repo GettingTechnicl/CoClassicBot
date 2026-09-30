@@ -290,11 +290,9 @@ static void TrackOutgoingPacket(const uint8_t* data, size_t size)
     // called with -- see plaintext_log.h. This is the "read the client's own plaintext
     // instead of cracking the wire cipher" thread; tools/plaintext_ciphertext_align.py
     // cross-checks this against relay_packets.log's ciphertext for the same session.
-    // [2026-09-29] DISABLED pending investigation: a login failure showed up right after this
-    // + net_recv_hook.cpp's backtrace sweep + decrypt_probe.cpp were added -- see the matching
-    // comment in net_recv_hook.cpp. Backing out as the safe first step rather than debugging
-    // live. Re-enable once the actual cause is confirmed.
-    // PlaintextLog::LogOutbound(data, static_cast<uint32_t>(size));
+    // [2026-09-29] Re-enabled: the login failure was net_connect_hook.cpp fail-closing the
+    // telemetry connect, unrelated to this -- see docs/investigation/CONNECTION_DECIPHER_PREP.md.
+    PlaintextLog::LogOutbound(data, static_cast<uint32_t>(size));
 
     const uint16_t msgType = *(const uint16_t*)(data + 2);
     if (msgType == 0x1B5C) {

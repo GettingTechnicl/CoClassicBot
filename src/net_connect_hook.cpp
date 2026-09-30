@@ -66,6 +66,24 @@ bool g_gatewayEnabled = false;
 std::string g_gatewayHost;
 uint16_t g_gatewayControlPort = 0;
 
+// [2026-09-29] REAL INCIDENT, not a theoretical caveat: net_connect_hook fail-closed the
+// telemetry connect (34.160.81.0:443) when the gateway couldn't reach it, and the game process
+// tore itself down 14ms later (coclassic_223632.log). CONTAINMENT.md's original caveat about
+// this host ("telemetry stays blocked by TIMING, not by a rule") undersold the actual
+// consequence -- it isn't just "becomes visible instead of blocked", an active refusal here can
+// crash the client. The design intent from the start (Phase 2 kickoff) was for the FIREWALL
+// alone to govern this host, never this hook -- so it needs an explicit exclusion, not reliance
+// on winning/losing a timing race. Excluded hosts pass straight through to the real connect(),
+// completely untouched by this hook; Windows Firewall containment (tools\containment.ps1)
+// remains the enforcement for them when it's on, exactly as originally designed.
+bool IsExcludedFromRedirect(uint32_t hostOrderIp)
+{
+    // 34.160.81.0/24 -- observed crash/telemetry destination (docs/investigation/CONTAINMENT.md's
+    // Phase 0 discovery), likely Sentry/crashpad or a related environment check. Never redirect
+    // or fail-close it; let it go direct (firewall-governed) or fail on its own terms.
+    return (hostOrderIp >> 8) == 0x0022A051; // 34.160.81.0/24, i.e. top 24 bits of 34.160.81.x
+}
+
 // Only IPv4 is ever redirected or even inspected -- Step 1's live capture saw IPv4-only
 // traffic, and mishandling an address family that has never actually been observed is a
 // worse risk than simply leaving it untouched (it passes straight through unmodified).
@@ -75,7 +93,11 @@ bool IsRedirectableAndNotLoopback(const sockaddr* sa, int len, const sockaddr_in
         return false;
     out = reinterpret_cast<const sockaddr_in*>(sa);
     const uint32_t hostOrder = ntohl(out->sin_addr.S_un.S_addr);
-    return (hostOrder >> 24) != 127; // whole 127.0.0.0/8, not just 127.0.0.1
+    if ((hostOrder >> 24) == 127) // whole 127.0.0.0/8, not just 127.0.0.1
+        return false;
+    if (IsExcludedFromRedirect(hostOrder))
+        return false;
+    return true;
 }
 
 // One control-channel round trip to the gateway: "CONNECT host:port\n" -> "PORT nnnn\n" /

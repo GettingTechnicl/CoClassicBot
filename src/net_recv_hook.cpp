@@ -172,13 +172,10 @@ int WSAAPI HkRecv(SOCKET s, char* buf, int len, int flags)
     if (result > 0) {
         RecordInboundEvent(InboundEventKind::Data, (uintptr_t)s, result,
             reinterpret_cast<const uint8_t*>(buf), (size_t)result);
-        // [2026-09-29] DISABLED pending investigation: a login failure ("please try again
-        // later" with proxy+firewall containment both on, working fine with firewall off)
-        // showed up right after this + decrypt_probe.cpp were added -- both are heaviest in
-        // exactly the first-60-reads/60s window, which overlaps the login handshake. Backing
-        // out as the safe first step (see docs/investigation/CONNECTION_DECIPHER_PREP.md)
-        // rather than debugging live. Re-enable once the actual cause is confirmed.
-        // CaptureInboundBacktrace("recv", s, reinterpret_cast<const uint8_t*>(buf), (size_t)result);
+        // [2026-09-29] Re-enabled: the login failure was net_connect_hook.cpp fail-closing the
+        // telemetry connect (34.160.81.0:443), unrelated to this -- see that file's fix and
+        // docs/investigation/CONNECTION_DECIPHER_PREP.md. This was never the actual cause.
+        CaptureInboundBacktrace("recv", s, reinterpret_cast<const uint8_t*>(buf), (size_t)result);
     } else if (result == 0) {
         RecordInboundEvent(InboundEventKind::GracefulClose, (uintptr_t)s, 0, nullptr, 0);
     } else {
@@ -206,8 +203,8 @@ int WSAAPI HkWSARecv(SOCKET s, LPWSABUF bufs, DWORD bufCount, LPDWORD received,
         if (result == 0 && received && bufs && bufCount > 0) {
             RecordInboundEvent(InboundEventKind::Data, (uintptr_t)s, (int)*received,
                 reinterpret_cast<const uint8_t*>(bufs[0].buf), (size_t)*received);
-            // [2026-09-29] DISABLED -- see the matching comment in HkRecv above.
-            // CaptureInboundBacktrace("WSARecv", s, reinterpret_cast<const uint8_t*>(bufs[0].buf), (size_t)*received);
+            // [2026-09-29] Re-enabled -- see the matching comment in HkRecv above.
+            CaptureInboundBacktrace("WSARecv", s, reinterpret_cast<const uint8_t*>(bufs[0].buf), (size_t)*received);
         } else if (result == SOCKET_ERROR) {
             RecordInboundEvent(InboundEventKind::Error, (uintptr_t)s, WSAGetLastError(), nullptr, 0);
         }

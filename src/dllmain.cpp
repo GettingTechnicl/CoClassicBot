@@ -247,10 +247,11 @@ static DWORD WINAPI InitThread(LPVOID)
     PlaintextLog::Init();
     InitPacketHook();
     InitNetRecvHook();
-    // [2026-09-29] DISABLED: a login failure ("please try again later" with proxy+firewall
-    // containment on) showed up right after this was added -- backing out as the safe first
-    // step per decrypt_probe.h's own pre-authorized removal plan. Re-enable once confirmed safe.
-    // InitDecryptProbe(); // EXPERIMENTAL/TEMPORARY -- see decrypt_probe.h
+    // [2026-09-29] Re-enabled: the login failure was net_connect_hook.cpp fail-closing the
+    // telemetry connect (34.160.81.0:443), unrelated to this -- see that file's fix and
+    // docs/investigation/CONNECTION_DECIPHER_PREP.md. Still experimental/elevated-risk per
+    // decrypt_probe.h's own header -- watch for instability on the next fresh launch regardless.
+    InitDecryptProbe(); // EXPERIMENTAL/TEMPORARY -- see decrypt_probe.h
 
     // Small extra delay ensures the game's D3D10 swapchain is stable
     Sleep(1000);
@@ -328,7 +329,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         CleanupPacketHook();
         CleanupNetRecvHook();
         CleanupNetConnectHook();
-        // CleanupDecryptProbe(); // matches the disabled InitDecryptProbe() above
+        CleanupDecryptProbe(); // EXPERIMENTAL/TEMPORARY -- see decrypt_probe.h
         PlaintextLog::Shutdown();
         CleanupHooks();
         HwidSpoof::Shutdown();

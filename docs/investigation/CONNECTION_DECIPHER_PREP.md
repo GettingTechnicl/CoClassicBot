@@ -912,3 +912,39 @@ confirm this directly -- not done tonight, not urgent; the clean-matched pairs a
 keystream material. Also incidentally confirmed Phase 1/2 containment still working correctly mid-session:
 the gateway caught and redirected a second, unrelated connection (`185.93.1.250:80`, likely telemetry)
 with zero manual intervention.
+
+## 2026-09-29 (later) — ROOT CAUSE FOUND: net_connect_hook fail-closed telemetry, not the decipher hooks
+User reported login failing ("please try again later") with proxy+firewall containment on, working with firewall
+off -- initially suspected tonight's three new decipher hooks (plaintext_log, backtrace sweep, decrypt_probe) and
+disabled them. User then reported the SAME failure with proxy on + firewall OFF, ruling that out and prompting a
+direct log investigation instead of further guessing.
+
+**Found it in `coclassic_223632.log`:**
+```
+[20:27:39.720] [info] [connectgw] ConnectEx hook install: addr=0x7FF986DF07E0 err=0 commit=0
+[20:27:41.724] [error] [connectgw] FAIL-CLOSED: gateway unreachable/refused for 34.160.81.0:443 -- blocking this connect
+[20:27:41.738] [info] [shutdown] DLL detaching                                          <-- 14ms later
+```
+`net_connect_hook.cpp` intercepts every non-loopback `connect()`, including the crash/telemetry endpoint
+(`34.160.81.0:443`) that Phase 2's own design explicitly said should be left to the FIREWALL, never routed or
+actively refused by this hook (see the "Phase 2 kickoff" reviewer exchange). When the gateway couldn't reach that
+address, the hook did exactly what it was built to do generically -- return `WSAECONNREFUSED` to the caller -- and
+something downstream (crashpad/Sentry init, or possibly an anti-tamper check) treats that active refusal as fatal.
+This is independent of the Phase 0 firewall toggle (the redirect hook arms whenever the account's proxy flag is on,
+regardless of firewall state), which is exactly why disabling the three unrelated decipher hooks didn't help, and
+why proxy-on+firewall-off still failed. The earlier "checked, not urgent" framing of this exact race
+(CONTAINMENT.md's Phase 2 section) badly undersold the real consequence -- it isn't "telemetry becomes visible
+instead of blocked", an active refusal here can crash the client outright.
+
+**Fix:** `net_connect_hook.cpp` gained an explicit `IsExcludedFromRedirect()` check (34.160.81.0/24) consulted
+before any redirect/fail-closed logic -- excluded hosts pass straight through to the real `connect()`, completely
+untouched by this hook, restoring the original design intent (firewall-governed only). Sanity-verified the
+network-order bit math against known-good/known-bad IPs before building (caught and fixed one hex arithmetic
+mistake in the process -- 0x22A051 for 34.160.81.x, not the first constant written).
+
+The three decipher hooks (plaintext_log, backtrace sweep, decrypt_probe) were never the cause; re-enabled after
+the real fix landed. All four changes are now in one build: `coclassic_v1078.dll`, compiles clean.
+
+**Process lesson:** when a caught risk ("this is timing-dependent, not enforced") turns out to have a much worse
+failure mode than assumed, that's worth re-flagging with the real severity the moment it's discovered live, not
+left as a footnote from an earlier, lower-stakes framing.
